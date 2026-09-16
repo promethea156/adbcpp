@@ -16,6 +16,7 @@ endif()
 
 option(ADBCPP_BUILD_TESTS "Build adbcpp tests" ${ADBCPP_IS_TOP_LEVEL})
 option(ADBCPP_BUILD_EXAMPLES "Build adbcpp examples" ${ADBCPP_IS_TOP_LEVEL})
+option(ADBCPP_BUILD_DOCS "Build adbcpp documentation" OFF)
 option(ADBCPP_INSTALL "Generate adbcpp install rules" ${ADBCPP_IS_TOP_LEVEL})
 
 set(CMAKE_CXX_STANDARD 20)
@@ -68,6 +69,10 @@ endif()
 
 if(ADBCPP_BUILD_EXAMPLES)
   add_subdirectory(examples)
+endif()
+
+if(ADBCPP_BUILD_DOCS)
+  add_subdirectory(docs)
 endif()
 
 if(ADBCPP_INSTALL)
