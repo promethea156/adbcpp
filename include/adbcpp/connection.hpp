@@ -48,11 +48,15 @@ public:
   /// The maximum payload size reported by the device.
   std::uint32_t max_data() const noexcept { return max_data_; }
 
+  /// Whether the device advertised support for delayed acknowledgements.
+  bool supports_delayed_ack() const noexcept { return delayed_ack_; }
+
 private:
   Session session_;
   std::uint32_t device_version_ = 0;
   std::uint32_t max_data_ = 0;
   std::uint32_t next_local_id_ = 1;
+  bool delayed_ack_ = false;
 };
 
 } // namespace adbcpp

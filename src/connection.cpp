@@ -1,6 +1,7 @@
 #include "adbcpp/connection.hpp"
 
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "adbcpp/protocol/commands.hpp"
@@ -48,6 +49,11 @@ Connection::Connection(Transport &transport,
 
   device_version_ = frame.header.arg0;
   max_data_ = frame.header.arg1;
+
+  const std::string banner(
+      reinterpret_cast<const char *>(frame.payload.data()),
+      frame.payload.size());
+  delayed_ack_ = banner.find("delayed_ack") != std::string::npos;
 }
 
 void Connection::send(const protocol::Message &header,

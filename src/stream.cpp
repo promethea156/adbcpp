@@ -29,7 +29,12 @@ Stream::Stream(Connection &connection, std::string_view service)
   destination.push_back('\0');
   const auto payload = std::span(
       reinterpret_cast<const std::byte *>(destination.data()), destination.size());
-  connection_->send(make_message(protocol::kOpen, local_id_, 0, payload));
+  const std::uint32_t send_buffer =
+      connection_->supports_delayed_ack()
+          ? protocol::kInitialDelayedAckBytes
+          : 0;
+  connection_->send(make_message(protocol::kOpen, local_id_, send_buffer,
+                                payload));
 
   const auto frame = connection_->receive();
   if (frame.header.command != protocol::kOkay) {

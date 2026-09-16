@@ -31,4 +31,12 @@ inline constexpr std::uint32_t kAuthToken = 1;
 inline constexpr std::uint32_t kAuthSignature = 2;
 inline constexpr std::uint32_t kAuthPublicKey = 3;
 
+/**
+ * Initial flow-control window advertised in an OPEN message.
+ *
+ * Transports that support delayed acknowledgements require a non-zero send
+ * buffer size in `arg1`; otherwise the peer closes the stream immediately.
+ */
+inline constexpr std::uint32_t kInitialDelayedAckBytes = 256 * 1024;
+
 } // namespace adbcpp::protocol
