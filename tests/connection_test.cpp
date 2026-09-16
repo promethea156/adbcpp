@@ -64,11 +64,10 @@ TEST_CASE("connection answers an AUTH request with the public key",
 
   adbcpp::Connection connection(transport, public_key);
 
-  std::vector<std::byte> identity(
+  const std::vector<std::byte> identity(
       reinterpret_cast<const std::byte *>(adbcpp::kSystemIdentity.data()),
       reinterpret_cast<const std::byte *>(adbcpp::kSystemIdentity.data()) +
           adbcpp::kSystemIdentity.size());
-  identity.push_back(std::byte{0});
   const auto cnxn = make_message(adbcpp::protocol::kCnxn,
                                 adbcpp::protocol::kVersion,
                                 adbcpp::protocol::kMaxData, identity);

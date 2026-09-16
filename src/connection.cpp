@@ -13,18 +13,15 @@ Connection::Connection(Transport &transport,
   const auto identity = std::span(
       reinterpret_cast<const std::byte *>(kSystemIdentity.data()),
       kSystemIdentity.size());
-  std::vector<std::byte> identity_bytes(identity.begin(), identity.end());
-  identity_bytes.push_back(std::byte{0});
-  const auto identity_payload = std::span(identity_bytes);
 
   protocol::Message connect;
   connect.command = protocol::kCnxn;
   connect.arg0 = protocol::kVersion;
   connect.arg1 = protocol::kMaxData;
-  connect.data_length = identity_payload.size();
-  connect.data_crc32 = protocol::Message::compute_crc32(identity_payload);
+  connect.data_length = identity.size();
+  connect.data_crc32 = protocol::Message::compute_crc32(identity);
   connect.magic = protocol::Message::compute_magic(connect.command);
-  session_.send(connect, identity_payload);
+  session_.send(connect, identity);
 
   auto frame = session_.receive();
   if (frame.header.command == protocol::kAuth) {
