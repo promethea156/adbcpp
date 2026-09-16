@@ -9,7 +9,8 @@
 namespace adbcpp {
 
 Connection::Connection(Transport &transport,
-                        std::span<const std::byte> public_key)
+                        std::span<const std::byte> public_key,
+                        Signer signer)
     : session_(transport) {
   const auto identity = std::span(
       reinterpret_cast<const std::byte *>(kSystemIdentity.data()),
@@ -26,20 +27,31 @@ Connection::Connection(Transport &transport,
 
   auto frame = session_.receive();
   if (frame.header.command == protocol::kAuth) {
-    if (public_key.empty()) {
-      throw std::runtime_error(
-          "adbcpp: device requires authentication but no public key was given");
-    }
-    std::vector<std::byte> key(public_key.begin(), public_key.end());
-    key.push_back(std::byte{0});
+    if (signer) {
+      const auto signature = signer(frame.payload);
+      protocol::Message auth;
+      auth.command = protocol::kAuth;
+      auth.arg0 = protocol::kAuthSignature;
+      auth.data_length = signature.size();
+      auth.data_crc32 = protocol::Message::compute_crc32(signature);
+      auth.magic = protocol::Message::compute_magic(auth.command);
+      session_.send(auth, signature);
+    } else {
+      if (public_key.empty()) {
+        throw std::runtime_error(
+            "adbcpp: device requires authentication but no key was given");
+      }
+      std::vector<std::byte> key(public_key.begin(), public_key.end());
+      key.push_back(std::byte{0});
 
-    protocol::Message auth;
-    auth.command = protocol::kAuth;
-    auth.arg0 = protocol::kAuthPublicKey;
-    auth.data_length = key.size();
-    auth.data_crc32 = protocol::Message::compute_crc32(key);
-    auth.magic = protocol::Message::compute_magic(auth.command);
-    session_.send(auth, key);
+      protocol::Message auth;
+      auth.command = protocol::kAuth;
+      auth.arg0 = protocol::kAuthPublicKey;
+      auth.data_length = key.size();
+      auth.data_crc32 = protocol::Message::compute_crc32(key);
+      auth.magic = protocol::Message::compute_magic(auth.command);
+      session_.send(auth, key);
+    }
     frame = session_.receive();
   }
 

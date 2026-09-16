@@ -16,11 +16,15 @@ int main() {
 
     adbcpp::usb::UsbTransport transport(id);
 
-    const std::string key = adbcpp::crypto::load_or_generate_public_key();
+    const auto key = adbcpp::crypto::Key::load_or_generate();
+    const std::string &public_key_string = key.public_key();
     const auto public_key = std::span(
-        reinterpret_cast<const std::byte *>(key.data()), key.size());
+        reinterpret_cast<const std::byte *>(public_key_string.data()),
+        public_key_string.size());
 
-    adbcpp::Connection connection(transport, public_key);
+    adbcpp::Connection connection(
+        transport, public_key,
+        [&key](std::span<const std::byte> token) { return key.sign(token); });
     std::cout << "connected to a device running protocol 0x" << std::hex
               << connection.device_version() << std::dec << '\n';
 

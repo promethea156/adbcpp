@@ -1,21 +1,48 @@
 #pragma once
 
+#include <cstddef>
+#include <memory>
+#include <span>
 #include <string>
+#include <vector>
 
 #include "adbcpp/export.hpp"
 
 namespace adbcpp::crypto {
 
-/// Generates an ADB RSA-2048 public key in the format sent with AUTH type 3.
-std::string ADBCPP_API generate_public_key();
-
 /**
- * @brief Returns the ADB public key, reusing an existing one when possible.
+ * @brief An ADB RSA-2048 key pair.
  *
- * If `~/.android/adbkey.pub` already exists it is read back; otherwise a new
- * key is generated and written there. Reusing the key means the device only asks
- * the user to approve it once.
+ * The key pair is stored in ADB's own format: the private key at
+ * `~/.android/adbkey` and the public key at `~/.android/adbkey.pub`. Reusing
+ * the same key means the device only asks the user to approve it once, and the
+ * private key lets us answer an AUTH token by signing it (AUTH type 2) exactly
+ * like adb does.
  */
-std::string ADBCPP_API load_or_generate_public_key();
+class ADBCPP_API Key {
+public:
+  ~Key();
+  Key(Key &&) noexcept;
+  Key &operator=(Key &&) noexcept;
+  Key(const Key &) = delete;
+  Key &operator=(const Key &) = delete;
+
+  /// Generates a new RSA-2048 key pair.
+  static Key generate();
+
+  /// Loads the key pair from `~/.android/adbkey`, generating it if absent.
+  static Key load_or_generate();
+
+  /// The ADB public key string, as sent with AUTH type 3.
+  const std::string &public_key() const noexcept;
+
+  /// Signs `token` with the private key (PKCS#1 v1.5, SHA-1).
+  std::vector<std::byte> sign(std::span<const std::byte> token) const;
+
+private:
+  Key();
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+};
 
 } // namespace adbcpp::crypto

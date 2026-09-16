@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string_view>
 
@@ -24,13 +25,19 @@ inline constexpr std::string_view kSystemIdentity =
  * @brief An authenticated ADB connection to a device.
  *
  * The CNXN handshake is performed on construction. If the device requests
- * authentication, the supplied public key is sent with an AUTH type 3 message,
- * which opens the "allow USB debugging" prompt on the device.
+ * authentication, the token is signed with `signer` and returned as an AUTH type 2
+ * message, exactly like adb; when no signer is given the public key is sent
+ * instead (AUTH type 3), which opens the on-device approval prompt.
  */
 class ADBCPP_API Connection {
 public:
+  /// Signs an AUTH token with the private key.
+  using Signer =
+      std::function<std::vector<std::byte>(std::span<const std::byte>)>;
+
   explicit Connection(Transport &transport,
-                      std::span<const std::byte> public_key = {});
+                      std::span<const std::byte> public_key = {},
+                      Signer signer = {});
 
   /// Sends a header and optional payload on the connection.
   void send(const protocol::Message &header,
