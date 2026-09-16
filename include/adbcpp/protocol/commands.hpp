@@ -20,4 +20,15 @@ inline constexpr std::uint32_t kClse = make_command('C', 'L', 'S', 'E');
 inline constexpr std::uint32_t kWrte = make_command('W', 'R', 'T', 'E');
 inline constexpr std::uint32_t kSync = make_command('S', 'Y', 'N', 'C');
 
+/// ADB protocol version advertised in the CNXN message.
+inline constexpr std::uint32_t kVersion = 0x01000001u;
+
+/// Maximum payload size advertised in the CNXN message.
+inline constexpr std::uint32_t kMaxData = 256 * 1024;
+
+/// AUTH payload type values (the `arg0` field of an AUTH message).
+inline constexpr std::uint32_t kAuthToken = 1;
+inline constexpr std::uint32_t kAuthSignature = 2;
+inline constexpr std::uint32_t kAuthPublicKey = 3;
+
 } // namespace adbcpp::protocol

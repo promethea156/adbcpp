@@ -31,6 +31,7 @@ endif()
 include(GNUInstallDirs)
 
 add_library(adbcpp
+  src/connection.cpp
   src/protocol/message.cpp
   src/session.cpp
 )
