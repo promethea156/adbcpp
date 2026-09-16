@@ -3,7 +3,11 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <span>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -115,7 +119,8 @@ std::string generate_public_key() {
                            (static_cast<std::uint32_t>(
                                 std::to_integer<std::uint8_t>(modulus[3]))
                             << 24);
-  write_u32_le(blob.data() + 0, static_cast<std::uint32_t>(kModulusBytes));
+  write_u32_le(blob.data() + 0,
+               static_cast<std::uint32_t>(kModulusBytes / 4));
   write_u32_le(blob.data() + 4, 0u - inverse_mod_2_32(n0));
 
   mbedtls_mpi_free(&rr);
@@ -136,6 +141,50 @@ std::string generate_public_key() {
 
   std::string key(reinterpret_cast<const char *>(encoded.data()), length);
   key += " adbcpp@localhost";
+  return key;
+}
+
+namespace {
+
+std::filesystem::path default_public_key_path() {
+#if defined(_WIN32)
+  const char *home = std::getenv("USERPROFILE");
+#else
+  const char *home = std::getenv("HOME");
+#endif
+  if (home == nullptr || *home == '\0') {
+    throw std::runtime_error("adbcpp: cannot locate the home directory");
+  }
+  return std::filesystem::path(home) / ".android" / "adbkey.pub";
+}
+
+} // namespace
+
+std::string load_or_generate_public_key() {
+  const auto path = default_public_key_path();
+
+  if (std::filesystem::exists(path)) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+      throw std::runtime_error("adbcpp: failed to read the ADB public key");
+    }
+    std::ostringstream content;
+    content << input.rdbuf();
+    std::string key = content.str();
+    while (!key.empty() && (key.back() == '\n' || key.back() == '\r')) {
+      key.pop_back();
+    }
+    if (!key.empty()) {
+      return key;
+    }
+  }
+
+  std::string key = generate_public_key();
+  std::filesystem::create_directories(path.parent_path());
+  std::ofstream output(path, std::ios::binary | std::ios::trunc);
+  if (output) {
+    output << key << '\n';
+  }
   return key;
 }
 
