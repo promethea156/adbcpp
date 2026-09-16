@@ -59,18 +59,21 @@ TEST_CASE("connection answers an AUTH request with the public key",
 
   const std::array<std::byte, 4> public_key{std::byte{0x01}, std::byte{0x02},
                                            std::byte{0x03}, std::byte{0x04}};
+  std::vector<std::byte> key(public_key.begin(), public_key.end());
+  key.push_back(std::byte{0});
 
   adbcpp::Connection connection(transport, public_key);
 
-  const auto identity = std::span(
+  std::vector<std::byte> identity(
       reinterpret_cast<const std::byte *>(adbcpp::kSystemIdentity.data()),
-      adbcpp::kSystemIdentity.size());
+      reinterpret_cast<const std::byte *>(adbcpp::kSystemIdentity.data()) +
+          adbcpp::kSystemIdentity.size());
+  identity.push_back(std::byte{0});
   const auto cnxn = make_message(adbcpp::protocol::kCnxn,
                                 adbcpp::protocol::kVersion,
                                 adbcpp::protocol::kMaxData, identity);
   const auto auth_out = make_message(adbcpp::protocol::kAuth,
-                                    adbcpp::protocol::kAuthPublicKey, 0,
-                                    public_key);
+                                    adbcpp::protocol::kAuthPublicKey, 0, key);
 
   std::vector<std::byte> expected;
   const auto cnxn_bytes = cnxn.encode();
@@ -78,7 +81,7 @@ TEST_CASE("connection answers an AUTH request with the public key",
   expected.insert(expected.end(), identity.begin(), identity.end());
   const auto auth_bytes = auth_out.encode();
   expected.insert(expected.end(), auth_bytes.begin(), auth_bytes.end());
-  expected.insert(expected.end(), public_key.begin(), public_key.end());
+  expected.insert(expected.end(), key.begin(), key.end());
 
   REQUIRE(transport.written() == expected);
   REQUIRE(connection.device_version() == 0x01000001u);

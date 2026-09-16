@@ -25,8 +25,10 @@ protocol::Message make_message(std::uint32_t command, std::uint32_t arg0,
 Stream::Stream(Connection &connection, std::string_view service)
     : connection_(&connection), service_(service),
       local_id_(connection.allocate_local_id()) {
+  std::string destination(service_);
+  destination.push_back('\0');
   const auto payload = std::span(
-      reinterpret_cast<const std::byte *>(service_.data()), service_.size());
+      reinterpret_cast<const std::byte *>(destination.data()), destination.size());
   connection_->send(make_message(protocol::kOpen, local_id_, 0, payload));
 
   const auto frame = connection_->receive();

@@ -13,15 +13,18 @@ Connection::Connection(Transport &transport,
   const auto identity = std::span(
       reinterpret_cast<const std::byte *>(kSystemIdentity.data()),
       kSystemIdentity.size());
+  std::vector<std::byte> identity_bytes(identity.begin(), identity.end());
+  identity_bytes.push_back(std::byte{0});
+  const auto identity_payload = std::span(identity_bytes);
 
   protocol::Message connect;
   connect.command = protocol::kCnxn;
   connect.arg0 = protocol::kVersion;
   connect.arg1 = protocol::kMaxData;
-  connect.data_length = identity.size();
-  connect.data_crc32 = protocol::Message::compute_crc32(identity);
+  connect.data_length = identity_payload.size();
+  connect.data_crc32 = protocol::Message::compute_crc32(identity_payload);
   connect.magic = protocol::Message::compute_magic(connect.command);
-  session_.send(connect, identity);
+  session_.send(connect, identity_payload);
 
   auto frame = session_.receive();
   if (frame.header.command == protocol::kAuth) {
@@ -29,13 +32,16 @@ Connection::Connection(Transport &transport,
       throw std::runtime_error(
           "adbcpp: device requires authentication but no public key was given");
     }
+    std::vector<std::byte> key(public_key.begin(), public_key.end());
+    key.push_back(std::byte{0});
+
     protocol::Message auth;
     auth.command = protocol::kAuth;
     auth.arg0 = protocol::kAuthPublicKey;
-    auth.data_length = public_key.size();
-    auth.data_crc32 = protocol::Message::compute_crc32(public_key);
+    auth.data_length = key.size();
+    auth.data_crc32 = protocol::Message::compute_crc32(key);
     auth.magic = protocol::Message::compute_magic(auth.command);
-    session_.send(auth, public_key);
+    session_.send(auth, key);
     frame = session_.receive();
   }
 
