@@ -23,7 +23,7 @@ Prove the pipeline end-to-end without a real device.
 
 The first real device capability: connect over USB and run a shell command.
 
-- USB transport (via `libusb`), including the quirk where the payload is a separate transfer from the header.
+- USB transport via `libusb`, linked dynamically as an optional backend (see [USB Backend](01-objective.md#usb-backend)), including the quirk where the payload is a separate transfer from the header.
 - ADB message header: `command`, `arg1`, `arg2`, `data_length`, `data_crc32`, `magic`; little-endian (de)serialization; CRC32 and magic validation.
 - `CNXN` handshake and system-identity string.
 - AUTH type 3 (send public key) to trigger the on-device approval prompt.
@@ -94,7 +94,10 @@ Apply throughout every slice.
 
 ## Open Questions
 
-- USB backend choice: `libusb` vs. platform-native APIs.
 - Crypto dependency for RSA signing (OpenSSL vs. a lighter alternative).
 - Scope of TLS/encrypted ADB transport support (required by newer Android versions).
 - Minimum supported Android version.
+
+## Future Improvements
+
+- Replace the dynamically-linked libusb backend with platform-native USB APIs (WinUSB, IOKit, `usbfs`) to remove the third-party dependency and its license obligations. See [USB Backend](01-objective.md#usb-backend).

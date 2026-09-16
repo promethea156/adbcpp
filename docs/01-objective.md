@@ -32,6 +32,14 @@ The first iteration targets a minimal but practical feature set:
 - **Build system**: CMake.
 - **Documentation**: Doxygen.
 
+## USB Backend
+
+Device communication goes through a `Transport` abstraction, which keeps the core library free of any USB dependency.
+
+**Decision (during development):** use **libusb** for the USB transport, linked **dynamically** as an optional backend target. libusb is licensed under LGPL-2.1-or-later, so it must **not** be statically linked into `adbcpp`. The core library remains BSL-1.0 and dependency-free; consumers that need USB opt into the dynamically-linked backend, while those that only need TCP or an emulator do not pull libusb in.
+
+**Future improvement:** once most of the implementation is complete, replace libusb with platform-native USB APIs (WinUSB on Windows, IOKit on macOS, `usbfs` on Linux) to remove the third-party dependency and its license obligations entirely.
+
 ## Guiding Principles
 
 - **Self-contained**: no reliance on external ADB components.
