@@ -38,3 +38,67 @@ The first iteration targets a minimal but practical feature set:
 - **Embeddable**: usable as a library from other C++ projects.
 - **Focused**: implement only what is needed, cleanly.
 - **Portable**: consistent behavior and API across all supported platforms.
+
+## Versioning
+
+The project follows [Semantic Versioning 2.0.0](https://semver.org/) (SemVer).
+
+Versions take the form `MAJOR.MINOR.PATCH`:
+
+- **MAJOR** is incremented for incompatible API changes.
+- **MINOR** is incremented when functionality is added in a backwards-compatible manner.
+- **PATCH** is incremented for backwards-compatible bug fixes.
+
+Pre-release and build metadata **MAY** be appended as `-<pre-release>` and `+<build>` respectively (e.g. `1.0.0-alpha.1`, `1.0.0+build.5`).
+
+Version bumps are derived from commit types, tying SemVer to the [commit message convention](#commit-messages) below:
+
+- `fix` maps to a **PATCH** release.
+- `feat` maps to a **MINOR** release.
+- A `BREAKING CHANGE` (or `!`), regardless of type, maps to a **MAJOR** release.
+
+## Commit Messages
+
+Commit messages follow the [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/#specification) specification.
+
+### Format
+
+```
+<type>[optional scope]: <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+### Types
+
+- `feat`: a new feature.
+- `fix`: a bug fix.
+- `docs`: documentation only changes.
+- `refactor`: a code change that neither fixes a bug nor adds a feature.
+- `perf`: a performance improvement.
+- `test`: adding or correcting tests.
+- `build`: changes to the build system or dependencies (e.g. CMake).
+- `ci`: changes to CI configuration.
+- `chore`: other changes that don't modify source or test files.
+- `style`: formatting changes that don't affect meaning.
+
+### Rules
+
+- A scope **MAY** be provided in parentheses, e.g. `feat(transport): ...`.
+- The description follows the colon and a space and is a short summary.
+- A body **MAY** follow after one blank line for additional context.
+- Breaking changes **MUST** be indicated with a `!` after the type/scope, and/or a `BREAKING CHANGE:` footer.
+- Types are case-insensitive in practice; `BREAKING CHANGE` **MUST** be uppercase.
+
+### Examples
+
+```
+docs: add commit message standard
+feat(sync): implement push command
+fix(usb): handle short USB transfers
+feat(api)!: rename connect to open
+
+BREAKING CHANGE: `connect` is now named `open`.
+```
