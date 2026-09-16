@@ -1,26 +1,39 @@
 #pragma once
 
+#include <cstddef>
+#include <span>
+#include <vector>
+
 #include "adbcpp/export.hpp"
 #include "adbcpp/protocol/message.hpp"
 #include "adbcpp/transport.hpp"
 
 namespace adbcpp {
 
+/// A complete ADB message: a header plus its optional payload.
+struct ADBCPP_API Frame {
+  protocol::Message header;
+  std::vector<std::byte> payload;
+};
+
 /**
  * @brief A framed ADB session over a transport.
  *
- * For now a session only sends and receives message headers. Payload handling,
- * the connection handshake, and authentication are added in later slices.
+ * A header and its payload are always written as two separate transport writes
+ * (and read as two separate reads). This matches the ADB-over-USB behaviour where
+ * the header and payload travel in distinct USB transfers, and is harmless for
+ * byte-stream transports such as TCP.
  */
 class ADBCPP_API Session {
 public:
   explicit Session(Transport &transport) noexcept;
 
-  /// Writes `message` to the underlying transport.
-  void send(const protocol::Message &message);
+  /// Writes a header, then its payload as a separate transport write.
+  void send(const protocol::Message &header,
+            std::span<const std::byte> payload = {});
 
-  /// Reads exactly one message header from the underlying transport.
-  protocol::Message receive();
+  /// Reads exactly one header and its payload.
+  Frame receive();
 
 private:
   Transport *transport_;

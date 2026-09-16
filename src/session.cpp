@@ -22,15 +22,26 @@ void read_exact(Transport &transport, std::span<std::byte> buffer) {
 
 Session::Session(Transport &transport) noexcept : transport_(&transport) {}
 
-void Session::send(const protocol::Message &message) {
-  const auto bytes = message.encode();
+void Session::send(const protocol::Message &header,
+                   std::span<const std::byte> payload) {
+  const auto bytes = header.encode();
   transport_->write(bytes);
+  if (!payload.empty()) {
+    transport_->write(payload);
+  }
 }
 
-protocol::Message Session::receive() {
+Frame Session::receive() {
   std::array<std::byte, protocol::kMessageHeaderSize> bytes{};
   read_exact(*transport_, bytes);
-  return protocol::Message::decode(bytes);
+
+  Frame frame;
+  frame.header = protocol::Message::decode(bytes);
+  frame.payload.resize(frame.header.data_length);
+  if (!frame.payload.empty()) {
+    read_exact(*transport_, frame.payload);
+  }
+  return frame;
 }
 
 } // namespace adbcpp
