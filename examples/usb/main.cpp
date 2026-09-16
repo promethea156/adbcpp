@@ -24,11 +24,11 @@ int main() {
     std::cout << "connected to a device running protocol 0x" << std::hex
               << connection.device_version() << std::dec << '\n';
 
-    const std::string output = adbcpp::run(connection, "echo hello");
-    std::cout << output;
+    const auto result = adbcpp::run(connection, "echo hello");
+    std::cout << result.output;
 
     transport.close();
-    return 0;
+    return result.exit_code;
   } catch (const std::exception &error) {
     std::cerr << "error: " << error.what() << '\n';
     return 1;
