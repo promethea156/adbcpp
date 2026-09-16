@@ -68,6 +68,8 @@ if(ADBCPP_BUILD_USB)
   add_subdirectory(src/usb)
 endif()
 
+add_subdirectory(src/crypto)
+
 if(ADBCPP_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)

@@ -8,11 +8,14 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(Catch2)
 
 add_executable(adbcpp_tests
+  adb_key_test.cpp
   connection_test.cpp
   protocol_message_test.cpp
   session_test.cpp
 )
-target_link_libraries(adbcpp_tests PRIVATE adbcpp::adbcpp Catch2::Catch2WithMain)
+target_link_libraries(adbcpp_tests
+  PRIVATE adbcpp::adbcpp adbcpp::crypto Catch2::Catch2WithMain
+)
 
 list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
 include(Catch)
