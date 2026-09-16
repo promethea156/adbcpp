@@ -36,9 +36,13 @@ The first iteration targets a minimal but practical feature set:
 
 Device communication goes through a `Transport` abstraction, which keeps the core library free of any USB dependency.
 
-**Decision (during development):** use **libusb** for the USB transport, linked **dynamically** as an optional backend target. libusb is licensed under LGPL-2.1-or-later, so it must **not** be statically linked into `adbcpp`. The core library remains BSL-1.0 and dependency-free; consumers that need USB opt into the dynamically-linked backend, while those that only need TCP or an emulator do not pull libusb in.
+**Decision (during development):** use **libusb** for the USB transport, linked **dynamically** as an optional backend target. libusb is licensed under LGPL-2.1-or-later, so it must **not** be statically linked into `adbcpp`. The core library remains BSL-1.0 and dependency-free; consumers that need USB opt into the dynamically-linked backend, while those that only need TCP or an emulator do not pull libusb in. libusb is acquired with CMake **FetchContent** and built as a **shared** library.
 
 **Future improvement:** once most of the implementation is complete, replace libusb with platform-native USB APIs (WinUSB on Windows, IOKit on macOS, `usbfs` on Linux) to remove the third-party dependency and its license obligations entirely.
+
+## Crypto
+
+RSA key generation (the ADB public/private key pair) and token signing use **Botan** (BSD-2-Clause), acquired with CMake **FetchContent**. This is only required for device authentication. Botan can also provide TLS should the encrypted ADB transport turn out to be required.
 
 ## Guiding Principles
 

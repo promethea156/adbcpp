@@ -94,7 +94,6 @@ Apply throughout every slice.
 
 ## Open Questions
 
-- Crypto dependency for RSA signing (OpenSSL vs. a lighter alternative).
 - Scope of TLS/encrypted ADB transport support (required by newer Android versions).
 - Minimum supported Android version.
 
