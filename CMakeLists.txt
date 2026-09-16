@@ -14,6 +14,7 @@ else()
   set(ADBCPP_IS_TOP_LEVEL OFF)
 endif()
 
+option(ADBCPP_BUILD_TESTS "Build adbcpp tests" ${ADBCPP_IS_TOP_LEVEL})
 option(ADBCPP_INSTALL "Generate adbcpp install rules" ${ADBCPP_IS_TOP_LEVEL})
 
 set(CMAKE_CXX_STANDARD 20)
@@ -57,6 +58,11 @@ if(MSVC)
   target_compile_options(adbcpp PRIVATE /W4 /permissive-)
 else()
   target_compile_options(adbcpp PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(ADBCPP_BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests)
 endif()
 
 if(ADBCPP_INSTALL)
