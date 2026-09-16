@@ -18,7 +18,7 @@ namespace {
 constexpr std::uint8_t kAdbInterfaceClass = 0xFF;
 constexpr std::uint8_t kAdbInterfaceSubClass = 0x42;
 constexpr std::uint8_t kAdbInterfaceProtocol = 0x01;
-constexpr unsigned int kTransferTimeoutMs = 5000;
+constexpr unsigned int kTransferTimeoutMs = 30000;
 constexpr std::size_t kReadBufferSize = 256 * 1024;
 
 [[noreturn]] void fail(const std::string &what, int code) {
@@ -141,6 +141,9 @@ UsbTransport::UsbTransport(DeviceId id) : impl_(std::make_unique<Impl>()) {
     fail("libusb_claim_interface", rc);
   }
   impl_->claimed = true;
+
+  libusb_clear_halt(impl_->handle, impl_->endpoint_in);
+  libusb_clear_halt(impl_->handle, impl_->endpoint_out);
 }
 
 UsbTransport::~UsbTransport() = default;
