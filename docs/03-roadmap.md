@@ -10,8 +10,9 @@ Prove the pipeline end-to-end without a real device.
 
 - Directory layout (`include/`, `src/`, `tests/`, `examples/`, `docs/`).
 - CMake project targeting C++20 with install/export support, cross-platform (Linux, Windows, macOS).
+- Sample project under `examples/`, built against the library: it serves as user-facing examples **and** as a manual integration harness for exercising features against a real device during development.
 - Doxygen configuration and documentation build target.
-- Unit test framework (e.g. GoogleTest or Catch2) wired into CTest.
+- Unit test framework: [Catch2](https://github.com/catchorg/catch2) (v3), wired into CTest.
 - CI building and testing on all three platforms.
 - `Transport` interface plus an in-memory **mock transport**.
 - A trivial end-to-end protocol path driven by the mock, with unit tests.
