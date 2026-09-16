@@ -6,8 +6,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <span>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -16,6 +16,7 @@
 #include <mbedtls/bignum.h>
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
+#include <mbedtls/pk.h>
 #include <mbedtls/rsa.h>
 #include <mbedtls/sha1.h>
 
@@ -23,10 +24,8 @@ namespace adbcpp::crypto {
 namespace {
 
 constexpr std::size_t kModulusBytes = 256;
-constexpr std::size_t kHalfModulusBytes = kModulusBytes / 2;
 constexpr std::size_t kBlobSize = 4 + 4 + kModulusBytes + kModulusBytes + 4;
-constexpr std::size_t kPrivateKeySize =
-    kBlobSize + kModulusBytes + 5 * kHalfModulusBytes;
+constexpr std::size_t kPemBufferSize = 8192;
 
 void write_u32_le(std::byte *out, std::uint32_t value) {
   out[0] = static_cast<std::byte>(value & 0xFFu);
@@ -62,32 +61,31 @@ void to_little_endian(const mbedtls_mpi &value, std::span<std::byte> out) {
   }
 }
 
-void from_little_endian(mbedtls_mpi &value, std::span<const std::byte> in) {
-  std::vector<unsigned char> big_endian(in.size(), 0);
-  for (std::size_t i = 0; i < in.size(); ++i) {
-    big_endian[i] = std::to_integer<std::uint8_t>(in[in.size() - 1 - i]);
-  }
-  if (mbedtls_mpi_read_binary(&value, big_endian.data(), big_endian.size()) !=
-      0) {
-    throw std::runtime_error("adbcpp: failed to parse an RSA component");
-  }
-}
-
 // Computes rr = R^2 mod n, where R = 2^(8 * kModulusBytes).
-mbedtls_mpi compute_rr(const mbedtls_mpi &n) {
-  mbedtls_mpi rr;
-  mbedtls_mpi_init(&rr);
+void compute_rr(mbedtls_mpi &rr, const mbedtls_mpi &n) {
   if (mbedtls_mpi_lset(&rr, 1) != 0 ||
       mbedtls_mpi_shift_l(&rr, 8 * kModulusBytes * 2) != 0 ||
       mbedtls_mpi_mod_mpi(&rr, &rr, &n) != 0) {
-    mbedtls_mpi_free(&rr);
     throw std::runtime_error("adbcpp: failed to derive RSA key parameters");
   }
-  return rr;
 }
 
-std::string encode_public_key(const mbedtls_mpi &n, const mbedtls_mpi &rr,
-                              const mbedtls_mpi &e) {
+std::string encode_public_key(const mbedtls_pk_context &pk) {
+  mbedtls_mpi n;
+  mbedtls_mpi e;
+  mbedtls_mpi rr;
+  mbedtls_mpi_init(&n);
+  mbedtls_mpi_init(&e);
+  mbedtls_mpi_init(&rr);
+  if (mbedtls_rsa_export(mbedtls_pk_rsa(pk), &n, nullptr, nullptr, nullptr,
+                           &e) != 0) {
+    mbedtls_mpi_free(&rr);
+    mbedtls_mpi_free(&e);
+    mbedtls_mpi_free(&n);
+    throw std::runtime_error("adbcpp: failed to export the RSA key");
+  }
+  compute_rr(rr, n);
+
   std::array<std::byte, kBlobSize> blob{};
   auto modulus = std::span(blob).subspan(8, kModulusBytes);
   to_little_endian(n, modulus);
@@ -97,6 +95,10 @@ std::string encode_public_key(const mbedtls_mpi &n, const mbedtls_mpi &rr,
   const std::uint32_t n0 = read_u32_le(modulus.data());
   write_u32_le(blob.data() + 0, static_cast<std::uint32_t>(kModulusBytes / 4));
   write_u32_le(blob.data() + 4, 0u - inverse_mod_2_32(n0));
+
+  mbedtls_mpi_free(&rr);
+  mbedtls_mpi_free(&e);
+  mbedtls_mpi_free(&n);
 
   std::vector<unsigned char> encoded(4 * ((kBlobSize + 2) / 3) + 1, 0);
   std::size_t length = 0;
@@ -127,11 +129,11 @@ std::filesystem::path key_directory() {
 } // namespace
 
 struct Key::Impl {
-  mbedtls_rsa_context rsa;
+  mbedtls_pk_context pk;
   std::string public_key;
 
-  Impl() { mbedtls_rsa_init(&rsa); }
-  ~Impl() { mbedtls_rsa_free(&rsa); }
+  Impl() { mbedtls_pk_init(&pk); }
+  ~Impl() { mbedtls_pk_free(&pk); }
 };
 
 Key::Key() : impl_(std::make_unique<Impl>()) {}
@@ -145,6 +147,10 @@ const std::string &Key::public_key() const noexcept {
 
 Key Key::generate() {
   Key key;
+  if (mbedtls_pk_setup(&key.impl_->pk,
+                        mbedtls_pk_info_from_type(MBEDTLS_PK_RSA)) != 0) {
+    throw std::runtime_error("adbcpp: failed to set up an RSA key");
+  }
 
   mbedtls_entropy_context entropy;
   mbedtls_ctr_drbg_context drbg;
@@ -154,8 +160,8 @@ Key Key::generate() {
   int rc =
       mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy, nullptr, 0);
   if (rc == 0) {
-    rc = mbedtls_rsa_gen_key(&key.impl_->rsa, mbedtls_ctr_drbg_random, &drbg,
-                              2048, 65537);
+    rc = mbedtls_rsa_gen_key(mbedtls_pk_rsa(key.impl_->pk),
+                              mbedtls_ctr_drbg_random, &drbg, 2048, 65537);
   }
   mbedtls_ctr_drbg_free(&drbg);
   mbedtls_entropy_free(&entropy);
@@ -163,21 +169,7 @@ Key Key::generate() {
     throw std::runtime_error("adbcpp: failed to generate an RSA key");
   }
 
-  mbedtls_mpi n;
-  mbedtls_mpi e;
-  mbedtls_mpi_init(&n);
-  mbedtls_mpi_init(&e);
-  if (mbedtls_rsa_export(&key.impl_->rsa, &n, nullptr, nullptr, nullptr, &e) !=
-      0) {
-    mbedtls_mpi_free(&e);
-    mbedtls_mpi_free(&n);
-    throw std::runtime_error("adbcpp: failed to export an RSA key");
-  }
-  auto rr = compute_rr(n);
-  key.impl_->public_key = encode_public_key(n, rr, e);
-  mbedtls_mpi_free(&rr);
-  mbedtls_mpi_free(&e);
-  mbedtls_mpi_free(&n);
+  key.impl_->public_key = encode_public_key(key.impl_->pk);
   return key;
 }
 
@@ -188,139 +180,43 @@ Key Key::load_or_generate() {
 
   if (std::filesystem::exists(private_path)) {
     std::ifstream input(private_path, std::ios::binary);
-    std::array<std::byte, kPrivateKeySize> blob{};
-    input.read(reinterpret_cast<char *>(blob.data()),
-               static_cast<std::streamsize>(blob.size()));
-    if (input.gcount() != static_cast<std::streamsize>(blob.size())) {
-      throw std::runtime_error("adbcpp: failed to read the ADB private key");
-    }
+    const std::vector<unsigned char> pem{std::istreambuf_iterator<char>(input),
+                                        std::istreambuf_iterator<char>()};
 
-    mbedtls_mpi n;
-    mbedtls_mpi e;
-    mbedtls_mpi d;
-    mbedtls_mpi p;
-    mbedtls_mpi q;
-    mbedtls_mpi_init(&n);
-    mbedtls_mpi_init(&e);
-    mbedtls_mpi_init(&d);
-    mbedtls_mpi_init(&p);
-    mbedtls_mpi_init(&q);
-    from_little_endian(n, std::span(blob).subspan(8, kModulusBytes));
-    from_little_endian(e, std::span(blob).subspan(8 + 2 * kModulusBytes, 4));
-    from_little_endian(d, std::span(blob).subspan(kBlobSize, kModulusBytes));
-    from_little_endian(
-        p, std::span(blob).subspan(kBlobSize + kModulusBytes, kHalfModulusBytes));
-    from_little_endian(q, std::span(blob).subspan(
-                             kBlobSize + kModulusBytes + kHalfModulusBytes,
-                             kHalfModulusBytes));
+    mbedtls_entropy_context entropy;
+    mbedtls_ctr_drbg_context drbg;
+    mbedtls_entropy_init(&entropy);
+    mbedtls_ctr_drbg_init(&drbg);
+    const int seed =
+        mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy, nullptr, 0);
 
     Key key;
-    int rc = mbedtls_rsa_import(&key.impl_->rsa, &n, &p, &q, &d, &e);
+    int rc = seed;
     if (rc == 0) {
-      rc = mbedtls_rsa_complete(&key.impl_->rsa);
+      rc = mbedtls_pk_parse_key(&key.impl_->pk, pem.data(), pem.size(),
+                                 nullptr, 0, mbedtls_ctr_drbg_random, &drbg);
     }
+    mbedtls_ctr_drbg_free(&drbg);
+    mbedtls_entropy_free(&entropy);
     if (rc != 0) {
-      mbedtls_mpi_free(&q);
-      mbedtls_mpi_free(&p);
-      mbedtls_mpi_free(&d);
-      mbedtls_mpi_free(&e);
-      mbedtls_mpi_free(&n);
       throw std::runtime_error("adbcpp: failed to load the ADB private key");
     }
 
-    auto rr = compute_rr(n);
-    key.impl_->public_key = encode_public_key(n, rr, e);
-    mbedtls_mpi_free(&rr);
-    mbedtls_mpi_free(&q);
-    mbedtls_mpi_free(&p);
-    mbedtls_mpi_free(&d);
-    mbedtls_mpi_free(&e);
-    mbedtls_mpi_free(&n);
+    key.impl_->public_key = encode_public_key(key.impl_->pk);
     return key;
   }
 
   Key key = generate();
   std::filesystem::create_directories(directory);
 
-  mbedtls_mpi n;
-  mbedtls_mpi e;
-  mbedtls_mpi d;
-  mbedtls_mpi p;
-  mbedtls_mpi q;
-  mbedtls_mpi_init(&n);
-  mbedtls_mpi_init(&e);
-  mbedtls_mpi_init(&d);
-  mbedtls_mpi_init(&p);
-  mbedtls_mpi_init(&q);
-  if (mbedtls_rsa_export(&key.impl_->rsa, &n, &p, &q, &d, &e) != 0) {
-    mbedtls_mpi_free(&q);
-    mbedtls_mpi_free(&p);
-    mbedtls_mpi_free(&d);
-    mbedtls_mpi_free(&e);
-    mbedtls_mpi_free(&n);
-    throw std::runtime_error("adbcpp: failed to export the RSA key");
+  std::array<unsigned char, kPemBufferSize> pem{};
+  const int length = mbedtls_pk_write_key_pem(&key.impl_->pk, pem.data(),
+                                              pem.size());
+  if (length == 0) {
+    throw std::runtime_error("adbcpp: failed to store the ADB private key");
   }
-
-  std::array<std::byte, kPrivateKeySize> blob{};
-  auto modulus = std::span(blob).subspan(8, kModulusBytes);
-  to_little_endian(n, modulus);
-  auto rr = compute_rr(n);
-  to_little_endian(rr,
-                   std::span(blob).subspan(8 + kModulusBytes, kModulusBytes));
-  to_little_endian(e, std::span(blob).subspan(8 + 2 * kModulusBytes, 4));
-  const std::uint32_t n0 = read_u32_le(modulus.data());
-  write_u32_le(blob.data() + 0, static_cast<std::uint32_t>(kModulusBytes / 4));
-  write_u32_le(blob.data() + 4, 0u - inverse_mod_2_32(n0));
-
-  std::size_t offset = kBlobSize;
-  to_little_endian(d, std::span(blob).subspan(offset, kModulusBytes));
-  offset += kModulusBytes;
-  to_little_endian(p, std::span(blob).subspan(offset, kHalfModulusBytes));
-  offset += kHalfModulusBytes;
-  to_little_endian(q, std::span(blob).subspan(offset, kHalfModulusBytes));
-  offset += kHalfModulusBytes;
-
-  mbedtls_mpi pm1;
-  mbedtls_mpi qm1;
-  mbedtls_mpi dp;
-  mbedtls_mpi dq;
-  mbedtls_mpi qinv;
-  mbedtls_mpi_init(&pm1);
-  mbedtls_mpi_init(&qm1);
-  mbedtls_mpi_init(&dp);
-  mbedtls_mpi_init(&dq);
-  mbedtls_mpi_init(&qinv);
-  const bool derived =
-      mbedtls_mpi_sub_int(&pm1, &p, 1) == 0 &&
-      mbedtls_mpi_mod_mpi(&dp, &d, &pm1) == 0 &&
-      mbedtls_mpi_sub_int(&qm1, &q, 1) == 0 &&
-      mbedtls_mpi_mod_mpi(&dq, &d, &qm1) == 0 &&
-      mbedtls_mpi_inv_mod(&qinv, &q, &p) == 0;
-  if (derived) {
-    to_little_endian(dp, std::span(blob).subspan(offset, kHalfModulusBytes));
-    offset += kHalfModulusBytes;
-    to_little_endian(dq, std::span(blob).subspan(offset, kHalfModulusBytes));
-    offset += kHalfModulusBytes;
-    to_little_endian(qinv, std::span(blob).subspan(offset, kHalfModulusBytes));
-  }
-  mbedtls_mpi_free(&qinv);
-  mbedtls_mpi_free(&dq);
-  mbedtls_mpi_free(&dp);
-  mbedtls_mpi_free(&qm1);
-  mbedtls_mpi_free(&pm1);
-  mbedtls_mpi_free(&rr);
-  mbedtls_mpi_free(&q);
-  mbedtls_mpi_free(&p);
-  mbedtls_mpi_free(&d);
-  mbedtls_mpi_free(&e);
-  mbedtls_mpi_free(&n);
-  if (!derived) {
-    throw std::runtime_error("adbcpp: failed to derive the RSA key");
-  }
-
   std::ofstream private_output(private_path, std::ios::binary | std::ios::trunc);
-  private_output.write(reinterpret_cast<const char *>(blob.data()),
-                       static_cast<std::streamsize>(blob.size()));
+  private_output.write(reinterpret_cast<const char *>(pem.data()), length);
 
   std::ofstream public_output(public_path, std::ios::binary | std::ios::trunc);
   if (public_output) {
@@ -338,16 +234,16 @@ std::vector<std::byte> Key::sign(std::span<const std::byte> token) const {
   mbedtls_ctr_drbg_context drbg;
   mbedtls_entropy_init(&entropy);
   mbedtls_ctr_drbg_init(&drbg);
-  const int seed = mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy,
-                                         nullptr, 0);
+  const int seed =
+      mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy, nullptr, 0);
 
-  std::vector<std::byte> signature(mbedtls_rsa_get_len(&impl_->rsa));
+  std::vector<unsigned char> signature(mbedtls_pk_get_len(&impl_->pk));
+  std::size_t length = 0;
   int rc = seed;
   if (rc == 0) {
-    rc = mbedtls_rsa_pkcs1_sign(
-        &impl_->rsa, mbedtls_ctr_drbg_random, &drbg, MBEDTLS_MD_SHA1,
-        hash.size(), hash.data(),
-        reinterpret_cast<unsigned char *>(signature.data()));
+    rc = mbedtls_pk_sign(&impl_->pk, MBEDTLS_MD_SHA1, hash.data(), hash.size(),
+                          signature.data(), signature.size(), &length,
+                          mbedtls_ctr_drbg_random, &drbg);
   }
   mbedtls_ctr_drbg_free(&drbg);
   mbedtls_entropy_free(&entropy);
@@ -355,7 +251,13 @@ std::vector<std::byte> Key::sign(std::span<const std::byte> token) const {
     throw std::runtime_error("adbcpp: failed to sign the token (" +
                             std::to_string(rc) + ")");
   }
-  return signature;
+  signature.resize(length);
+
+  std::vector<std::byte> result(signature.size());
+  for (std::size_t i = 0; i < signature.size(); ++i) {
+    result[i] = static_cast<std::byte>(signature[i]);
+  }
+  return result;
 }
 
 } // namespace adbcpp::crypto
