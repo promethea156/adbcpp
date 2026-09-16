@@ -1,0 +1,26 @@
+include(FetchContent)
+
+set(LIBUSB_INSTALL_TARGETS OFF)
+set(LIBUSB_BUILD_SHARED_LIBS ON)
+FetchContent_Declare(
+  libusb_cmake
+  GIT_REPOSITORY https://github.com/libusb/libusb-cmake.git
+  GIT_TAG v1.0.30-0
+)
+FetchContent_MakeAvailable(libusb_cmake)
+
+add_library(adbcpp-usb usb_transport.cpp)
+add_library(adbcpp::usb ALIAS adbcpp-usb)
+
+target_compile_features(adbcpp-usb PUBLIC cxx_std_20)
+target_compile_definitions(adbcpp-usb PRIVATE ADBCPP_EXPORTS)
+target_link_libraries(adbcpp-usb
+  PUBLIC adbcpp::adbcpp
+  PRIVATE usb-1.0
+)
+
+if(MSVC)
+  target_compile_options(adbcpp-usb PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(adbcpp-usb PRIVATE -Wall -Wextra -Wpedantic)
+endif()

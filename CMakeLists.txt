@@ -17,6 +17,7 @@ endif()
 option(ADBCPP_BUILD_TESTS "Build adbcpp tests" ${ADBCPP_IS_TOP_LEVEL})
 option(ADBCPP_BUILD_EXAMPLES "Build adbcpp examples" ${ADBCPP_IS_TOP_LEVEL})
 option(ADBCPP_BUILD_DOCS "Build adbcpp documentation" OFF)
+option(ADBCPP_BUILD_USB "Build the adbcpp USB backend (libusb)" ${ADBCPP_IS_TOP_LEVEL})
 option(ADBCPP_INSTALL "Generate adbcpp install rules" ${ADBCPP_IS_TOP_LEVEL})
 
 set(CMAKE_CXX_STANDARD 20)
@@ -60,6 +61,10 @@ if(MSVC)
   target_compile_options(adbcpp PRIVATE /W4 /permissive-)
 else()
   target_compile_options(adbcpp PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(ADBCPP_BUILD_USB)
+  add_subdirectory(src/usb)
 endif()
 
 if(ADBCPP_BUILD_TESTS)
