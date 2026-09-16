@@ -179,10 +179,6 @@ Key Key::load_or_generate() {
   const auto public_path = directory / "adbkey.pub";
 
   if (std::filesystem::exists(private_path)) {
-    std::ifstream input(private_path, std::ios::binary);
-    const std::vector<unsigned char> pem{std::istreambuf_iterator<char>(input),
-                                        std::istreambuf_iterator<char>()};
-
     mbedtls_entropy_context entropy;
     mbedtls_ctr_drbg_context drbg;
     mbedtls_entropy_init(&entropy);
@@ -193,13 +189,15 @@ Key Key::load_or_generate() {
     Key key;
     int rc = seed;
     if (rc == 0) {
-      rc = mbedtls_pk_parse_key(&key.impl_->pk, pem.data(), pem.size(),
-                                 nullptr, 0, mbedtls_ctr_drbg_random, &drbg);
+      rc = mbedtls_pk_parse_keyfile(
+          &key.impl_->pk, private_path.string().c_str(), nullptr,
+          mbedtls_ctr_drbg_random, &drbg);
     }
     mbedtls_ctr_drbg_free(&drbg);
     mbedtls_entropy_free(&entropy);
     if (rc != 0) {
-      throw std::runtime_error("adbcpp: failed to load the ADB private key");
+      throw std::runtime_error("adbcpp: failed to load the ADB private key (" +
+                              std::to_string(rc) + ")");
     }
 
     key.impl_->public_key = encode_public_key(key.impl_->pk);
