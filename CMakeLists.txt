@@ -34,6 +34,8 @@ add_library(adbcpp
   src/connection.cpp
   src/protocol/message.cpp
   src/session.cpp
+  src/shell.cpp
+  src/stream.cpp
 )
 add_library(adbcpp::adbcpp ALIAS adbcpp)
 

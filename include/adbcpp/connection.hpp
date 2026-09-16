@@ -34,6 +34,9 @@ public:
   /// Receives the next frame from the connection.
   Frame receive();
 
+  /// Allocates a unique, non-zero local stream id.
+  std::uint32_t allocate_local_id() noexcept { return next_local_id_++; }
+
   /// The protocol version reported by the device.
   std::uint32_t device_version() const noexcept { return device_version_; }
 
@@ -44,6 +47,7 @@ private:
   Session session_;
   std::uint32_t device_version_ = 0;
   std::uint32_t max_data_ = 0;
+  std::uint32_t next_local_id_ = 1;
 };
 
 } // namespace adbcpp

@@ -12,6 +12,7 @@ add_executable(adbcpp_tests
   connection_test.cpp
   protocol_message_test.cpp
   session_test.cpp
+  stream_test.cpp
 )
 target_link_libraries(adbcpp_tests
   PRIVATE adbcpp::adbcpp adbcpp::crypto Catch2::Catch2WithMain
