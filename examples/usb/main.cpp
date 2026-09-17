@@ -8,7 +8,7 @@
 #include "adbcpp/shell.hpp"
 #include "adbcpp/usb/usb_transport.hpp"
 
-int main() {
+int main(int argc, char **argv) {
   adbcpp::usb::DeviceId id;
   id.vendor_id = 0x22D9;
   id.product_id = 0x2769;
@@ -36,7 +36,8 @@ int main() {
     std::cout << "connected to a device running protocol 0x" << std::hex
               << connection.device_version() << std::dec << '\n';
 
-    const auto result = adbcpp::run(connection, "echo hello");
+    const std::string command = argc > 1 ? argv[1] : "echo hello";
+    const auto result = adbcpp::run(connection, command);
     std::cout << result.output;
 
     transport.close();
