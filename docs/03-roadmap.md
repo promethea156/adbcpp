@@ -11,7 +11,7 @@ This is deliberate: rather than completing an entire layer before anything is ru
 **Slice 1 — complete.** `echo hello` runs over USB against a real device and its output is captured:
 
 - USB transport, the `CNXN` → `AUTH` → signed reply → device `CNXN` handshake, the `adbkey`/`adbkey.pub` key pair, and the `OPEN`/`OKAY`/`WRTE`/`CLSE` stream lifecycle with `shell_v2` packet parsing.
-- Public API: `Connection`, `Stream`, and `run(connection, command)`, which returns the merged output and the exit code.
+- Public API: `Connection`, `Stream`, and `run(connection, command)`, which returns a `Result<CommandResult>` holding the merged output, the exit code, and whether the command succeeded.
 
 **Slice 2 — complete.** A directory is listed over the `sync` service and its entries are returned as structured data:
 
@@ -36,7 +36,7 @@ The wire format is documented in [`06-sync-protocol.md`](06-sync-protocol.md), a
 
 - `install` pushes the APK into the device's `/data/local/tmp` with `push`, runs `pm install` over the shell service, and removes the pushed copy whether the install worked or not. `uninstall` runs `pm uninstall`, and `keep_data` adds `-k`.
 - `options` are passed to `pm install` verbatim, so `-r` reinstalls a package in place and keeps its data.
-- Public API: `install(connection, apk, options)` and `uninstall(connection, package, keep_data)`, both returning a `PackageResult`.
+- Public API: `install(connection, apk, options)` and `uninstall(connection, package, keep_data)`, both returning a `Result<PackageResult>`.
 
 Nothing was needed at the protocol layer: the slice is composition, as the roadmap predicted. `push` is the `sync` `SEND` request and `pm install` is a shell command, so both already existed.
 
@@ -125,7 +125,7 @@ package.
 ## Slice 6 — App Control
 
 - Launch via `am start`, close via `am force-stop`.
-- Running check via `pidof` / `dumpsys` / `ps`.
+- Running check via `pidof`, which answers both cases directly: exit code 0 with the pid when the process runs, exit code 1 with no output when it does not. It matches a process name rather than a package name, so the answer is an approximation.
 - Public API: `launch(package)`, `close(package)`, `is_running(package)`.
 
 **Acceptance:** launch, detect, and close an app on a real device.
@@ -135,7 +135,7 @@ package.
 The last piece of the [initial scope](01-objective.md#initial-scope), "connection management": reaching a device that is not on the other end of a USB cable.
 
 - A `TcpTransport` over a socket, implementing the same `Transport` interface as `UsbTransport`, so every service works over it unchanged. An emulator's ADB listener (`localhost:5555`) is the common case.
-- Public API: `TcpTransport(endpoint)`, mirroring `UsbTransport(id)`.
+- Public API: `TcpTransport::open(endpoint)`, mirroring `UsbTransport::open(id)`.
 
 **Acceptance:** run `echo hello` and a file round-trip against an emulator over TCP.
 
@@ -164,5 +164,4 @@ Obligations that run through every slice, with the current state of each.
 - **Fall back to `shell:` when `shell_v2` is absent.** `run` requires `shell_v2`, while `list` and `stat` already fall back to their v1 forms.
 - **Use `sendrecv_v2`, or stop advertising it.** The CNXN banner claims `sendrecv_v2` with brotli, lz4, and zstd, but `pull` and `push` always send the v1 forms, so a transfer is never compressed. The rest of the banner is copied from adb byte-for-byte and therefore also claims services that are never opened (`abb`, `apex`, `remount_shell`, `track_app`, `devraw`, `server_status`, ...); it should be trimmed to what the library implements.
 - **Validate what is received.** `Session::receive` takes `data_length` as authoritative and checks neither `magic` nor the CRC, so a desynchronized stream is not detected. The protocol requires a bad header or payload to close the connection, because it cannot recover from a framing error (see blocker 13's note).
-- **Unify the result types.** `CommandResult` and `PackageResult` have the same shape under two names; the failures now share `Error`.
 - Replace the dynamically-linked libusb backend with platform-native USB APIs (WinUSB, IOKit, `usbfs`) to remove the third-party dependency and its license obligations. See [USB Backend](01-objective.md#usb-backend).
