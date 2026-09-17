@@ -149,6 +149,7 @@ inside the `Result`:
 | `stat` → `std::optional<FileStat>` | → `Result<std::optional<FileStat>>` |
 | `run` → `CommandResult` | → `Result<CommandResult>` |
 | `install`, `uninstall` → `PackageResult` | → `Result<PackageResult>` |
+| `Key::fingerprint` → `std::string` | → `Result<std::string>` |
 
 `Key::sign` returns `Result<std::vector<std::byte>>` because mbedTLS can refuse to sign, and it is
 the `Signer` callback's type, so `Connection::connect` propagates it.
@@ -165,9 +166,7 @@ boundary, and what it catches becomes an `Error`.
 | mbedTLS | A C API that returns codes. No catch is needed. |
 | libusb | A C API that returns codes. No catch is needed. |
 | `tl::expected` | `.value()` and `.error()` assert on the wrong alternative. The library never calls them without checking, so nothing is thrown; `operator*`, `operator->`, and `value_or` are used instead. |
-
-`std::bad_alloc` is the one exception that can still escape: it comes from the allocator, not from the
-library, and there is no way to report it without allocating. It is documented here rather than caught.
+| `std::bad_alloc` | Not caught. It comes from the allocator rather than the library, and there is no way to report it without allocating, so it is documented here instead of handled. |
 
 ## The dependency
 
@@ -194,3 +193,11 @@ install rules export it so a `find_package` consumer gets it too.
 The core target is no longer dependency-free once this lands, so the "Extra dependency" column for
 `adbcpp::adbcpp` in [`05-usage.md`](05-usage.md) gains `tl::expected`, and the claim in
 [`01-objective.md`](01-objective.md) is narrowed to the crypto and USB backends.
+
+## The state of the conversion
+
+The conversion is complete. Every layer returns a `Result`, from `Transport` and `Session` up through
+`Stream`, the `sync` and shell services, `app`, and `crypto`; the tests and the examples are converted
+with them, and nothing in the library calls `value()` or `error()` without checking first. `format-check` is
+clean, the 66 unit tests pass, and the device test passes against the test device. Slice 6 is the first work
+that is written in the new shape rather than converted to it.

@@ -30,7 +30,7 @@ There are three targets:
 
 | Target           | What it adds                                  | Extra dependency |
 | ---------------- | --------------------------------------------- | ---------------- |
-| `adbcpp::adbcpp` | Protocol, session, streams, shell, mock transport | none             |
+| `adbcpp::adbcpp` | Protocol, session, streams, shell, mock transport | `tl::expected`   |
 | `adbcpp::crypto` | `adbcpp::crypto::Key` (ADB key pair)           | mbedTLS          |
 | `adbcpp::usb`    | `adbcpp::usb::UsbTransport` (USB transport)    | libusb           |
 
@@ -64,6 +64,70 @@ Include what you use:
 #include "adbcpp/testing/mock_transport.hpp"   // adbcpp::testing::MockTransport
 ```
 
+## The Error Model
+
+`adbcpp` does not throw for its own failures. Every operation that can fail returns a
+`Result<T>`: the value when it worked, or the `Error` explaining why it did not. The
+caller checks the result and decides what to do with it. The design is described in full
+in [`07-error-model.md`](07-error-model.md).
+
+Every operation is in one of two cases, and the shape of its result follows the case.
+The distinction is not "severe versus mild", it is **who is being reported on**:
+
+- **The device answered.** The answer is the value: a command's output and exit code, a
+  question's answer, or nothing at all for an operation with nothing to report. A `stat` of
+  a path that does not exist is this case, because the device answered that there is
+  nothing there, so `stat` returns an empty `std::optional`.
+- **The operation could not be carried out.** The transport failed, the stream failed, the
+  device did not answer as the protocol requires, or it refused the request with a reason.
+  That is an `Error`, returned as the unexpected value of the `Result`.
+
+```cpp
+// include/adbcpp/error.hpp
+enum class ErrorCode { InvalidArgument, Transport, Protocol, Device, Crypto, Io };
+
+struct Error
+{
+    ErrorCode code = ErrorCode::Protocol;
+    std::string message;
+};
+
+template <typename T>
+using Result = tl::expected<T, Error>;
+using Status = tl::expected<void, Error>;
+```
+
+```cpp
+// include/adbcpp/shell.hpp
+struct CommandResult
+{
+    std::string output;         // stdout and stderr, combined
+    std::uint8_t exit_code = 0;
+    bool success = false;       // set per command; see below
+};
+```
+
+`Result` is `tl::expected` itself, so `has_value()`, `operator*`, `operator->`, and
+`value_or` are available. Check with `has_value()` or `operator bool`, then unwrap with
+`operator*` or `operator->`; `value()` and `error()` assert on the wrong alternative and
+must not be called before checking. A caller prints `error: <message>`.
+
+```cpp
+const auto result = adbcpp::run(connection, "echo hello");
+if (!result)
+{
+    std::cerr << "error: " << result.error().message << '\n';
+    return 1;
+}
+std::cout << result->output;
+```
+
+A device's rejection is an answer rather than an `Error`. `install` and `uninstall` set
+`CommandResult::success` to `exit_code == 0` **and** the output says `Success`, because
+`pm` reports a rejection in its output. A package manager that refuses an APK is therefore
+reported with `success == false` and its output, while a failed transfer or stream is an
+`Error`.
+
 ## Run a Shell Command over USB
 
 This is the main use case: connect directly to a device over USB and run a command,
@@ -85,34 +149,60 @@ int main()
     id.vendor_id = 0x22D9;
     id.product_id = 0x2769;
 
-    // Opening a device that is absent (or claimed by a running adb server) throws,
+    // Opening a device that is absent (or claimed by a running adb server) fails,
     // so check for it first.
-    if (!adbcpp::usb::UsbTransport::is_present(id))
+    const auto present = adbcpp::usb::UsbTransport::is_present(id);
+    if (!present)
+    {
+        std::cerr << "error: " << present.error().message << '\n';
+        return 1;
+    }
+    if (!*present)
     {
         std::cerr << "no matching USB device found\n";
         return 1;
     }
 
-    adbcpp::usb::UsbTransport transport(id);
+    auto transport = adbcpp::usb::UsbTransport::open(id);
+    if (!transport)
+    {
+        std::cerr << "error: " << transport.error().message << '\n';
+        return 1;
+    }
 
     // Reuse adb's key, so the device does not show the approval prompt. The key
     // must outlive the connection, because the signer below captures it.
     const auto key = adbcpp::crypto::Key::load_or_generate();
-    const std::string &public_key_string = key.public_key();
+    if (!key)
+    {
+        std::cerr << "error: " << key.error().message << '\n';
+        return 1;
+    }
+    const std::string &public_key_string = key->public_key();
     const auto public_key = std::span(reinterpret_cast<const std::byte *>(public_key_string.data()),
                                      public_key_string.size());
 
-    // The connection performs the CNXN/AUTH handshake on construction.
-    adbcpp::Connection connection(transport, public_key,
-                                  [&key](std::span<const std::byte> token) { return key.sign(token); });
+    // The connection performs the CNXN/AUTH handshake in `connect`.
+    auto connection = adbcpp::Connection::connect(*transport, public_key,
+                                  [&key](std::span<const std::byte> token) { return key->sign(token); });
+    if (!connection)
+    {
+        std::cerr << "error: " << connection.error().message << '\n';
+        return 1;
+    }
 
-    const adbcpp::CommandResult result = adbcpp::run(connection, "echo hello");
+    const auto result = adbcpp::run(*connection, "echo hello");
+    if (!result)
+    {
+        std::cerr << "error: " << result.error().message << '\n';
+        return 1;
+    }
 
-    std::cout << "exit code: " << static_cast<int>(result.exit_code) << '\n';
-    std::cout << result.output;
+    std::cout << "exit code: " << static_cast<int>(result->exit_code) << '\n';
+    std::cout << result->output;
 
-    transport.close();
-    return result.exit_code;
+    transport->close();
+    return result->exit_code;
 }
 ```
 
@@ -141,21 +231,42 @@ int main()
     id.vendor_id = 0x22D9;
     id.product_id = 0x2769;
 
-    adbcpp::usb::UsbTransport transport(id);
+    auto transport = adbcpp::usb::UsbTransport::open(id);
+    if (!transport)
+    {
+        std::cerr << "error: " << transport.error().message << '\n';
+        return 1;
+    }
     const auto key = adbcpp::crypto::Key::load_or_generate();
-    const std::string &public_key_string = key.public_key();
+    if (!key)
+    {
+        std::cerr << "error: " << key.error().message << '\n';
+        return 1;
+    }
+    const std::string &public_key_string = key->public_key();
     const auto public_key = std::span(reinterpret_cast<const std::byte *>(public_key_string.data()),
                                      public_key_string.size());
 
-    adbcpp::Connection connection(transport, public_key,
-                                  [&key](std::span<const std::byte> token) { return key.sign(token); });
+    auto connection = adbcpp::Connection::connect(*transport, public_key,
+                                  [&key](std::span<const std::byte> token) { return key->sign(token); });
+    if (!connection)
+    {
+        std::cerr << "error: " << connection.error().message << '\n';
+        return 1;
+    }
 
-    for (const auto &entry : adbcpp::list(connection, "/sdcard"))
+    const auto entries = adbcpp::list(*connection, "/sdcard");
+    if (!entries)
+    {
+        std::cerr << "error: " << entries.error().message << '\n';
+        return 1;
+    }
+    for (const auto &entry : *entries)
     {
         std::cout << (entry.is_directory() ? 'd' : '-') << ' ' << entry.size << ' ' << entry.name << '\n';
     }
 
-    transport.close();
+    transport->close();
     return 0;
 }
 ```
@@ -198,19 +309,39 @@ int main()
     id.vendor_id = 0x22D9;
     id.product_id = 0x2769;
 
-    adbcpp::usb::UsbTransport transport(id);
+    auto transport = adbcpp::usb::UsbTransport::open(id);
+    if (!transport)
+    {
+        std::cerr << "error: " << transport.error().message << '\n';
+        return 1;
+    }
     const auto key = adbcpp::crypto::Key::load_or_generate();
-    const std::string &public_key_string = key.public_key();
+    if (!key)
+    {
+        std::cerr << "error: " << key.error().message << '\n';
+        return 1;
+    }
+    const std::string &public_key_string = key->public_key();
     const auto public_key = std::span(reinterpret_cast<const std::byte *>(public_key_string.data()),
                                      public_key_string.size());
 
-    adbcpp::Connection connection(transport, public_key,
-                                  [&key](std::span<const std::byte> token) { return key.sign(token); });
+    auto connection = adbcpp::Connection::connect(*transport, public_key,
+                                  [&key](std::span<const std::byte> token) { return key->sign(token); });
+    if (!connection)
+    {
+        std::cerr << "error: " << connection.error().message << '\n';
+        return 1;
+    }
 
     // The local file is created or truncated, and its directory must exist.
-    adbcpp::pull(connection, "/sdcard/Download/report.pdf", "report.pdf");
+    const auto pulled = adbcpp::pull(*connection, "/sdcard/Download/report.pdf", "report.pdf");
+    if (!pulled)
+    {
+        std::cerr << "error: " << pulled.error().message << '\n';
+        return 1;
+    }
 
-    transport.close();
+    transport->close();
     return 0;
 }
 ```
@@ -240,19 +371,39 @@ int main()
     id.vendor_id = 0x22D9;
     id.product_id = 0x2769;
 
-    adbcpp::usb::UsbTransport transport(id);
+    auto transport = adbcpp::usb::UsbTransport::open(id);
+    if (!transport)
+    {
+        std::cerr << "error: " << transport.error().message << '\n';
+        return 1;
+    }
     const auto key = adbcpp::crypto::Key::load_or_generate();
-    const std::string &public_key_string = key.public_key();
+    if (!key)
+    {
+        std::cerr << "error: " << key.error().message << '\n';
+        return 1;
+    }
+    const std::string &public_key_string = key->public_key();
     const auto public_key = std::span(reinterpret_cast<const std::byte *>(public_key_string.data()),
                                      public_key_string.size());
 
-    adbcpp::Connection connection(transport, public_key,
-                                  [&key](std::span<const std::byte> token) { return key.sign(token); });
+    auto connection = adbcpp::Connection::connect(*transport, public_key,
+                                  [&key](std::span<const std::byte> token) { return key->sign(token); });
+    if (!connection)
+    {
+        std::cerr << "error: " << connection.error().message << '\n';
+        return 1;
+    }
 
     // An existing directory receives the file under its local name.
-    adbcpp::push(connection, "report.pdf", "/sdcard/Download/");
+    const auto pushed = adbcpp::push(*connection, "report.pdf", "/sdcard/Download/");
+    if (!pushed)
+    {
+        std::cerr << "error: " << pushed.error().message << '\n';
+        return 1;
+    }
 
-    transport.close();
+    transport->close();
     return 0;
 }
 ```
@@ -263,7 +414,7 @@ local file's permissions and modification time.
 ## Stat a Path
 
 `stat` reports a path's metadata, following symbolic links. A path that does not
-exist is returned as `std::nullopt` rather than thrown.
+exist is an empty `std::optional` rather than an `Error`.
 
 ```cpp
 #include <iostream>
@@ -281,26 +432,46 @@ int main()
     id.vendor_id = 0x22D9;
     id.product_id = 0x2769;
 
-    adbcpp::usb::UsbTransport transport(id);
+    auto transport = adbcpp::usb::UsbTransport::open(id);
+    if (!transport)
+    {
+        std::cerr << "error: " << transport.error().message << '\n';
+        return 1;
+    }
     const auto key = adbcpp::crypto::Key::load_or_generate();
-    const std::string &public_key_string = key.public_key();
+    if (!key)
+    {
+        std::cerr << "error: " << key.error().message << '\n';
+        return 1;
+    }
+    const std::string &public_key_string = key->public_key();
     const auto public_key = std::span(reinterpret_cast<const std::byte *>(public_key_string.data()),
                                      public_key_string.size());
 
-    adbcpp::Connection connection(transport, public_key,
-                                  [&key](std::span<const std::byte> token) { return key.sign(token); });
-
-    const auto info = adbcpp::stat(connection, "/sdcard/Download/report.pdf");
-    if (info)
+    auto connection = adbcpp::Connection::connect(*transport, public_key,
+                                  [&key](std::span<const std::byte> token) { return key->sign(token); });
+    if (!connection)
     {
-        std::cout << (info->is_directory() ? 'd' : '-') << ' ' << info->size << '\n';
+        std::cerr << "error: " << connection.error().message << '\n';
+        return 1;
+    }
+
+    const auto info = adbcpp::stat(*connection, "/sdcard/Download/report.pdf");
+    if (!info)
+    {
+        std::cerr << "error: " << info.error().message << '\n';
+        return 1;
+    }
+    if (*info)
+    {
+        std::cout << ((*info)->is_directory() ? 'd' : '-') << ' ' << (*info)->size << '\n';
     }
     else
     {
         std::cout << "no such path\n";
     }
 
-    transport.close();
+    transport->close();
     return 0;
 }
 ```
@@ -327,29 +498,54 @@ int main()
     id.vendor_id = 0x22D9;
     id.product_id = 0x2769;
 
-    adbcpp::usb::UsbTransport transport(id);
+    auto transport = adbcpp::usb::UsbTransport::open(id);
+    if (!transport)
+    {
+        std::cerr << "error: " << transport.error().message << '\n';
+        return 1;
+    }
     const auto key = adbcpp::crypto::Key::load_or_generate();
-    const std::string &public_key_string = key.public_key();
+    if (!key)
+    {
+        std::cerr << "error: " << key.error().message << '\n';
+        return 1;
+    }
+    const std::string &public_key_string = key->public_key();
     const auto public_key = std::span(reinterpret_cast<const std::byte *>(public_key_string.data()),
                                      public_key_string.size());
 
-    adbcpp::Connection connection(transport, public_key,
-                                  [&key](std::span<const std::byte> token) { return key.sign(token); });
+    auto connection = adbcpp::Connection::connect(*transport, public_key,
+                                  [&key](std::span<const std::byte> token) { return key->sign(token); });
+    if (!connection)
+    {
+        std::cerr << "error: " << connection.error().message << '\n';
+        return 1;
+    }
 
     // `-r` replaces an existing package and keeps its data.
-    const adbcpp::PackageResult installed = adbcpp::install(connection, "app.apk", "-r");
-    if (!installed.success)
+    const auto installed = adbcpp::install(*connection, "app.apk", "-r");
+    if (!installed)
     {
-        std::cerr << "install failed: " << installed.failure_reason() << '\n';
+        std::cerr << "error: " << installed.error().message << '\n';
+        return 1;
+    }
+    if (!installed->success)
+    {
+        std::cerr << "install failed: " << installed->failure_reason() << '\n';
     }
 
-    const adbcpp::PackageResult removed = adbcpp::uninstall(connection, "com.example.app");
-    if (!removed.success)
+    const auto removed = adbcpp::uninstall(*connection, "com.example.app");
+    if (!removed)
     {
-        std::cerr << "uninstall failed: " << removed.failure_reason() << '\n';
+        std::cerr << "error: " << removed.error().message << '\n';
+        return 1;
+    }
+    if (!removed->success)
+    {
+        std::cerr << "uninstall failed: " << removed->failure_reason() << '\n';
     }
 
-    transport.close();
+    transport->close();
     return 0;
 }
 ```
@@ -360,8 +556,8 @@ runtime permissions. `uninstall(connection, "com.example.app", true)` adds `-k` 
 `pm uninstall`, which keeps the package's data and cache directories.
 
 A package manager that rejects the request is a normal answer rather than an error, so
-both return `success == false` with the device's output instead of throwing. An
-exception means the transfer or the stream failed, not the install.
+both return `success == false` with the device's output instead of an `Error`. An
+`Error` means the transfer or the stream failed, not the install.
 `PackageResult::failure_reason()` extracts the reason from `Failure [REASON]`; the
 device does not always answer in that form, so `output` always holds its answer
 verbatim (blocker 25).
@@ -382,9 +578,21 @@ int main()
 {
     // Loads the existing key, or generates one on first use.
     const auto key = adbcpp::crypto::Key::load_or_generate();
+    if (!key)
+    {
+        std::cerr << "error: " << key.error().message << '\n';
+        return 1;
+    }
 
-    std::cout << "fingerprint: " << key.fingerprint() << '\n';
-    std::cout << "public key:  " << key.public_key() << '\n';
+    const auto fingerprint = key->fingerprint();
+    if (!fingerprint)
+    {
+        std::cerr << "error: " << fingerprint.error().message << '\n';
+        return 1;
+    }
+
+    std::cout << "fingerprint: " << *fingerprint << '\n';
+    std::cout << "public key:  " << key->public_key() << '\n';
     return 0;
 }
 ```
@@ -419,10 +627,15 @@ int main()
     transport.feed(device.encode());
 
     // The connection performs the handshake against the queued messages.
-    adbcpp::Connection connection(transport);
+    const auto connection = adbcpp::Connection::connect(transport);
+    if (!connection)
+    {
+        std::cerr << "error: " << connection.error().message << '\n';
+        return 1;
+    }
 
-    std::cout << "device version: 0x" << std::hex << connection.device_version() << '\n';
-    std::cout << "device max data: " << std::dec << connection.max_data() << '\n';
+    std::cout << "device version: 0x" << std::hex << connection->device_version() << '\n';
+    std::cout << "device max data: " << std::dec << connection->max_data() << '\n';
     return 0;
 }
 ```
@@ -465,12 +678,18 @@ int main()
     // is ours (2). Our own frames are the other way round.
     const std::string text = "hello\n";
     const auto payload = std::span(reinterpret_cast<const std::byte *>(text.data()), text.size());
+    const auto length = adbcpp::protocol::Message::data_length_of(payload);
+    if (!length)
+    {
+        std::cerr << "error: " << length.error().message << '\n';
+        return 1;
+    }
 
     adbcpp::protocol::Message wrte;
     wrte.command = adbcpp::protocol::kWrte;
     wrte.arg0 = 7;
     wrte.arg1 = 2;
-    wrte.data_length = adbcpp::protocol::Message::data_length_of(payload);
+    wrte.data_length = *length;
     wrte.data_crc32 = adbcpp::protocol::Message::compute_crc32(payload);
     wrte.magic = adbcpp::protocol::Message::compute_magic(wrte.command);
     transport.feed(wrte.encode());
@@ -483,13 +702,28 @@ int main()
     clse.magic = adbcpp::protocol::Message::compute_magic(clse.command);
     transport.feed(clse.encode());
 
-    adbcpp::Connection connection(transport);
-    adbcpp::Stream stream(connection, "shell:echo hello");
+    auto connection = adbcpp::Connection::connect(transport);
+    if (!connection)
+    {
+        std::cerr << "error: " << connection.error().message << '\n';
+        return 1;
+    }
+    auto stream = adbcpp::Stream::open(*connection, "shell:echo hello");
+    if (!stream)
+    {
+        std::cerr << "error: " << stream.error().message << '\n';
+        return 1;
+    }
 
     // read_all() acknowledges every WRTE and returns until the device closes.
-    const auto output = stream.read_all();
-    std::cout.write(reinterpret_cast<const char *>(output.data()),
-                     static_cast<std::streamsize>(output.size()));
+    const auto output = stream->read_all();
+    if (!output)
+    {
+        std::cerr << "error: " << output.error().message << '\n';
+        return 1;
+    }
+    std::cout.write(reinterpret_cast<const char *>(output->data()),
+                     static_cast<std::streamsize>(output->size()));
     return 0;
 }
 ```
@@ -513,11 +747,18 @@ int main()
     const std::string banner = "host::features=shell_v2";
     const auto payload = std::span(reinterpret_cast<const std::byte *>(banner.data()), banner.size());
 
+    const auto length = adbcpp::protocol::Message::data_length_of(payload);
+    if (!length)
+    {
+        std::cerr << "error: " << length.error().message << '\n';
+        return 1;
+    }
+
     adbcpp::protocol::Message cnxn;
     cnxn.command = adbcpp::protocol::kCnxn;
     cnxn.arg0 = adbcpp::protocol::kVersion;
     cnxn.arg1 = adbcpp::protocol::kMaxData;
-    cnxn.data_length = adbcpp::protocol::Message::data_length_of(payload);
+    cnxn.data_length = *length;
     cnxn.data_crc32 = adbcpp::protocol::Message::compute_crc32(payload);
     cnxn.magic = adbcpp::protocol::Message::compute_magic(cnxn.command);
 
@@ -552,16 +793,27 @@ int main()
 
     const std::string text = "hello";
     const auto payload = std::span(reinterpret_cast<const std::byte *>(text.data()), text.size());
+    const auto length = adbcpp::protocol::Message::data_length_of(payload);
+    if (!length)
+    {
+        std::cerr << "error: " << length.error().message << '\n';
+        return 1;
+    }
 
     adbcpp::protocol::Message wrte;
     wrte.command = adbcpp::protocol::kWrte;
     wrte.arg0 = 2;
     wrte.arg1 = 7;
-    wrte.data_length = adbcpp::protocol::Message::data_length_of(payload);
+    wrte.data_length = *length;
     wrte.data_crc32 = adbcpp::protocol::Message::compute_crc32(payload);
     wrte.magic = adbcpp::protocol::Message::compute_magic(wrte.command);
 
-    session.send(wrte, payload);
+    const auto sent = session.send(wrte, payload);
+    if (!sent)
+    {
+        std::cerr << "error: " << sent.error().message << '\n';
+        return 1;
+    }
 
     // The mock transport received the header and then the payload.
     std::cout << "wrote " << transport.written().size() << " bytes\n";
@@ -586,7 +838,7 @@ underneath.
 class VectorTransport : public adbcpp::Transport
 {
 public:
-    std::size_t read(std::span<std::byte> buffer) override
+    adbcpp::Result<std::size_t> read(std::span<std::byte> buffer) override
     {
         const std::size_t available = incoming_.size() - offset_;
         const std::size_t count = std::min(available, buffer.size());
@@ -596,9 +848,10 @@ public:
         return count; // 0 means end of stream.
     }
 
-    void write(std::span<const std::byte> data) override
+    adbcpp::Status write(std::span<const std::byte> data) override
     {
         outgoing_.insert(outgoing_.end(), data.begin(), data.end());
+        return {};
     }
 
     void close() override { closed_ = true; }
@@ -639,24 +892,44 @@ int main()
     id.vendor_id = 0x22D9;
     id.product_id = 0x2769;
 
-    adbcpp::usb::UsbTransport transport(id);
+    auto transport = adbcpp::usb::UsbTransport::open(id);
+    if (!transport)
+    {
+        std::cerr << "error: " << transport.error().message << '\n';
+        return 1;
+    }
     const auto key = adbcpp::crypto::Key::load_or_generate();
-    const std::string &public_key_string = key.public_key();
+    if (!key)
+    {
+        std::cerr << "error: " << key.error().message << '\n';
+        return 1;
+    }
+    const std::string &public_key_string = key->public_key();
     const auto public_key = std::span(reinterpret_cast<const std::byte *>(public_key_string.data()),
                                      public_key_string.size());
 
-    adbcpp::Connection connection(transport, public_key,
-                                  [&key](std::span<const std::byte> token) { return key.sign(token); });
+    auto connection = adbcpp::Connection::connect(*transport, public_key,
+                                  [&key](std::span<const std::byte> token) { return key->sign(token); });
+    if (!connection)
+    {
+        std::cerr << "error: " << connection.error().message << '\n';
+        return 1;
+    }
 
-    if (connection.requested_authorization())
+    if (connection->requested_authorization())
     {
         std::cerr << "approve the USB debugging prompt on the device\n";
     }
 
-    const auto result = adbcpp::run(connection, "id");
-    std::cout << result.output;
-    transport.close();
-    return result.exit_code;
+    const auto result = adbcpp::run(*connection, "id");
+    if (!result)
+    {
+        std::cerr << "error: " << result.error().message << '\n';
+        return 1;
+    }
+    std::cout << result->output;
+    transport->close();
+    return result->exit_code;
 }
 ```
 
@@ -664,34 +937,35 @@ int main()
 
 | I want to...                        | Use                                                     |
 | ------------------------------------ | ------------------------------------------------------- |
-| Check that a device is attached        | `adbcpp::usb::UsbTransport::is_present(id)`             |
-| Open a USB transport                  | `adbcpp::usb::UsbTransport transport(id)`               |
-| Load or create the ADB key              | `adbcpp::crypto::Key::load_or_generate()`               |
-| Sign an AUTH token                     | `key.sign(token)`                                       |
-| Get the key's device fingerprint        | `key.fingerprint()`                                     |
-| Handshake and connect                  | `adbcpp::Connection connection(transport, public_key, signer)` |
-| Run a shell command                    | `adbcpp::run(connection, "echo hello")`                  |
-| Read a command's output                 | `result.output`                                         |
-| Read a command's exit code              | `result.exit_code`                                      |
-| List a directory                        | `adbcpp::list(connection, "/sdcard")`                    |
+| Check that a device is attached        | `adbcpp::usb::UsbTransport::is_present(id)` → `Result<bool>` |
+| Open a USB transport                  | `adbcpp::usb::UsbTransport::open(id)` → `Result<UsbTransport>` |
+| Load or create the ADB key              | `adbcpp::crypto::Key::load_or_generate()` → `Result<Key>` |
+| Sign an AUTH token                     | `key->sign(token)`                                      |
+| Get the key's device fingerprint        | `key->fingerprint()` → `Result<std::string>`              |
+| Handshake and connect                  | `adbcpp::Connection::connect(transport, public_key, signer)` → `Result<Connection>` |
+| Run a shell command                    | `adbcpp::run(connection, "echo hello")` → `Result<CommandResult>` |
+| Read a command's output                 | `result->output`                                        |
+| Read a command's exit code              | `result->exit_code`                                     |
+| Check whether a command worked           | `result->success`                                       |
+| List a directory                        | `adbcpp::list(connection, "/sdcard")` → `Result<std::vector<DirEntry>>` |
 | Check if an entry is a directory         | `entry.is_directory()`                                   |
 | Check if an entry is a regular file       | `entry.is_regular()`                                     |
-| Pull a file from the device              | `adbcpp::pull(connection, "/sdcard/a", "a")`              |
-| Push a file to the device                | `adbcpp::push(connection, "a", "/sdcard/a")`              |
-| Stat a path on the device                | `adbcpp::stat(connection, "/sdcard/a")`                   |
-| Install an APK                          | `adbcpp::install(connection, "app.apk", "-r")`            |
-| Uninstall a package                     | `adbcpp::uninstall(connection, "com.example.app")`         |
-| Read a package manager's failure reason    | `result.failure_reason()`                                  |
-| Open a service manually                | `adbcpp::Stream stream(connection, "shell:echo hello")`   |
-| Read a stream until the device closes    | `stream.read_all()`                                     |
-| Read an exact number of bytes            | `stream.read(buffer)`                                    |
-| Write to a stream                      | `stream.write(bytes)`                                   |
+| Pull a file from the device              | `adbcpp::pull(connection, "/sdcard/a", "a")` → `Status`    |
+| Push a file to the device                | `adbcpp::push(connection, "a", "/sdcard/a")` → `Status`    |
+| Stat a path on the device                | `adbcpp::stat(connection, "/sdcard/a")` → `Result<std::optional<FileStat>>` |
+| Install an APK                          | `adbcpp::install(connection, "app.apk", "-r")` → `Result<PackageResult>` |
+| Uninstall a package                     | `adbcpp::uninstall(connection, "com.example.app")` → `Result<PackageResult>` |
+| Read a package manager's failure reason    | `result->failure_reason()`                                |
+| Open a service manually                | `adbcpp::Stream::open(connection, "shell:echo hello")` → `Result<Stream>` |
+| Read a stream until the device closes    | `stream->read_all()` → `Result<std::vector<std::byte>>`    |
+| Read an exact number of bytes            | `stream->read(buffer)` → `Status`                        |
+| Write to a stream                      | `stream->write(bytes)` → `Status`                        |
 | Test without a device                  | `adbcpp::testing::MockTransport` + `feed()`              |
 | Send/receive raw messages              | `adbcpp::Session`                                        |
-| Inspect the negotiated features         | `connection.device_version()`, `connection.max_data()`     |
-| Check a device feature                  | `connection.supports_feature("ls_v2")`                     |
-| Check delayed acknowledgements           | `connection.supports_delayed_ack()`                       |
-| Detect the authorization prompt          | `connection.requested_authorization()`                    |
+| Inspect the negotiated features         | `connection->device_version()`, `connection->max_data()`     |
+| Check a device feature                  | `connection->supports_feature("ls_v2")`                     |
+| Check delayed acknowledgements           | `connection->supports_delayed_ack()`                       |
+| Detect the authorization prompt          | `connection->requested_authorization()`                    |
 
 ## Pitfalls
 
@@ -711,9 +985,14 @@ int main()
 - **This is not a full `adb` replacement yet.** The shell service, `sync`-based
   directory listing, file transfer in both directions, and install and uninstall are
   exposed; app control is still on the roadmap ([`03-roadmap.md`](03-roadmap.md)).
+- **`value()` and `error()` assert on the wrong alternative.** Check a `Result` with
+  `has_value()` or `operator bool` first, then unwrap it with `operator*` or
+  `operator->`. The library never calls `value()` or `error()` without checking, and
+  neither should a caller: calling either on the wrong alternative is a programming
+  error, not a failure the library reports.
 - **A package manager rejection is not an error.** `install` and `uninstall` return
-  `success == false` with the device's output rather than throwing, because a rejected
-  APK and a package that cannot be removed are normal answers. An exception means the
+  `success == false` with the device's output rather than an `Error`, because a rejected
+  APK and a package that cannot be removed are normal answers. An `Error` means the
   transfer or the stream failed instead.
 - **A pushed APK is left in `/data/local/tmp` if the process dies.** `install`
   removes it after the install, and it also removes it when the install is rejected,

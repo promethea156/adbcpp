@@ -50,7 +50,7 @@ A proposal, not a commitment. Nothing below blocks the next slice, and any of it
 
 | Order | Work | Why here |
 | --- | --- | --- |
-| 1 | Apply the [error model](07-error-model.md) | Decided; the whole library changes from throwing to returning `Result<T>`. Slice 6 then adds its three functions in the new shape rather than converting them later. |
+| 1 | Apply the [error model](07-error-model.md) | **Done.** The whole library returns `Result<T>`, so Slice 6 adds its three functions in the new shape rather than converting them later. |
 | 2 | [Slice 6 — app control](#slice-6--app-control) | Unblocked, and composition again: `am start` and `am force-stop` are shell commands. |
 | 3 | Validate the received header | Small, and it belongs with `Session::receive`, which [Slice 7](#slice-7--tcp-transport) reopens: a partial read becomes normal over TCP. |
 | 4 | State thread safety for `Connection`, `Stream`, and `Key` | Small, and the statements belong with the objects Slices 6 and 7 touch. |
@@ -164,5 +164,5 @@ Obligations that run through every slice, with the current state of each.
 - **Fall back to `shell:` when `shell_v2` is absent.** `run` requires `shell_v2`, while `list` and `stat` already fall back to their v1 forms.
 - **Use `sendrecv_v2`, or stop advertising it.** The CNXN banner claims `sendrecv_v2` with brotli, lz4, and zstd, but `pull` and `push` always send the v1 forms, so a transfer is never compressed. The rest of the banner is copied from adb byte-for-byte and therefore also claims services that are never opened (`abb`, `apex`, `remount_shell`, `track_app`, `devraw`, `server_status`, ...); it should be trimmed to what the library implements.
 - **Validate what is received.** `Session::receive` takes `data_length` as authoritative and checks neither `magic` nor the CRC, so a desynchronized stream is not detected. The protocol requires a bad header or payload to close the connection, because it cannot recover from a framing error (see blocker 13's note).
-- **Unify the result types.** `CommandResult` and `PackageResult` have the same shape under two names, and the thrown failures have no type of their own.
+- **Unify the result types.** `CommandResult` and `PackageResult` have the same shape under two names; the failures now share `Error`.
 - Replace the dynamically-linked libusb backend with platform-native USB APIs (WinUSB, IOKit, `usbfs`) to remove the third-party dependency and its license obligations. See [USB Backend](01-objective.md#usb-backend).

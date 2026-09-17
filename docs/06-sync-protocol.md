@@ -247,7 +247,7 @@ directly, so a missing path can be told from a real one.
    (`src/sync.cpp:136`).
 4. Write the `LIST`/`LIS2` request as one write (`src/sync.cpp:139`).
 5. Loop: read a four-byte id, then the body, then the name, and build a
-   `DirEntry`. `FAIL` throws, `DONE` ends the loop (`src/sync.cpp:145`).
+   `DirEntry`. `FAIL` is an `Error`, `DONE` ends the loop (`src/sync.cpp:145`).
 6. Write `QUIT` to leave sync mode, after which the daemon closes the stream
    (`src/sync.cpp:207`).
 
@@ -279,8 +279,8 @@ so pulling a large file costs no more memory than pulling a small one.
 3. Open the `sync:` stream and write the `STAT`/`STA2` request
    (`src/sync.cpp:387`, `src/sync.cpp:388`).
 4. Read the id and the body. The v2 form's leading error field, or the v1 form's
-   all-zero body, means the path does not exist, which is reported rather than
-   thrown (`src/sync.cpp:405`).
+   all-zero body, means the path does not exist, which is an empty `optional` rather
+   than an `Error` (`src/sync.cpp:405`).
 5. Write `QUIT` (`src/sync.cpp:428`).
 
 `push`:

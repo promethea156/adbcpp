@@ -68,6 +68,8 @@ ADB's two protocols it implements.
    protocol.
 4. [`docs/03-roadmap.md`](docs/03-roadmap.md) — the vertical-slice plan you
    will be following.
+5. [`docs/07-error-model.md`](docs/07-error-model.md) — why nothing throws, and
+   what `Result<T>` carries instead.
 
 The key idea: `adb` is really two protocols. The command line talks to a long-lived
 **server** on port 5037, and that server talks to `adbd` on the device. This
@@ -80,6 +82,11 @@ this module is that second protocol.
 build/examples/Release/adbcpp_sample        # or the single-config path
 ctest --test-dir build -C Release -E device
 ```
+
+The sample returns `0` when it read the device's `CNXN`, or `1` after printing
+`error: <message>` when it could not. That one check is the error model in
+miniature, and the design behind it is in
+[`docs/07-error-model.md`](docs/07-error-model.md).
 
 **Exercise.** Open [`examples/sample/main.cpp`](examples/sample/main.cpp), change
 the mock device's `arg1` (the maximum payload) from `4096` to `0x100000`, rebuild,

@@ -201,3 +201,12 @@ Each entry has the same shape:
 - **Cause**: `pm` prints `Failure [REASON]` only for a package manager error. When the APK cannot even be parsed, `PackageManagerShellCommand.setParamsSize` throws `java.lang.IllegalArgumentException: Error: Failed to parse APK file: ...`, and the shell prints `Exception occurred while executing 'install':` followed by the stack trace. The exit code is still nonzero, so `success` is right, but there is no bracket to extract. `pm uninstall` of a package that is not installed does print `Failure [DELETE_FAILED_INTERNAL_ERROR]`, so the two commands report a rejection differently.
 - **Resolution**: `PackageResult::failure_reason()` returns the text inside `Failure [...]` and an empty string otherwise, while `output` always holds the device's answer verbatim. The device integration test therefore checks a non-empty output rather than a non-empty reason for this case.
 - **Note**: The exit code is the authority on whether the command worked and the output is the explanation, because the two commands do not agree on the form of the explanation. The APK is pushed into `/data/local/tmp` first, where the daemon widens `0644` to `0666` (blocker 23), and `pm install` accepts it from there; installing from the file is what `adb install` does too.
+
+## Crypto
+
+### 26. `mbedtls_pk_write_key_pem` returns zero on success
+
+- **Symptom**: The key generation path had never run, because `~/.android/adbkey` already existed from adb.
+- **Cause**: `mbedtls_pk_write_key_pem` returns **zero on success** and writes a NUL-terminated string, but the code treated the return value as a length: it returned an error when the value was zero, so it failed on success, and would have written a negative length on failure.
+- **Resolution**: Treat non-zero as the failure, and take the length from the string itself with `std::char_traits<char>::length`. Verified by pointing the home directory at a scratch directory, generating a key, and reloading it to confirm the same public key comes back.
+- **Note**: Nothing exercised this, because the tests call `Key::generate` (which does not write files) and the device already had adb's key, so `load_or_generate` always took the early return. A code path that only runs on a fresh machine is worth a test.
