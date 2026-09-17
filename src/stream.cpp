@@ -33,8 +33,8 @@ Stream::Stream(Connection &connection, std::string_view service)
       connection_->supports_delayed_ack()
           ? protocol::kInitialDelayedAckBytes
           : 0;
-  connection_->send(make_message(protocol::kOpen, local_id_, send_buffer,
-                                payload));
+  connection_->send(make_message(protocol::kOpen, local_id_, send_buffer, payload),
+                    payload);
 
   const auto frame = connection_->receive();
   if (frame.header.command != protocol::kOkay) {

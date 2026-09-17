@@ -19,7 +19,15 @@ inline constexpr std::string_view kSystemIdentity =
     "fixed_push_symlink_timestamp,abb_exec,remount_shell,track_app,sendrecv_v2,"
     "sendrecv_v2_brotli,sendrecv_v2_lz4,sendrecv_v2_zstd,"
     "sendrecv_v2_dry_run_send,openscreen_mdns,devicetracker_proto_format,devraw,"
-    "app_info,server_status,track_mdns,delayed_ack";
+    "app_info,server_status,track_mdns";
+
+/**
+ * Whether the host advertises delayed acknowledgements in its feature list.
+ *
+ * Kept in sync with @ref kSystemIdentity: when disabled, the feature must be
+ * absent from the string above and OPEN messages must send a zero send buffer.
+ */
+inline constexpr bool kAdvertiseDelayedAck = false;
 
 /**
  * @brief An authenticated ADB connection to a device.
@@ -55,14 +63,15 @@ public:
   /// The maximum payload size reported by the device.
   std::uint32_t max_data() const noexcept { return max_data_; }
 
-  /// Whether the device advertised support for delayed acknowledgements.
+  /// Whether delayed acknowledgements were negotiated with the device.
   bool supports_delayed_ack() const noexcept { return delayed_ack_; }
 
 private:
   Session session_;
   std::uint32_t device_version_ = 0;
   std::uint32_t max_data_ = 0;
-  std::uint32_t next_local_id_ = 1;
+  // adb reserves local id 1; streams start at 2.
+  std::uint32_t next_local_id_ = 2;
   bool delayed_ack_ = false;
 };
 

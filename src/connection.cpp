@@ -65,7 +65,8 @@ Connection::Connection(Transport &transport,
   const std::string banner(
       reinterpret_cast<const char *>(frame.payload.data()),
       frame.payload.size());
-  delayed_ack_ = banner.find("delayed_ack") != std::string::npos;
+  delayed_ack_ =
+      kAdvertiseDelayedAck && banner.find("delayed_ack") != std::string::npos;
 }
 
 void Connection::send(const protocol::Message &header,

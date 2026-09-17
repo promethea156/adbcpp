@@ -39,10 +39,45 @@ void feed_frame(adbcpp::testing::MockTransport &transport,
   }
 }
 
-constexpr std::uint32_t kLocalId = 1;
+constexpr std::uint32_t kLocalId = 2;
 constexpr std::uint32_t kRemoteId = 7;
 
 } // namespace
+
+TEST_CASE("stream opens with a zero send buffer when delayed ack is off",
+          "[stream]") {
+  adbcpp::testing::MockTransport transport;
+
+  const auto device = make_message(adbcpp::protocol::kCnxn, 0x01000001u, 4096u);
+  feed_frame(transport, device);
+
+  adbcpp::Connection connection(transport);
+  REQUIRE_FALSE(connection.supports_delayed_ack());
+  const auto before = transport.written().size();
+
+  feed_frame(transport, make_message(adbcpp::protocol::kOkay, kRemoteId,
+                                    kLocalId));
+
+  const std::string service = "shell,v2,raw:echo hello";
+  std::string destination(service);
+  destination.push_back('\0');
+  const auto payload = std::span(
+      reinterpret_cast<const std::byte *>(destination.data()), destination.size());
+  const auto open = make_message(adbcpp::protocol::kOpen, kLocalId, 0, payload);
+
+  std::vector<std::byte> expected;
+  const auto open_bytes = open.encode();
+  expected.insert(expected.end(), open_bytes.begin(), open_bytes.end());
+  expected.insert(expected.end(), payload.begin(), payload.end());
+
+  {
+    adbcpp::Stream stream(connection, service);
+    const auto &written = transport.written();
+    REQUIRE(written.size() == before + expected.size());
+    REQUIRE(std::equal(written.begin() + static_cast<std::ptrdiff_t>(before),
+                       written.end(), expected.begin()));
+  }
+}
 
 TEST_CASE("stream opens and collects output until close", "[stream]") {
   adbcpp::testing::MockTransport transport;
