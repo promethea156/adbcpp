@@ -326,6 +326,18 @@ immediately with `short USB write: the stream is desynchronized`, because sendin
 a half-delivered message would corrupt the stream. See blocker 24 in
 [`04-blockers.md`](04-blockers.md).
 
+[`tools/bench-transfer.ps1`](../tools/bench-transfer.ps1) runs the sweep above and prints
+the table, so anyone with a device can reproduce it. Stop the adb server first, because adb
+holds the device's USB interface while it runs (blocker 5), and pass a larger `-Sizes` list to
+go further than the default 1 GiB:
+
+```
+. ./tools/invoke-adb.ps1
+Invoke-Adb -Arguments @("kill-server")
+./tools/bench-transfer.ps1
+./tools/bench-transfer.ps1 -Sizes 1073741824
+```
+
 ## Two details that are not in the format
 
 The wire format above is all a sync reference documents, but two behaviours of the
