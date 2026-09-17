@@ -7,14 +7,16 @@
 #include "adbcpp/connection.hpp"
 #include "adbcpp/export.hpp"
 
-namespace adbcpp {
+namespace adbcpp
+{
 
 /// The result of running a shell command on the device.
-struct ADBCPP_API CommandResult {
-  /// Combined standard output and standard error.
-  std::string output;
-  /// The command's exit code.
-  std::uint8_t exit_code = 0;
+struct ADBCPP_API CommandResult
+{
+    /// Combined standard output and standard error.
+    std::string output;
+    /// The command's exit code.
+    std::uint8_t exit_code = 0;
 };
 
 /**

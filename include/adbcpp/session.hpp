@@ -8,12 +8,14 @@
 #include "adbcpp/protocol/message.hpp"
 #include "adbcpp/transport.hpp"
 
-namespace adbcpp {
+namespace adbcpp
+{
 
 /// A complete ADB message: a header plus its optional payload.
-struct ADBCPP_API Frame {
-  protocol::Message header;
-  std::vector<std::byte> payload;
+struct ADBCPP_API Frame
+{
+    protocol::Message header;
+    std::vector<std::byte> payload;
 };
 
 /**
@@ -31,19 +33,20 @@ struct ADBCPP_API Frame {
  * for byte-stream transports such as TCP, which is why the same `Session` works
  * over both.
  */
-class ADBCPP_API Session {
+class ADBCPP_API Session
+{
 public:
-  explicit Session(Transport &transport) noexcept;
+    explicit Session(Transport &transport) noexcept;
 
-  /// Writes a header, then its payload as a separate transport write.
-  void send(const protocol::Message &header,
-            std::span<const std::byte> payload = {});
+    /// Writes a header, then its payload as a separate transport write.
+    void send(const protocol::Message &header,
+              std::span<const std::byte> payload = {});
 
-  /// Reads exactly one header and its payload.
-  Frame receive();
+    /// Reads exactly one header and its payload.
+    Frame receive();
 
 private:
-  Transport *transport_;
+    Transport *transport_;
 };
 
 } // namespace adbcpp

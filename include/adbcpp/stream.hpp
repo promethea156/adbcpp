@@ -9,7 +9,8 @@
 #include "adbcpp/connection.hpp"
 #include "adbcpp/export.hpp"
 
-namespace adbcpp {
+namespace adbcpp
+{
 
 /**
  * @brief A logical stream to a service on the device.
@@ -29,29 +30,33 @@ namespace adbcpp {
  * closes the stream. The window in OPEN's `arg1` is the delayed-acknowledgement
  * "available send bytes"; see `commands.hpp` and blocker 12 in `04-blockers.md`.
  */
-class ADBCPP_API Stream {
+class ADBCPP_API Stream
+{
 public:
-  Stream(Connection &connection, std::string_view service);
-  ~Stream();
+    Stream(Connection &connection, std::string_view service);
+    ~Stream();
 
-  Stream(const Stream &) = delete;
-  Stream &operator=(const Stream &) = delete;
+    Stream(const Stream &) = delete;
+    Stream &operator=(const Stream &) = delete;
 
-  /// Writes data to the remote stream.
-  void write(std::span<const std::byte> data);
+    /// Writes data to the remote stream.
+    void write(std::span<const std::byte> data);
 
-  /// Reads all output until the remote closes the stream.
-  std::vector<std::byte> read_all();
+    /// Reads all output until the remote closes the stream.
+    std::vector<std::byte> read_all();
 
-  /// The service this stream was opened for.
-  const std::string &service() const noexcept { return service_; }
+    /// The service this stream was opened for.
+    const std::string &service() const noexcept
+    {
+        return service_;
+    }
 
 private:
-  Connection *connection_;
-  std::string service_;
-  std::uint32_t local_id_;
-  std::uint32_t remote_id_ = 0;
-  bool closed_ = false;
+    Connection *connection_;
+    std::string service_;
+    std::uint32_t local_id_;
+    std::uint32_t remote_id_ = 0;
+    bool closed_ = false;
 };
 
 } // namespace adbcpp

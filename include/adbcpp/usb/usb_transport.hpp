@@ -8,15 +8,17 @@
 #include "adbcpp/export.hpp"
 #include "adbcpp/transport.hpp"
 
-namespace adbcpp::usb {
+namespace adbcpp::usb
+{
 
 /// Identifies an ADB USB device by vendor and product id.
 ///
 /// Every device exposes the same USB ids for its ADB interface regardless of
 /// manufacturer, so a USB vendor/product pair selects one particular model.
-struct ADBCPP_API DeviceId {
-  std::uint16_t vendor_id = 0;
-  std::uint16_t product_id = 0;
+struct ADBCPP_API DeviceId
+{
+    std::uint16_t vendor_id = 0;
+    std::uint16_t product_id = 0;
 };
 
 /**
@@ -36,24 +38,25 @@ struct ADBCPP_API DeviceId {
  * @note libusb is linked dynamically. This type is only available when
  * `adbcpp` is built with `ADBCPP_BUILD_USB=ON`.
  */
-class ADBCPP_API UsbTransport : public Transport {
+class ADBCPP_API UsbTransport : public Transport
+{
 public:
-  /// Returns whether a USB device matching `id` is currently present.
-  static bool is_present(DeviceId id);
+    /// Returns whether a USB device matching `id` is currently present.
+    static bool is_present(DeviceId id);
 
-  explicit UsbTransport(DeviceId id);
-  ~UsbTransport() override;
+    explicit UsbTransport(DeviceId id);
+    ~UsbTransport() override;
 
-  UsbTransport(const UsbTransport &) = delete;
-  UsbTransport &operator=(const UsbTransport &) = delete;
+    UsbTransport(const UsbTransport &) = delete;
+    UsbTransport &operator=(const UsbTransport &) = delete;
 
-  std::size_t read(std::span<std::byte> buffer) override;
-  void write(std::span<const std::byte> data) override;
-  void close() override;
+    std::size_t read(std::span<std::byte> buffer) override;
+    void write(std::span<const std::byte> data) override;
+    void close() override;
 
 private:
-  struct Impl;
-  std::unique_ptr<Impl> impl_;
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 } // namespace adbcpp::usb

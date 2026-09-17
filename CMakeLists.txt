@@ -85,6 +85,10 @@ if(ADBCPP_BUILD_DOCS)
   add_subdirectory(docs)
 endif()
 
+if(ADBCPP_IS_TOP_LEVEL)
+  include(cmake/Format.cmake)
+endif()
+
 if(ADBCPP_INSTALL)
   include(CMakePackageConfigHelpers)
 

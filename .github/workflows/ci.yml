@@ -6,6 +6,18 @@ on:
   pull_request:
 
 jobs:
+  format:
+    name: format
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check formatting
+        run: >
+          pipx run clang-format==19.1.1 --dry-run --Werror
+          $(git ls-files '*.hpp' '*.cpp')
+
   build:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

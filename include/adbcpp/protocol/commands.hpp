@@ -15,7 +15,8 @@
 // OPEN(local-id, 0, "destination"). The constants below are the four-character
 // command identifiers from its "message command constants" section.
 
-namespace adbcpp::protocol {
+namespace adbcpp::protocol
+{
 
 /// Packs four ASCII characters into an ADB command identifier.
 ///
@@ -25,11 +26,12 @@ namespace adbcpp::protocol {
 /// 0x4e584e43` style. AOSP defines them in `adb.h`:
 ///
 ///   https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/adb.h
-constexpr std::uint32_t make_command(char a, char b, char c, char d) noexcept {
-  return static_cast<std::uint32_t>(static_cast<unsigned char>(a)) |
-         (static_cast<std::uint32_t>(static_cast<unsigned char>(b)) << 8) |
-         (static_cast<std::uint32_t>(static_cast<unsigned char>(c)) << 16) |
-         (static_cast<std::uint32_t>(static_cast<unsigned char>(d)) << 24);
+constexpr std::uint32_t make_command(char a, char b, char c, char d) noexcept
+{
+    return static_cast<std::uint32_t>(static_cast<unsigned char>(a)) |
+           (static_cast<std::uint32_t>(static_cast<unsigned char>(b)) << 8) |
+           (static_cast<std::uint32_t>(static_cast<unsigned char>(c)) << 16) |
+           (static_cast<std::uint32_t>(static_cast<unsigned char>(d)) << 24);
 }
 
 /// `CNXN`: CONNECT(version, maxdata, "system-identity-string").

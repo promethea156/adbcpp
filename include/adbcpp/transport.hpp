@@ -5,7 +5,8 @@
 
 #include "adbcpp/export.hpp"
 
-namespace adbcpp {
+namespace adbcpp
+{
 
 /**
  * @brief Abstract byte channel to a device.
@@ -16,32 +17,33 @@ namespace adbcpp {
  *
  * Implementations are not required to be thread-safe.
  */
-class ADBCPP_API Transport {
+class ADBCPP_API Transport
+{
 public:
-  virtual ~Transport() = default;
+    virtual ~Transport() = default;
 
-  Transport(const Transport &) = delete;
-  Transport &operator=(const Transport &) = delete;
+    Transport(const Transport &) = delete;
+    Transport &operator=(const Transport &) = delete;
 
-  /**
+    /**
    * @brief Reads up to `buffer.size()` bytes into `buffer`.
    *
    * @return the number of bytes read, or 0 on end of stream.
    */
-  virtual std::size_t read(std::span<std::byte> buffer) = 0;
+    virtual std::size_t read(std::span<std::byte> buffer) = 0;
 
-  /**
+    /**
    * @brief Writes the whole of `data`.
    *
    * @throws std::runtime_error if the data cannot be written.
    */
-  virtual void write(std::span<const std::byte> data) = 0;
+    virtual void write(std::span<const std::byte> data) = 0;
 
-  /// Closes the transport, releasing any underlying resources.
-  virtual void close() = 0;
+    /// Closes the transport, releasing any underlying resources.
+    virtual void close() = 0;
 
 protected:
-  Transport() = default;
+    Transport() = default;
 };
 
 } // namespace adbcpp
