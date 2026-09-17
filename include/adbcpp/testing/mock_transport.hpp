@@ -26,6 +26,7 @@ public:
         incoming_.insert(incoming_.end(), data.begin(), data.end());
     }
 
+    /// Returns queued bytes, or 0 once the queue is drained (end of stream).
     std::size_t read(std::span<std::byte> buffer) override
     {
         const std::size_t available = incoming_.size() - read_position_;

@@ -39,7 +39,20 @@ ctest --test-dir build --output-on-failure -C Release -E device
 ```
 
 The `-E device` flag skips the test that needs a real device. Drop it when one
-is attached.
+is attached. `-E` matches the test *name* as a regular expression, so it also
+skips any test whose name merely contains `device`; that is why no test is named
+after the word.
+
+The tests are tagged, and the **Run** section of each module names the tag it
+demonstrates. Run the test binary directly to select one:
+
+```
+build/tests/Release/adbcpp_tests "[stream]"
+```
+
+The examples and the test binary live under `build/examples/Release/` and
+`build/tests/Release/`. Both drop the `Release/` on a single-config generator
+such as Ninja or Makefiles.
 
 ## Module 0 — Orientation
 
@@ -97,7 +110,7 @@ messages (`Session`).
 **Run.**
 
 ```
-ctest --test-dir build -C Release -R "session|protocol" --output-on-failure
+build/tests/Release/adbcpp_tests "[session],[protocol]"
 ```
 
 **Exercise.** Add a test to [`tests/session_test.cpp`](tests/session_test.cpp)
@@ -125,6 +138,12 @@ the frame is still reassembled. `read_exact` is what makes this work.
    serialization and the CRC-32.
 4. AOSP's protocol document, "protocol overview and basics":
    <https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/docs/dev/protocol.md>
+
+**Run.**
+
+```
+build/tests/Release/adbcpp_tests "[protocol]"
+```
 
 **Exercise.** Take the bytes `43 4e 58 4e` and decode them as a command. Then
 work out why `magic` is `command ^ 0xFFFFFFFF`. Finally, compute the CRC-32 of
@@ -185,6 +204,12 @@ SHA-1 digest, so it must not be hashed again. Hashing it first produces a
 perfectly valid-looking signature that the device silently rejects, which is why the
 bug survived so long (blocker 16).
 
+**Run.**
+
+```
+build/tests/Release/adbcpp_tests "[crypto]"
+```
+
 **Exercise.** With the device attached, use the `key fingerprint` printed by the
 example and check it against the device's authorized-computers list. Then read the
 AUTH frames from a capture and verify the signature over the token directly, and
@@ -214,6 +239,12 @@ two bulk endpoints. The crucial difference from TCP is that a bulk transfer is a
 **discrete message**: a header and its payload arrive as two separate transfers,
 which is why `Session` writes them separately (blocker 3).
 
+**Run.** With a device attached:
+
+```
+build/examples/Release/adbcpp_usb_example "echo hello"
+```
+
 **Exercise.** In [`examples/usb/main.cpp`](examples/usb/main.cpp), print the
 interface number and both endpoint addresses after opening the transport, and compare
 them with what a capture shows for `adb`.
@@ -240,6 +271,12 @@ them with what a capture shows for `adb`.
 A stream is a small state machine keyed by two ids, and the ids are **relative to
 the sender**, so each side's `local-id` is the other's `remote-id`. The `OPEN`
 payload is a null-terminated service name, unlike the CNXN banner.
+
+**Run.**
+
+```
+build/tests/Release/adbcpp_tests "[stream]"
+```
 
 **Exercise.** Add a `read_line` helper to `Stream` that reads one byte at a time
 until `'\n'`, then use it to read a shell command's output line by line. Notice
@@ -326,6 +363,14 @@ adbd writes it with `data()[0] = exit_code; Write(kIdExit, 1)` in
 `daemon/shell_service.cpp`. Reading the length as the status was blocker 19 and made
 every command look like it exited with 1.
 
+**Run.** The shell tests are device-free; the device test runs `echo hello` on a
+real device:
+
+```
+build/tests/Release/adbcpp_tests "[shell]"
+ctest --test-dir build -C Release -R device --output-on-failure
+```
+
 **Exercise.** Extend `CommandResult` to keep stdout and stderr separate, and update
 [`tests/device_test.cpp`](tests/device_test.cpp) to check both. Note that the
 device interleaves them, so order is not guaranteed.
@@ -351,6 +396,12 @@ device interleaves them, so order is not guaranteed.
 Delayed acknowledgements change the meaning of `OPEN.arg1` from "unused" to the
 initial "available send bytes" window. Claiming the feature without implementing
 it makes the device close the stream (blocker 12), so `adbcpp` leaves it off.
+
+**Run.**
+
+```
+build/tests/Release/adbcpp_tests "[stream]"
+```
 
 **Exercise.** Re-enable `advertise_delayed_ack` in the USB example, run against a
 real device, and observe the failure. Then explain why the default is off.
@@ -381,6 +432,18 @@ several words. And `pm` reports its outcome in its output, not only in its exit
 code: `Success` means it worked and `Failure [REASON]` means it did not, so a
 rejection is a normal answer and `install` returns it rather than throwing.
 
+**Run.**
+
+```
+build/tests/Release/adbcpp_tests "[app]"
+```
+
+With a device attached and an APK you are willing to install:
+
+```
+build/examples/Release/adbcpp_usb_example --install app.apk
+```
+
 **Exercise.** Add `reinstall(connection, package, apk)`, which pulls a package's
 APK, uninstalls the package, and installs the pulled copy, so that the same APK
 comes back. Note that the pull has to happen before the uninstall, and that the
@@ -398,6 +461,12 @@ package's data survives only when the caller keeps it.
 
 **Read.** [`docs/03-roadmap.md`](docs/03-roadmap.md) — the remaining slices:
 app control, and finally TCP plus silent authentication.
+
+**Run.** Everything, with a device attached:
+
+```
+ctest --test-dir build -C Release --output-on-failure
+```
 
 **Exercise.** Implement Slice 6. Launching and stopping an app are shell commands
 (`am start` and `am force-stop`), so the slice is composition again, and its work

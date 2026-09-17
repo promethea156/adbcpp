@@ -386,7 +386,7 @@ TEST_CASE("uninstall keeps the data when asked", "[app]")
     REQUIRE(contains(transport.written(), "pm uninstall -k 'com.example.app'"));
 }
 
-TEST_CASE("uninstall reports a package the device cannot remove", "[app]")
+TEST_CASE("uninstall reports a package it cannot remove", "[app]")
 {
     adbcpp::testing::MockTransport transport;
     feed_device(transport, "shell_v2,stat_v2");

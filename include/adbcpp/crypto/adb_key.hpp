@@ -54,11 +54,11 @@ public:
     std::string fingerprint() const;
 
     /**
-   * Signs `token` with the private key (PKCS#1 v1.5, SHA-1).
-   *
-   * The token is the SHA-1 digest itself and is signed directly, exactly like
-   * adb's `RSA_sign(NID_sha1, token, ...)`; it is not re-hashed.
-   */
+     * Signs `token` with the private key (PKCS#1 v1.5, SHA-1).
+     *
+     * The token is the SHA-1 digest itself and is signed directly, exactly like
+     * adb's `RSA_sign(NID_sha1, token, ...)`; it is not re-hashed.
+     */
     std::vector<std::byte> sign(std::span<const std::byte> token) const;
 
 private:

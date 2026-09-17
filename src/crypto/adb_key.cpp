@@ -196,6 +196,7 @@ std::filesystem::path key_directory()
 
 struct Key::Impl
 {
+    // The RSA key pair, and the AUTH type 3 public key string built from it.
     mbedtls_pk_context pk;
     std::string public_key;
 

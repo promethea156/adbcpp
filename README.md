@@ -107,12 +107,17 @@ cmake --build build --target adbcpp_docs
 ## Project Layout
 
 ```
-include/adbcpp/    Public headers (transport, protocol, session)
-src/               Library sources
-tests/             Catch2 unit tests
-examples/          Sample project (examples + manual integration harness)
-docs/              Design documents and Doxygen configuration
-cmake/             CMake package configuration
+include/adbcpp/         Public headers (transport, protocol, session, stream,
+                        shell, sync, app)
+include/adbcpp/crypto/  The ADB key pair, backed by mbedTLS
+include/adbcpp/usb/     The USB transport, backed by libusb
+include/adbcpp/testing/ The in-memory transport used by the tests
+src/                    Library sources, mirroring the public headers
+tests/                  Catch2 unit tests and the device integration test
+examples/               Sample project (examples + manual integration harness)
+tools/                  Developer scripts (adb wrapper, transfer benchmark)
+docs/                   Design documents and Doxygen configuration
+cmake/                  CMake package configuration
 ```
 
 ## Learning

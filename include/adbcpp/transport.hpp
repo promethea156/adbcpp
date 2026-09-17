@@ -26,17 +26,17 @@ public:
     Transport &operator=(const Transport &) = delete;
 
     /**
-   * @brief Reads up to `buffer.size()` bytes into `buffer`.
-   *
-   * @return the number of bytes read, or 0 on end of stream.
-   */
+     * @brief Reads up to `buffer.size()` bytes into `buffer`.
+     *
+     * @return the number of bytes read, or 0 on end of stream.
+     */
     virtual std::size_t read(std::span<std::byte> buffer) = 0;
 
     /**
-   * @brief Writes the whole of `data`.
-   *
-   * @throws std::runtime_error if the data cannot be written.
-   */
+     * @brief Writes the whole of `data`.
+     *
+     * @throws std::runtime_error if the data cannot be written.
+     */
     virtual void write(std::span<const std::byte> data) = 0;
 
     /// Closes the transport, releasing any underlying resources.
