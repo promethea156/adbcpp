@@ -6,7 +6,9 @@
 #include <string_view>
 
 #include "adbcpp/connection.hpp"
+#include "adbcpp/error.hpp"
 #include "adbcpp/export.hpp"
+#include "adbcpp/shell.hpp"
 
 namespace adbcpp
 {
@@ -18,16 +20,12 @@ namespace adbcpp
  * code: it prints `Success` and exits zero when it worked, and
  * `Failure [REASON]` and exits nonzero when it did not. `success` covers both, and
  * `failure_reason()` extracts `REASON`.
+ *
+ * This is a `CommandResult`, so `output`, `exit_code`, and `success` are defined
+ * once and the package manager's answer has the same shape as any other command's.
  */
-struct ADBCPP_API PackageResult
+struct ADBCPP_API PackageResult : CommandResult
 {
-    /// Whether the package manager reported success.
-    bool success = false;
-    /// The package manager's output: `Success`, or `Failure [REASON]`.
-    std::string output;
-    /// The command's exit code.
-    std::uint8_t exit_code = 0;
-
     /// The reason inside `Failure [...]`, or an empty string when there is none.
     std::string failure_reason() const;
 };
@@ -42,16 +40,16 @@ struct ADBCPP_API PackageResult
  * over the shell service.
  *
  * A package manager that rejects the APK is a normal outcome rather than an error,
- * so it is returned as `success == false` with the device's reason instead of
- * being thrown. An error is thrown only when the transfer or the stream itself
- * fails, or when `apk` is not a regular file.
+ * so it is returned as `success == false` with the device's reason. An `Error` is
+ * returned only when the transfer or the stream itself fails, or when `apk` is not a
+ * regular file.
  *
  * `options` is passed to `pm install` verbatim, so `-r` reinstalls an existing
  * package and keeps its data, `-d` allows a version downgrade, and `-g` grants all
  * runtime permissions. It is not escaped, so it must not come from untrusted input.
  */
-PackageResult ADBCPP_API install(Connection &connection, const std::filesystem::path &apk,
-                                 std::string_view options = {});
+Result<PackageResult> ADBCPP_API install(Connection &connection, const std::filesystem::path &apk,
+                                         std::string_view options = {});
 
 /**
  * @brief Uninstalls a package from the device.
@@ -62,6 +60,6 @@ PackageResult ADBCPP_API install(Connection &connection, const std::filesystem::
  *
  * `keep_data` adds `-k`, which keeps the package's data and cache directories.
  */
-PackageResult ADBCPP_API uninstall(Connection &connection, std::string_view package, bool keep_data = false);
+Result<PackageResult> ADBCPP_API uninstall(Connection &connection, std::string_view package, bool keep_data = false);
 
 } // namespace adbcpp

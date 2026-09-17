@@ -29,23 +29,31 @@ std::uint32_t read_u32_le(const std::byte *in) noexcept
 
 } // namespace
 
-CommandResult run(Connection &connection, std::string_view command)
+Result<CommandResult> run(Connection &connection, std::string_view command)
 {
     // The service string is the whole command line, for example
     // `shell,v2,raw:echo hello`. adbd runs it and streams the output back.
-    Stream stream(connection, "shell,v2,raw:" + std::string(command));
-    const auto raw = stream.read_all();
+    auto stream = Stream::open(connection, "shell,v2,raw:" + std::string(command));
+    if (!stream)
+    {
+        return tl::unexpected(stream.error());
+    }
+    const auto raw = stream->read_all();
+    if (!raw)
+    {
+        return tl::unexpected(raw.error());
+    }
 
     // Each shell_v2 packet is a 1-byte id followed by a 4-byte little-endian
     // length and then `length` bytes of data.
     CommandResult result;
     std::size_t offset = 0;
-    while (offset + 5 <= raw.size())
+    while (offset + 5 <= raw->size())
     {
-        const auto id = std::to_integer<std::uint8_t>(raw[offset]);
-        const std::uint32_t length = read_u32_le(raw.data() + offset + 1);
+        const auto id = std::to_integer<std::uint8_t>((*raw)[offset]);
+        const std::uint32_t length = read_u32_le(raw->data() + offset + 1);
         offset += 5;
-        if (offset + length > raw.size())
+        if (offset + length > raw->size())
         {
             break;
         }
@@ -53,7 +61,7 @@ CommandResult run(Connection &connection, std::string_view command)
         {
             // stdout and stderr are interleaved in the order the device produced
             // them; they are concatenated here, which is what `adb shell` does too.
-            result.output.append(reinterpret_cast<const char *>(raw.data() + offset), length);
+            result.output.append(reinterpret_cast<const char *>(raw->data() + offset), length);
         }
         else if (id == kExit)
         {
@@ -68,11 +76,12 @@ CommandResult run(Connection &connection, std::string_view command)
             // and reported every command as exiting with 1.
             if (length >= 1)
             {
-                result.exit_code = static_cast<std::uint8_t>(raw[offset]);
+                result.exit_code = static_cast<std::uint8_t>((*raw)[offset]);
             }
         }
         offset += length;
     }
+    result.success = result.exit_code == 0;
     return result;
 }
 

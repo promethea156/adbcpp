@@ -9,6 +9,7 @@
 #include <fstream>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "adbcpp/connection.hpp"
@@ -18,6 +19,15 @@
 
 namespace
 {
+
+// Returns the value of a `Result` the test expects to succeed, failing the test
+// otherwise.
+template <typename T>
+T unwrap(adbcpp::Result<T> result)
+{
+    REQUIRE(result.has_value());
+    return std::move(*result);
+}
 
 // Every binary integer in sync mode is little-endian.
 void write_u32_le(std::byte *out, std::uint32_t value)
@@ -54,7 +64,7 @@ adbcpp::protocol::Message make_message(std::uint32_t command, std::uint32_t arg0
     message.command = command;
     message.arg0 = arg0;
     message.arg1 = arg1;
-    message.data_length = adbcpp::protocol::Message::data_length_of(payload);
+    message.data_length = *adbcpp::protocol::Message::data_length_of(payload);
     message.data_crc32 = adbcpp::protocol::Message::compute_crc32(payload);
     message.magic = adbcpp::protocol::Message::compute_magic(command);
     return message;
@@ -234,8 +244,8 @@ TEST_CASE("install reports the package manager's success", "[app]")
     feed_install(transport, "Success\n", 0);
 
     const auto apk = temp_file("install_success.apk", "not really an apk\n");
-    adbcpp::Connection connection(transport);
-    const auto result = adbcpp::install(connection, apk);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    const auto result = unwrap(adbcpp::install(connection, apk));
     std::filesystem::remove(apk);
 
     REQUIRE(result.success);
@@ -250,8 +260,8 @@ TEST_CASE("install pushes the APK to /data/local/tmp and installs it from there"
     feed_install(transport, "Success\n", 0);
 
     const auto apk = temp_file("install_push.apk", "data");
-    adbcpp::Connection connection(transport);
-    adbcpp::install(connection, apk);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::install(connection, apk));
     std::filesystem::remove(apk);
 
     const auto &written = transport.written();
@@ -273,8 +283,8 @@ TEST_CASE("install removes the pushed APK", "[app]")
     feed_install(transport, "Success\n", 0);
 
     const auto apk = temp_file("install_cleanup.apk", "data");
-    adbcpp::Connection connection(transport);
-    adbcpp::install(connection, apk);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::install(connection, apk));
     std::filesystem::remove(apk);
 
     REQUIRE(contains(transport.written(), "rm -f '/data/local/tmp/adbcpp_install_cleanup.apk'"));
@@ -286,8 +296,8 @@ TEST_CASE("install removes the pushed APK when the package manager rejects it", 
     feed_install(transport, "Failure [INSTALL_FAILED_INVALID_APK]\n", 1);
 
     const auto apk = temp_file("install_cleanup_failed.apk", "data");
-    adbcpp::Connection connection(transport);
-    adbcpp::install(connection, apk);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::install(connection, apk));
     std::filesystem::remove(apk);
 
     REQUIRE(contains(transport.written(), "rm -f '/data/local/tmp/adbcpp_install_cleanup_failed.apk'"));
@@ -299,8 +309,8 @@ TEST_CASE("install passes the options through to the package manager", "[app]")
     feed_install(transport, "Success\n", 0);
 
     const auto apk = temp_file("install_options.apk", "data");
-    adbcpp::Connection connection(transport);
-    adbcpp::install(connection, apk, "-r -d");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::install(connection, apk, "-r -d"));
     std::filesystem::remove(apk);
 
     REQUIRE(contains(transport.written(), "pm install -r -d '/data/local/tmp/adbcpp_install_options.apk'"));
@@ -312,8 +322,8 @@ TEST_CASE("install reports a rejected APK as a failure", "[app]")
     feed_install(transport, "Failure [INSTALL_FAILED_INVALID_APK: Failed to extract native libraries]\n", 1);
 
     const auto apk = temp_file("install_failed.apk", "not really an apk\n");
-    adbcpp::Connection connection(transport);
-    const auto result = adbcpp::install(connection, apk);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    const auto result = unwrap(adbcpp::install(connection, apk));
     std::filesystem::remove(apk);
 
     REQUIRE_FALSE(result.success);
@@ -328,8 +338,8 @@ TEST_CASE("install splits a file larger than 64 KiB into several chunks", "[app]
 
     // 64 KiB is SYNC_DATA_MAX, so this needs two chunks.
     const auto apk = temp_file("install_large.apk", std::string(70u * 1024u, 'a'));
-    adbcpp::Connection connection(transport);
-    adbcpp::install(connection, apk);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::install(connection, apk));
     std::filesystem::remove(apk);
 
     REQUIRE(count_ids(transport.written(), "DATA") == 2u);
@@ -341,8 +351,8 @@ TEST_CASE("install quotes an APK name that contains a space", "[app]")
     feed_install(transport, "Success\n", 0);
 
     const auto apk = temp_file("install my app.apk", "data");
-    adbcpp::Connection connection(transport);
-    adbcpp::install(connection, apk);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::install(connection, apk));
     std::filesystem::remove(apk);
 
     REQUIRE(contains(transport.written(), "pm install '/data/local/tmp/adbcpp_install my app.apk'"));
@@ -353,9 +363,11 @@ TEST_CASE("install rejects a local path that is not a regular file", "[app]")
     adbcpp::testing::MockTransport transport;
     feed_device(transport, "shell_v2,stat_v2");
 
-    adbcpp::Connection connection(transport);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
 
-    REQUIRE_THROWS(adbcpp::install(connection, std::filesystem::temp_directory_path()));
+    const auto result = adbcpp::install(connection, std::filesystem::temp_directory_path());
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE(result.error().code == adbcpp::ErrorCode::InvalidArgument);
 }
 
 TEST_CASE("uninstall reports the package manager's success", "[app]")
@@ -364,8 +376,8 @@ TEST_CASE("uninstall reports the package manager's success", "[app]")
     feed_device(transport, "shell_v2,stat_v2");
     feed_run_on(transport, kDeviceId, kLocalId, "Success\n", 0);
 
-    adbcpp::Connection connection(transport);
-    const auto result = adbcpp::uninstall(connection, "com.example.app");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    const auto result = unwrap(adbcpp::uninstall(connection, "com.example.app"));
 
     REQUIRE(result.success);
     REQUIRE(result.exit_code == 0);
@@ -379,8 +391,8 @@ TEST_CASE("uninstall keeps the data when asked", "[app]")
     feed_device(transport, "shell_v2,stat_v2");
     feed_run_on(transport, kDeviceId, kLocalId, "Success\n", 0);
 
-    adbcpp::Connection connection(transport);
-    const auto result = adbcpp::uninstall(connection, "com.example.app", true);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    const auto result = unwrap(adbcpp::uninstall(connection, "com.example.app", true));
 
     REQUIRE(result.success);
     REQUIRE(contains(transport.written(), "pm uninstall -k 'com.example.app'"));
@@ -392,8 +404,8 @@ TEST_CASE("uninstall reports a package it cannot remove", "[app]")
     feed_device(transport, "shell_v2,stat_v2");
     feed_run_on(transport, kDeviceId, kLocalId, "Failure [DELETE_FAILED_INTERNAL_ERROR]\n", 1);
 
-    adbcpp::Connection connection(transport);
-    const auto result = adbcpp::uninstall(connection, "com.example.missing");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    const auto result = unwrap(adbcpp::uninstall(connection, "com.example.missing"));
 
     REQUIRE_FALSE(result.success);
     REQUIRE(result.exit_code == 1);

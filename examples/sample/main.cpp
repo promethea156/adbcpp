@@ -25,11 +25,16 @@ int main()
     // because CNXN's data_length defaults to zero.
     adbcpp::Session session(transport);
     const auto frame = session.receive();
+    if (!frame)
+    {
+        std::cerr << "error: " << frame.error().message << '\n';
+        return 1;
+    }
 
-    std::cout << "received command: 0x" << std::hex << std::setw(8) << std::setfill('0') << frame.header.command
+    std::cout << "received command: 0x" << std::hex << std::setw(8) << std::setfill('0') << frame->header.command
               << '\n';
-    std::cout << "arg0: 0x" << std::setw(8) << std::setfill('0') << frame.header.arg0 << '\n';
-    std::cout << "arg1: " << std::dec << frame.header.arg1 << '\n';
+    std::cout << "arg0: 0x" << std::setw(8) << std::setfill('0') << frame->header.arg0 << '\n';
+    std::cout << "arg1: " << std::dec << frame->header.arg1 << '\n';
 
     return 0;
 }

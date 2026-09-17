@@ -4,6 +4,7 @@
 #include <array>
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
+#include <utility>
 #include <vector>
 
 #include "adbcpp/protocol/commands.hpp"
@@ -15,6 +16,20 @@
 // and its payload are written and read as separate transport operations, even when
 // the bytes arrive split across reads.
 using adbcpp::protocol::Message;
+
+namespace
+{
+
+// Returns the value of a `Result` the test expects to succeed, failing the test
+// otherwise.
+template <typename T>
+T unwrap(adbcpp::Result<T> result)
+{
+    REQUIRE(result.has_value());
+    return std::move(*result);
+}
+
+} // namespace
 
 TEST_CASE("session receives a framed message from the transport", "[session]")
 {
@@ -28,7 +43,7 @@ TEST_CASE("session receives a framed message from the transport", "[session]")
     transport.feed(inbound.encode());
 
     adbcpp::Session session(transport);
-    const auto frame = session.receive();
+    const auto frame = unwrap(session.receive());
 
     REQUIRE(frame.header.command == inbound.command);
     REQUIRE(frame.header.arg0 == inbound.arg0);
@@ -46,7 +61,7 @@ TEST_CASE("session writes a framed message to the transport", "[session]")
     outbound.command = adbcpp::protocol::kOkay;
     outbound.magic = Message::compute_magic(outbound.command);
 
-    session.send(outbound);
+    REQUIRE(session.send(outbound).has_value());
 
     const auto expected = outbound.encode();
     const auto &written = transport.written();
@@ -68,7 +83,7 @@ TEST_CASE("session writes a payload as a separate transport write", "[session]")
     outbound.data_length = payload.size();
     outbound.magic = Message::compute_magic(outbound.command);
 
-    session.send(outbound, payload);
+    REQUIRE(session.send(outbound, payload).has_value());
 
     const auto header = outbound.encode();
     const auto &written = transport.written();
@@ -95,7 +110,7 @@ TEST_CASE("session reassembles a message split across reads", "[session]")
     transport.feed(std::span(encoded).subspan(5));
 
     adbcpp::Session session(transport);
-    const auto frame = session.receive();
+    const auto frame = unwrap(session.receive());
 
     REQUIRE(frame.header.command == inbound.command);
     REQUIRE(frame.header.arg0 == inbound.arg0);
@@ -119,7 +134,7 @@ TEST_CASE("session reads a payload after its header", "[session]")
     transport.feed(payload);
 
     adbcpp::Session session(transport);
-    const auto frame = session.receive();
+    const auto frame = unwrap(session.receive());
 
     REQUIRE(frame.header.command == inbound.command);
     REQUIRE(frame.header.data_length == payload.size());

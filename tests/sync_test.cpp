@@ -11,6 +11,7 @@
 #include <iterator>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "adbcpp/connection.hpp"
@@ -22,6 +23,21 @@ using adbcpp::protocol::Message;
 
 namespace
 {
+
+// Returns the value of a `Result` the test expects to succeed, failing the test
+// otherwise.
+template <typename T>
+T unwrap(adbcpp::Result<T> result)
+{
+    REQUIRE(result.has_value());
+    return std::move(*result);
+}
+
+// Fails the test unless a `Status` reports success.
+void unwrap(adbcpp::Status status)
+{
+    REQUIRE(status.has_value());
+}
 
 // Every binary integer in sync mode is little-endian.
 void write_u32_le(std::byte *out, std::uint32_t value)
@@ -58,7 +74,7 @@ adbcpp::protocol::Message make_message(std::uint32_t command, std::uint32_t arg0
     message.command = command;
     message.arg0 = arg0;
     message.arg1 = arg1;
-    message.data_length = adbcpp::protocol::Message::data_length_of(payload);
+    message.data_length = *adbcpp::protocol::Message::data_length_of(payload);
     message.data_crc32 = adbcpp::protocol::Message::compute_crc32(payload);
     message.magic = adbcpp::protocol::Message::compute_magic(command);
     return message;
@@ -287,8 +303,8 @@ TEST_CASE("list parses the v1 DENT entries", "[sync]")
     feed_dent_v1(transport, 0100644u, 42u, 456u, "file.txt");
     feed_list_done(transport, false);
 
-    adbcpp::Connection connection(transport);
-    const auto entries = adbcpp::list(connection, "/sdcard");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    const auto entries = unwrap(adbcpp::list(connection, "/sdcard"));
 
     REQUIRE(entries.size() == 2);
     REQUIRE(entries[0].name == ".");
@@ -306,8 +322,8 @@ TEST_CASE("list parses the v2 DNT2 entries", "[sync]")
     feed_dent_v2(transport, 0u, 0040755u, 4096u, 789, "sdcard");
     feed_list_done(transport, true);
 
-    adbcpp::Connection connection(transport);
-    const auto entries = adbcpp::list(connection, "/");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    const auto entries = unwrap(adbcpp::list(connection, "/"));
 
     REQUIRE(entries.size() == 1);
     REQUIRE(entries[0].name == "sdcard");
@@ -322,8 +338,8 @@ TEST_CASE("list sends the LIST request with the v2 id when ls_v2 is advertised",
     feed_device(transport, "shell_v2,ls_v2");
     feed_list_done(transport, true);
 
-    adbcpp::Connection connection(transport);
-    adbcpp::list(connection, "/sdcard");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::list(connection, "/sdcard"));
 
     // LIST(id, path_length, "path"), with no null terminator.
     std::vector<std::byte> request(8 + 7);
@@ -341,8 +357,8 @@ TEST_CASE("list leaves sync mode with QUIT", "[sync]")
     feed_device(transport, "shell_v2,cmd");
     feed_list_done(transport, false);
 
-    adbcpp::Connection connection(transport);
-    adbcpp::list(connection, "/");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::list(connection, "/"));
 
     std::vector<std::byte> quit(8);
     write_u32_le(quit.data(), adbcpp::protocol::make_command('Q', 'U', 'I', 'T'));
@@ -361,8 +377,8 @@ TEST_CASE("list skips a v2 entry that failed to stat", "[sync]")
     feed_dent_v2(transport, 0u, 0100644u, 10u, 1, "file.txt");
     feed_list_done(transport, true);
 
-    adbcpp::Connection connection(transport);
-    const auto entries = adbcpp::list(connection, "/");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    const auto entries = unwrap(adbcpp::list(connection, "/"));
 
     REQUIRE(entries.size() == 1);
     REQUIRE(entries[0].name == "file.txt");
@@ -374,21 +390,25 @@ TEST_CASE("list rejects a path longer than the sync limit", "[sync]")
     adbcpp::testing::MockTransport transport;
     feed_device(transport, "shell_v2,cmd");
 
-    adbcpp::Connection connection(transport);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
     const std::string path(1025, 'a');
 
-    REQUIRE_THROWS(adbcpp::list(connection, path));
+    const auto entries = adbcpp::list(connection, path);
+    REQUIRE_FALSE(entries.has_value());
+    REQUIRE(entries.error().code == adbcpp::ErrorCode::InvalidArgument);
 }
 
-TEST_CASE("list throws when the sync request fails", "[sync]")
+TEST_CASE("list returns an error when the sync request fails", "[sync]")
 {
     adbcpp::testing::MockTransport transport;
     feed_device(transport, "shell_v2,cmd");
     feed_fail(transport, "path too long");
 
-    adbcpp::Connection connection(transport);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
 
-    REQUIRE_THROWS(adbcpp::list(connection, "/sdcard"));
+    const auto entries = adbcpp::list(connection, "/sdcard");
+    REQUIRE_FALSE(entries.has_value());
+    REQUIRE(entries.error().code == adbcpp::ErrorCode::Device);
 }
 
 TEST_CASE("pull writes the received chunks to the local file", "[sync]")
@@ -400,8 +420,8 @@ TEST_CASE("pull writes the received chunks to the local file", "[sync]")
     feed_recv_done(transport);
 
     const auto local = temp_file("pull_chunks.bin");
-    adbcpp::Connection connection(transport);
-    adbcpp::pull(connection, "/sdcard/file.txt", local);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::pull(connection, "/sdcard/file.txt", local));
 
     REQUIRE(read_file(local) == "hello world\n");
     std::filesystem::remove(local);
@@ -414,8 +434,8 @@ TEST_CASE("pull sends the RECV request with the path", "[sync]")
     feed_recv_done(transport);
 
     const auto local = temp_file("pull_request.bin");
-    adbcpp::Connection connection(transport);
-    adbcpp::pull(connection, "/sdcard/file.txt", local);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::pull(connection, "/sdcard/file.txt", local));
 
     // RECV(id, path_length, "path"), with no null terminator.
     const std::string path = "/sdcard/file.txt";
@@ -437,8 +457,8 @@ TEST_CASE("pull leaves sync mode with QUIT", "[sync]")
     feed_recv_done(transport);
 
     const auto local = temp_file("pull_quit.bin");
-    adbcpp::Connection connection(transport);
-    adbcpp::pull(connection, "/sdcard/file.txt", local);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::pull(connection, "/sdcard/file.txt", local));
 
     std::vector<std::byte> quit(8);
     write_u32_le(quit.data(), adbcpp::protocol::make_command('Q', 'U', 'I', 'T'));
@@ -456,28 +476,30 @@ TEST_CASE("pull writes an empty file when no chunks are sent", "[sync]")
     feed_recv_done(transport);
 
     const auto local = temp_file("pull_empty.bin");
-    adbcpp::Connection connection(transport);
-    adbcpp::pull(connection, "/sdcard/empty", local);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::pull(connection, "/sdcard/empty", local));
 
     REQUIRE(std::filesystem::exists(local));
     REQUIRE(read_file(local).empty());
     std::filesystem::remove(local);
 }
 
-TEST_CASE("pull throws when the request fails", "[sync]")
+TEST_CASE("pull returns an error when the request fails", "[sync]")
 {
     adbcpp::testing::MockTransport transport;
     feed_device(transport, "shell_v2,cmd");
     feed_fail(transport, "open failed");
 
     const auto local = temp_file("pull_fail.bin");
-    adbcpp::Connection connection(transport);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
 
-    REQUIRE_THROWS(adbcpp::pull(connection, "/sdcard/file.txt", local));
+    const auto status = adbcpp::pull(connection, "/sdcard/file.txt", local);
+    REQUIRE_FALSE(status.has_value());
+    REQUIRE(status.error().code == adbcpp::ErrorCode::Device);
     std::filesystem::remove(local);
 }
 
-TEST_CASE("pull throws when a chunk is larger than 64 KiB", "[sync]")
+TEST_CASE("pull returns an error when a chunk is larger than 64 KiB", "[sync]")
 {
     adbcpp::testing::MockTransport transport;
     feed_device(transport, "shell_v2,cmd");
@@ -489,9 +511,11 @@ TEST_CASE("pull throws when a chunk is larger than 64 KiB", "[sync]")
     feed_sync(transport, chunk);
 
     const auto local = temp_file("pull_big_chunk.bin");
-    adbcpp::Connection connection(transport);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
 
-    REQUIRE_THROWS(adbcpp::pull(connection, "/sdcard/file.txt", local));
+    const auto status = adbcpp::pull(connection, "/sdcard/file.txt", local);
+    REQUIRE_FALSE(status.has_value());
+    REQUIRE(status.error().code == adbcpp::ErrorCode::Protocol);
     std::filesystem::remove(local);
 }
 
@@ -500,10 +524,12 @@ TEST_CASE("pull rejects a path longer than the sync limit", "[sync]")
     adbcpp::testing::MockTransport transport;
     feed_device(transport, "shell_v2,cmd");
 
-    adbcpp::Connection connection(transport);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
     const std::string path(1025, 'a');
 
-    REQUIRE_THROWS(adbcpp::pull(connection, path, temp_file("pull_long_path.bin")));
+    const auto status = adbcpp::pull(connection, path, temp_file("pull_long_path.bin"));
+    REQUIRE_FALSE(status.has_value());
+    REQUIRE(status.error().code == adbcpp::ErrorCode::InvalidArgument);
 }
 
 TEST_CASE("stat returns the v2 metadata", "[sync]")
@@ -512,8 +538,8 @@ TEST_CASE("stat returns the v2 metadata", "[sync]")
     feed_device(transport, "shell_v2,stat_v2");
     feed_stat_v2(transport, 0u, 0100644u, 42u, 456);
 
-    adbcpp::Connection connection(transport);
-    const auto info = adbcpp::stat(connection, "/sdcard/file.txt");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    const auto info = unwrap(adbcpp::stat(connection, "/sdcard/file.txt"));
 
     REQUIRE(info.has_value());
     REQUIRE(info->is_regular());
@@ -528,8 +554,8 @@ TEST_CASE("stat reports a missing path as nothing", "[sync]")
     // ENOENT, in the v2 form's leading error field.
     feed_stat_v2(transport, 2u, 0u, 0u, 0);
 
-    adbcpp::Connection connection(transport);
-    const auto info = adbcpp::stat(connection, "/sdcard/missing");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    const auto info = unwrap(adbcpp::stat(connection, "/sdcard/missing"));
 
     REQUIRE_FALSE(info.has_value());
 }
@@ -540,8 +566,8 @@ TEST_CASE("stat uses the v1 form when stat_v2 is not advertised", "[sync]")
     feed_device(transport, "shell_v2");
     feed_stat_v1(transport, 0040755u, 4096u, 456);
 
-    adbcpp::Connection connection(transport);
-    const auto info = adbcpp::stat(connection, "/sdcard");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    const auto info = unwrap(adbcpp::stat(connection, "/sdcard"));
 
     REQUIRE(info.has_value());
     REQUIRE(info->is_directory());
@@ -556,8 +582,8 @@ TEST_CASE("stat reports an all-zero v1 response as nothing", "[sync]")
     // The v1 form has no error field, so a missing path is all zeros.
     feed_stat_v1(transport, 0u, 0u, 0u);
 
-    adbcpp::Connection connection(transport);
-    const auto info = adbcpp::stat(connection, "/sdcard/missing");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    const auto info = unwrap(adbcpp::stat(connection, "/sdcard/missing"));
 
     REQUIRE_FALSE(info.has_value());
 }
@@ -574,8 +600,8 @@ TEST_CASE("push sends the file as DATA chunks and reads the OKAY", "[sync]")
     feed_status_on(transport, kSecondDeviceId, kSecondLocalId, adbcpp::protocol::make_command('O', 'K', 'A', 'Y'));
 
     const auto local = temp_file("push.txt", "hello world\n");
-    adbcpp::Connection connection(transport);
-    adbcpp::push(connection, local, "/sdcard/file.txt");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::push(connection, local, "/sdcard/file.txt"));
     std::filesystem::remove(local);
 
     const auto &written = transport.written();
@@ -611,8 +637,8 @@ TEST_CASE("push appends the local name when the destination is a directory", "[s
     feed_status_on(transport, kSecondDeviceId, kSecondLocalId, adbcpp::protocol::make_command('O', 'K', 'A', 'Y'));
 
     const auto local = temp_file("push_dir.txt", "data");
-    adbcpp::Connection connection(transport);
-    adbcpp::push(connection, local, "/sdcard");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::push(connection, local, "/sdcard"));
     std::filesystem::remove(local);
 
     const auto &written = transport.written();
@@ -622,7 +648,7 @@ TEST_CASE("push appends the local name when the destination is a directory", "[s
     REQUIRE(spec.starts_with("/sdcard/adbcpp_push_dir.txt,"));
 }
 
-TEST_CASE("push throws when the request is rejected", "[sync]")
+TEST_CASE("push returns an error when the request is rejected", "[sync]")
 {
     adbcpp::testing::MockTransport transport;
     feed_device(transport, "shell_v2,stat_v2");
@@ -631,9 +657,11 @@ TEST_CASE("push throws when the request is rejected", "[sync]")
     feed_fail_on(transport, kSecondDeviceId, kSecondLocalId, "couldn't create file");
 
     const auto local = temp_file("push_fail.txt", "data");
-    adbcpp::Connection connection(transport);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
 
-    REQUIRE_THROWS(adbcpp::push(connection, local, "/sdcard/file.txt"));
+    const auto status = adbcpp::push(connection, local, "/sdcard/file.txt");
+    REQUIRE_FALSE(status.has_value());
+    REQUIRE(status.error().code == adbcpp::ErrorCode::Device);
     std::filesystem::remove(local);
 }
 
@@ -642,9 +670,11 @@ TEST_CASE("push rejects a local path that is not a regular file", "[sync]")
     adbcpp::testing::MockTransport transport;
     feed_device(transport, "shell_v2,stat_v2");
 
-    adbcpp::Connection connection(transport);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
 
-    REQUIRE_THROWS(adbcpp::push(connection, std::filesystem::temp_directory_path(), "/sdcard/file.txt"));
+    const auto status = adbcpp::push(connection, std::filesystem::temp_directory_path(), "/sdcard/file.txt");
+    REQUIRE_FALSE(status.has_value());
+    REQUIRE(status.error().code == adbcpp::ErrorCode::InvalidArgument);
 }
 
 TEST_CASE("push rejects a remote path longer than the sync limit", "[sync]")
@@ -653,8 +683,10 @@ TEST_CASE("push rejects a remote path longer than the sync limit", "[sync]")
     feed_device(transport, "shell_v2,stat_v2");
 
     const auto local = temp_file("push_long_path.txt", "data");
-    adbcpp::Connection connection(transport);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
 
-    REQUIRE_THROWS(adbcpp::push(connection, local, std::string(1025, 'a')));
+    const auto status = adbcpp::push(connection, local, std::string(1025, 'a'));
+    REQUIRE_FALSE(status.has_value());
+    REQUIRE(status.error().code == adbcpp::ErrorCode::InvalidArgument);
     std::filesystem::remove(local);
 }

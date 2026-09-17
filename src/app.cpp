@@ -1,7 +1,6 @@
 #include "adbcpp/app.hpp"
 
 #include <cstddef>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -53,14 +52,9 @@ PackageResult package_result(const CommandResult &result)
 // caller needs, and a file left in `/data/local/tmp` is harmless.
 void remove_quietly(Connection &connection, std::string_view path) noexcept
 {
-    try
-    {
-        run(connection, "rm -f " + shell_quote(path));
-    }
-    catch (...)
-    {
-        // The stream is already failing; the install result is what matters.
-    }
+    // The stream may already be failing, and the install result is what matters, so
+    // the returned error is deliberately dropped.
+    (void)run(connection, "rm -f " + shell_quote(path));
 }
 
 } // namespace
@@ -83,12 +77,12 @@ std::string PackageResult::failure_reason() const
     return output.substr(reason_start, end - reason_start);
 }
 
-PackageResult install(Connection &connection, const std::filesystem::path &apk, std::string_view options)
+Result<PackageResult> install(Connection &connection, const std::filesystem::path &apk, std::string_view options)
 {
     std::error_code error;
     if (!std::filesystem::is_regular_file(apk, error))
     {
-        throw std::runtime_error("adbcpp: the APK is not a regular file");
+        return tl::unexpected(Error{ErrorCode::InvalidArgument, "the APK is not a regular file"});
     }
 
     // `/data/local/tmp` is the device's scratch directory: the shell user can
@@ -110,21 +104,22 @@ PackageResult install(Connection &connection, const std::filesystem::path &apk, 
 
     // The pushed APK is removed whether the install worked or not, so a rejected
     // APK is not left behind on the device.
-    try
-    {
-        push(connection, apk, remote);
-        const auto result = run(connection, command);
-        remove_quietly(connection, remote);
-        return package_result(result);
-    }
-    catch (...)
+    if (const auto pushed = push(connection, apk, remote); !pushed)
     {
         remove_quietly(connection, remote);
-        throw;
+        return tl::unexpected(pushed.error());
     }
+
+    const auto result = run(connection, command);
+    remove_quietly(connection, remote);
+    if (!result)
+    {
+        return tl::unexpected(result.error());
+    }
+    return package_result(*result);
 }
 
-PackageResult uninstall(Connection &connection, std::string_view package, bool keep_data)
+Result<PackageResult> uninstall(Connection &connection, std::string_view package, bool keep_data)
 {
     std::string command = "pm uninstall";
     if (keep_data)
@@ -133,7 +128,13 @@ PackageResult uninstall(Connection &connection, std::string_view package, bool k
     }
     command += ' ';
     command += shell_quote(package);
-    return package_result(run(connection, command));
+
+    const auto result = run(connection, command);
+    if (!result)
+    {
+        return tl::unexpected(result.error());
+    }
+    return package_result(*result);
 }
 
 } // namespace adbcpp

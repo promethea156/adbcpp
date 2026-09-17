@@ -1,7 +1,5 @@
 #include "adbcpp/protocol/message.hpp"
 
-#include <stdexcept>
-
 namespace adbcpp::protocol
 {
 namespace
@@ -51,11 +49,11 @@ std::uint32_t Message::compute_crc32(std::span<const std::byte> data) noexcept
     return ~crc;
 }
 
-std::uint32_t Message::data_length_of(std::span<const std::byte> payload)
+Result<std::uint32_t> Message::data_length_of(std::span<const std::byte> payload)
 {
     if (payload.size() > 0xFFFFFFFFu)
     {
-        throw std::runtime_error("adbcpp: the payload is too large for the ADB header");
+        return tl::unexpected(Error{ErrorCode::InvalidArgument, "the payload is too large for the ADB header"});
     }
     return static_cast<std::uint32_t>(payload.size());
 }

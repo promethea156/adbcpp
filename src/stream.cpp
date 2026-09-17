@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <stdexcept>
 #include <utility>
 
 #include "adbcpp/protocol/commands.hpp"
@@ -12,14 +11,33 @@ namespace adbcpp
 namespace
 {
 
-protocol::Message make_message(std::uint32_t command, std::uint32_t arg0, std::uint32_t arg1,
-                               std::span<const std::byte> payload)
+// Builds a message with no payload. `data_length_of` cannot fail for an empty
+// payload, but it returns a `Result`, and a destructor has nowhere to report one.
+protocol::Message make_empty_message(std::uint32_t command, std::uint32_t arg0, std::uint32_t arg1)
 {
     protocol::Message message;
     message.command = command;
     message.arg0 = arg0;
     message.arg1 = arg1;
-    message.data_length = protocol::Message::data_length_of(payload);
+    message.magic = protocol::Message::compute_magic(command);
+    return message;
+}
+
+// Builds a message carrying `payload`.
+Result<protocol::Message> make_message(std::uint32_t command, std::uint32_t arg0, std::uint32_t arg1,
+                                       std::span<const std::byte> payload)
+{
+    const auto length = protocol::Message::data_length_of(payload);
+    if (!length)
+    {
+        return tl::unexpected(length.error());
+    }
+
+    protocol::Message message;
+    message.command = command;
+    message.arg0 = arg0;
+    message.arg1 = arg1;
+    message.data_length = *length;
     message.data_crc32 = protocol::Message::compute_crc32(payload);
     message.magic = protocol::Message::compute_magic(command);
     return message;
@@ -35,17 +53,34 @@ Stream::Stream(Connection &connection, std::string_view service)
     // id 1 for itself, so `Connection` starts handing out ids at 2.
     local_id_(connection.allocate_local_id())
 {
+    // Nothing is sent here: the OPEN is the only step that can fail, and a
+    // constructor cannot report a failure, so `open` sends it.
+}
+
+Result<Stream> Stream::open(Connection &connection, std::string_view service)
+{
+    Stream stream(connection, service);
+
     // OPEN's destination is null-terminated and the NUL is part of `data_length`,
     // because adbd parses it as a C string. The same is true of the AUTH public
     // key, but not of the CNXN banner (blocker 7 in `04-blockers.md`).
-    std::string destination(service_);
+    std::string destination(service);
     destination.push_back('\0');
     const auto payload = std::span(reinterpret_cast<const std::byte *>(destination.data()), destination.size());
     // `arg1` is the initial delayed-acknowledgement window. A peer that supports
     // the feature closes the stream when it is zero, so a non-zero value is only
     // sent once `delayed_ack` has been negotiated (blocker 12).
-    const std::uint32_t send_buffer = connection_->supports_delayed_ack() ? protocol::kInitialDelayedAckBytes : 0;
-    connection_->send(make_message(protocol::kOpen, local_id_, send_buffer, payload), payload);
+    const std::uint32_t send_buffer = connection.supports_delayed_ack() ? protocol::kInitialDelayedAckBytes : 0;
+
+    const auto message = make_message(protocol::kOpen, stream.local_id_, send_buffer, payload);
+    if (!message)
+    {
+        return tl::unexpected(message.error());
+    }
+    if (const auto sent = connection.send(*message, payload); !sent)
+    {
+        return tl::unexpected(sent.error());
+    }
 
     // The device accepts with OKAY(local-id, remote-id), or refuses with CLSE.
     // Its `arg0` is the device's id for this stream, which is our `remote_id`.
@@ -53,36 +88,77 @@ Stream::Stream(Connection &connection, std::string_view service)
     // Frames carry the recipient's local id in `arg1`, so a stray frame for
     // another stream may arrive first; for example the device may send a second
     // CLOSE for the previous stream while this one opens. Those are skipped.
-    auto frame = connection_->receive();
-    while (frame.header.arg1 != local_id_)
+    while (true)
     {
-        frame = connection_->receive();
+        auto frame = connection.receive();
+        if (!frame)
+        {
+            return tl::unexpected(frame.error());
+        }
+        if (frame->header.arg1 != stream.local_id_)
+        {
+            continue;
+        }
+        if (frame->header.command != protocol::kOkay)
+        {
+            return tl::unexpected(Error{ErrorCode::Protocol, "failed to open the stream"});
+        }
+        stream.remote_id_ = frame->header.arg0;
+        return stream;
     }
-    if (frame.header.command != protocol::kOkay)
-    {
-        throw std::runtime_error("adbcpp: failed to open the stream");
-    }
-    remote_id_ = frame.header.arg0;
 }
 
 Stream::~Stream()
 {
     // CLOSE(local-id, remote-id, ""). The device does not answer a CLOSE, so this
-    // is fire-and-forget and best effort during destruction.
-    if (!closed_)
-    {
-        try
-        {
-            connection_->send(make_message(protocol::kClse, local_id_, remote_id_, {}));
-        }
-        catch (...)
-        {
-            // Closing is best effort during destruction.
-        }
-    }
+    // is fire and forget, and a failure is ignored because a destructor has
+    // nowhere to report it.
+    close_now();
 }
 
-void Stream::write(std::span<const std::byte> data)
+Stream::Stream(Stream &&other) noexcept
+    : connection_(other.connection_)
+    , service_(std::move(other.service_))
+    , local_id_(other.local_id_)
+    , remote_id_(other.remote_id_)
+    , closed_(other.closed_)
+    , incoming_(std::move(other.incoming_))
+    , incoming_offset_(other.incoming_offset_)
+{
+    // The moved-from stream no longer owns the stream, so its destructor must not
+    // send a CLOSE for it.
+    other.closed_ = true;
+}
+
+Stream &Stream::operator=(Stream &&other) noexcept
+{
+    if (this != &other)
+    {
+        // The stream this one owns is closed before it is replaced.
+        close_now();
+        connection_ = other.connection_;
+        service_ = std::move(other.service_);
+        local_id_ = other.local_id_;
+        remote_id_ = other.remote_id_;
+        closed_ = other.closed_;
+        incoming_ = std::move(other.incoming_);
+        incoming_offset_ = other.incoming_offset_;
+        other.closed_ = true;
+    }
+    return *this;
+}
+
+void Stream::close_now() noexcept
+{
+    if (closed_)
+    {
+        return;
+    }
+    closed_ = true;
+    (void)connection_->send(make_empty_message(protocol::kClse, local_id_, remote_id_));
+}
+
+Status Stream::write(std::span<const std::byte> data)
 {
     // WRITE(local-id, remote-id, "data"). A single WRTE must fit in one
     // message. The device advertised the largest payload it accepts in its CNXN
@@ -90,31 +166,46 @@ void Stream::write(std::span<const std::byte> data)
     // the device cannot read.
     if (data.size() > connection_->max_data())
     {
-        throw std::runtime_error("adbcpp: the write is larger than the negotiated maximum payload");
+        return tl::unexpected(
+            Error{ErrorCode::InvalidArgument, "the write is larger than the negotiated maximum payload"});
     }
-    connection_->send(make_message(protocol::kWrte, local_id_, remote_id_, data), data);
+
+    const auto message = make_message(protocol::kWrte, local_id_, remote_id_, data);
+    if (!message)
+    {
+        return tl::unexpected(message.error());
+    }
+    return connection_->send(*message, data);
 }
 
-bool Stream::receive_more()
+Result<bool> Stream::receive_more()
 {
     while (true)
     {
         auto frame = connection_->receive();
+        if (!frame)
+        {
+            return tl::unexpected(frame.error());
+        }
         // `arg1` is the recipient's local id, so a frame for another stream is
         // skipped rather than mistaken for this stream's data.
-        if (frame.header.arg1 != local_id_)
+        if (frame->header.arg1 != local_id_)
         {
             continue;
         }
-        switch (frame.header.command)
+        switch (frame->header.command)
         {
             case protocol::kWrte:
                 // Each WRITE is acknowledged with OKAY so the device may send the next
                 // one. Without delayed acknowledgements this handshake is what paces the
                 // stream (blocker 12).
-                incoming_ = std::move(frame.payload);
+                incoming_ = std::move(frame->payload);
                 incoming_offset_ = 0;
-                connection_->send(make_message(protocol::kOkay, local_id_, remote_id_, {}));
+                if (const auto sent = connection_->send(make_empty_message(protocol::kOkay, local_id_, remote_id_));
+                    !sent)
+                {
+                    return tl::unexpected(sent.error());
+                }
                 return true;
             case protocol::kOkay:
                 // The device acknowledges a WRITE we sent, for example a sync request.
@@ -127,21 +218,26 @@ bool Stream::receive_more()
                 closed_ = true;
                 return false;
             default:
-                throw std::runtime_error("adbcpp: unexpected message on the stream");
+                return tl::unexpected(Error{ErrorCode::Protocol, "unexpected message on the stream"});
         }
     }
 }
 
-void Stream::read(std::span<std::byte> buffer)
+Status Stream::read(std::span<std::byte> buffer)
 {
     std::size_t total = 0;
     while (total < buffer.size())
     {
         if (incoming_offset_ >= incoming_.size())
         {
-            if (!receive_more())
+            const auto more = receive_more();
+            if (!more)
             {
-                throw std::runtime_error("adbcpp: the device closed the stream");
+                return tl::unexpected(more.error());
+            }
+            if (!*more)
+            {
+                return tl::unexpected(Error{ErrorCode::Protocol, "the device closed the stream"});
             }
         }
 
@@ -152,22 +248,31 @@ void Stream::read(std::span<std::byte> buffer)
         incoming_offset_ += count;
         total += count;
     }
+    return {};
 }
 
-std::vector<std::byte> Stream::read_all()
+Result<std::vector<std::byte>> Stream::read_all()
 {
     // A previous read may have left part of a WRTE buffered, so drain it first.
     std::vector<std::byte> output(incoming_.begin() + static_cast<std::ptrdiff_t>(incoming_offset_), incoming_.end());
     incoming_.clear();
     incoming_offset_ = 0;
 
-    while (receive_more())
+    while (true)
     {
+        const auto more = receive_more();
+        if (!more)
+        {
+            return tl::unexpected(more.error());
+        }
+        if (!*more)
+        {
+            return output;
+        }
         output.insert(output.end(), incoming_.begin(), incoming_.end());
         incoming_.clear();
         incoming_offset_ = 0;
     }
-    return output;
 }
 
 } // namespace adbcpp

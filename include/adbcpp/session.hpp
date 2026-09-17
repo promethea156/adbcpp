@@ -4,6 +4,7 @@
 #include <span>
 #include <vector>
 
+#include "adbcpp/error.hpp"
 #include "adbcpp/export.hpp"
 #include "adbcpp/protocol/message.hpp"
 #include "adbcpp/transport.hpp"
@@ -39,10 +40,10 @@ public:
     explicit Session(Transport &transport) noexcept;
 
     /// Writes a header, then its payload as a separate transport write.
-    void send(const protocol::Message &header, std::span<const std::byte> payload = {});
+    Status send(const protocol::Message &header, std::span<const std::byte> payload = {});
 
     /// Reads exactly one header and its payload.
-    Frame receive();
+    Result<Frame> receive();
 
 private:
     Transport *transport_;

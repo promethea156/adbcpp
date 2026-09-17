@@ -5,6 +5,7 @@
 #include <memory>
 #include <span>
 
+#include "adbcpp/error.hpp"
 #include "adbcpp/export.hpp"
 #include "adbcpp/transport.hpp"
 
@@ -59,16 +60,37 @@ public:
     /// the wait is bounded even though the per-transfer timeout is short.
     static constexpr unsigned int kDefaultTransferBudgetMs = 120000;
 
-    /// Returns whether a USB device matching `id` is currently present.
-    static bool is_present(DeviceId id);
+    /**
+     * @brief Returns whether a USB device matching `id` is currently present.
+     *
+     * An error is returned when libusb itself cannot be initialized, which used
+     * to be indistinguishable from "no device is attached".
+     */
+    static Result<bool> is_present(DeviceId id);
 
-    /// @param transfer_timeout_ms The timeout for each bulk transfer, in
-    ///        milliseconds. See @ref kDefaultTransferTimeoutMs.
-    explicit UsbTransport(DeviceId id, unsigned int transfer_timeout_ms = kDefaultTransferTimeoutMs);
+    /**
+     * @brief Opens the USB device matching `id`.
+     *
+     * Opening can fail, and a constructor cannot report that, so this is a named
+     * factory and the constructor is private. Both timings are taken here rather
+     * than set afterwards, so the transport is fully configured before it exists.
+     *
+     * @param transfer_timeout_ms The timeout for each bulk transfer, in
+     *        milliseconds. See @ref kDefaultTransferTimeoutMs.
+     * @param transfer_budget_ms The total a single transfer waits before giving
+     *        up, in milliseconds. See @ref kDefaultTransferBudgetMs.
+     */
+    static Result<UsbTransport> open(DeviceId id, unsigned int transfer_timeout_ms = kDefaultTransferTimeoutMs,
+                                     unsigned int transfer_budget_ms = kDefaultTransferBudgetMs);
+
     ~UsbTransport() override;
 
     UsbTransport(const UsbTransport &) = delete;
     UsbTransport &operator=(const UsbTransport &) = delete;
+
+    /// A transport is returned by value, so it moves.
+    UsbTransport(UsbTransport &&) noexcept;
+    UsbTransport &operator=(UsbTransport &&) noexcept;
 
     /// Sets the timeout applied to each later bulk transfer, in milliseconds.
     void set_transfer_timeout(unsigned int milliseconds) noexcept;
@@ -82,11 +104,14 @@ public:
     /// The total a single transfer waits before giving up, in milliseconds.
     unsigned int transfer_budget() const noexcept;
 
-    std::size_t read(std::span<std::byte> buffer) override;
-    void write(std::span<const std::byte> data) override;
+    Result<std::size_t> read(std::span<std::byte> buffer) override;
+    Status write(std::span<const std::byte> data) override;
     void close() override;
 
 private:
+    // Opening is done by `open`, so the constructor is private.
+    UsbTransport();
+
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

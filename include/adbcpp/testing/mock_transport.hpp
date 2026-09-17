@@ -27,7 +27,7 @@ public:
     }
 
     /// Returns queued bytes, or 0 once the queue is drained (end of stream).
-    std::size_t read(std::span<std::byte> buffer) override
+    Result<std::size_t> read(std::span<std::byte> buffer) override
     {
         const std::size_t available = incoming_.size() - read_position_;
         const std::size_t count = std::min(available, buffer.size());
@@ -37,9 +37,10 @@ public:
         return count;
     }
 
-    void write(std::span<const std::byte> data) override
+    Status write(std::span<const std::byte> data) override
     {
         written_.insert(written_.end(), data.begin(), data.end());
+        return {};
     }
 
     void close() override

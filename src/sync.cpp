@@ -8,7 +8,6 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
-#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -104,60 +103,70 @@ std::uint64_t read_u64_le(const std::byte *in) noexcept
 // Writes a request that carries a path: the id, the path length, and the path
 // itself, which is not null-terminated. A sync request is not an ADB message, so it
 // has no 24-byte header.
-void write_path_request(Stream &stream, std::uint32_t id, std::string_view path)
+Status write_path_request(Stream &stream, std::uint32_t id, std::string_view path)
 {
     std::vector<std::byte> request(kRequestSize + path.size());
     write_u32_le(request.data(), id);
     write_u32_le(request.data() + 4, static_cast<std::uint32_t>(path.size()));
     std::copy_n(reinterpret_cast<const std::byte *>(path.data()), static_cast<std::ptrdiff_t>(path.size()),
                 request.begin() + static_cast<std::ptrdiff_t>(kRequestSize));
-    stream.write(request);
+    return stream.write(request);
 }
 
 // FAIL is `sync_status { id, msglen }` followed by the reason. The daemon sends it
 // when the request itself is rejected, for example when the path is too long or the
-// file cannot be opened.
-[[noreturn]] void throw_sync_fail(Stream &stream)
+// file cannot be opened. Reading the reason can itself fail, so the returned `Error`
+// is either the device's reason or the transport's.
+Error sync_fail(Stream &stream)
 {
     std::array<std::byte, 4> length_bytes{};
-    stream.read(length_bytes);
+    if (const auto read = stream.read(length_bytes); !read)
+    {
+        return read.error();
+    }
     const std::uint32_t length = read_u32_le(length_bytes.data());
     std::vector<std::byte> reason(length);
-    stream.read(reason);
-    throw std::runtime_error("adbcpp: the sync request failed: " +
-                             std::string(reinterpret_cast<const char *>(reason.data()), reason.size()));
+    if (const auto read = stream.read(reason); !read)
+    {
+        return read.error();
+    }
+    return Error{ErrorCode::Device, "the sync request failed: " +
+                                        std::string(reinterpret_cast<const char *>(reason.data()), reason.size())};
 }
 
 // Writes the `QUIT` request, which leaves sync mode; the daemon then closes the
 // stream.
-void write_quit(Stream &stream)
+Status write_quit(Stream &stream)
 {
     std::array<std::byte, kRequestSize> quit{};
     write_u32_le(quit.data(), kQuit);
-    stream.write(quit);
+    return stream.write(quit);
 }
 
 // Reads the device's reply to a request it acknowledges with `OKAY`, or rejects
 // with `FAIL` and a reason. The reply is `sync_status { id, msglen }`; only `FAIL`
 // has a message behind it.
-void read_status(Stream &stream)
+Status read_status(Stream &stream)
 {
     std::array<std::byte, 4> id_bytes{};
-    stream.read(id_bytes);
+    if (const auto read = stream.read(id_bytes); !read)
+    {
+        return tl::unexpected(read.error());
+    }
     const std::uint32_t id = read_u32_le(id_bytes.data());
 
     if (id == kFail)
     {
-        throw_sync_fail(stream);
+        return tl::unexpected(sync_fail(stream));
     }
     if (id != kOkay)
     {
-        throw std::runtime_error("adbcpp: unexpected sync response");
+        return tl::unexpected(Error{ErrorCode::Protocol, "unexpected sync response"});
     }
 
     // The acknowledged message length is zero and is ignored.
     std::array<std::byte, 4> length_bytes{};
-    stream.read(length_bytes);
+    return stream.read(length_bytes);
 }
 
 // The device applies the final `DONE`'s size as the file's modification time, so
@@ -213,11 +222,12 @@ std::uint32_t local_mode(const std::filesystem::path &path)
 
 } // namespace
 
-std::vector<DirEntry> list(Connection &connection, std::string_view path)
+Result<std::vector<DirEntry>> list(Connection &connection, std::string_view path)
 {
     if (path.size() > kMaxPathLength)
     {
-        throw std::runtime_error("adbcpp: the path is longer than the sync limit of 1024 bytes");
+        return tl::unexpected(
+            Error{ErrorCode::InvalidArgument, "the path is longer than the sync limit of 1024 bytes"});
     }
 
     // `ls_v2` selects the v2 DENT form. Matching adb, it is an exact feature
@@ -225,10 +235,17 @@ std::vector<DirEntry> list(Connection &connection, std::string_view path)
     const bool v2 = connection.supports_feature(kLsV2Feature);
 
     // Requesting the `sync:` service puts the stream in sync mode.
-    Stream stream(connection, "sync:");
+    auto stream = Stream::open(connection, "sync:");
+    if (!stream)
+    {
+        return tl::unexpected(stream.error());
+    }
 
     // LIST(id, path_length, "path").
-    write_path_request(stream, v2 ? kListV2 : kListV1, path);
+    if (const auto written = write_path_request(*stream, v2 ? kListV2 : kListV1, path); !written)
+    {
+        return tl::unexpected(written.error());
+    }
 
     const std::size_t body_size = v2 ? kDentV2BodySize : kDentV1BodySize;
     const std::size_t name_length_offset = v2 ? kDentV2NameLengthOffset : kDentV1NameLengthOffset;
@@ -238,20 +255,26 @@ std::vector<DirEntry> list(Connection &connection, std::string_view path)
     {
         // Every response starts with a four-byte id.
         std::array<std::byte, 4> id_bytes{};
-        stream.read(id_bytes);
+        if (const auto read = stream->read(id_bytes); !read)
+        {
+            return tl::unexpected(read.error());
+        }
         const std::uint32_t id = read_u32_le(id_bytes.data());
 
         // The request itself was rejected, for example because the path is too
         // long. Its body is a length and a reason, not a DENT body.
         if (id == kFail)
         {
-            throw_sync_fail(stream);
+            return tl::unexpected(sync_fail(*stream));
         }
 
         // DONE is a full DENT struct whose id is DONE, so its body is read too
         // to keep the stream in sync, and then the listing is over.
         std::vector<std::byte> body(body_size);
-        stream.read(body);
+        if (const auto read = stream->read(body); !read)
+        {
+            return tl::unexpected(read.error());
+        }
         if (id == kDone)
         {
             break;
@@ -259,7 +282,7 @@ std::vector<DirEntry> list(Connection &connection, std::string_view path)
 
         if (id != (v2 ? kDentV2 : kDentV1))
         {
-            throw std::runtime_error("adbcpp: unexpected sync response");
+            return tl::unexpected(Error{ErrorCode::Protocol, "unexpected sync response"});
         }
 
         // The name always follows, even when the entry failed, so it is read
@@ -267,10 +290,13 @@ std::vector<DirEntry> list(Connection &connection, std::string_view path)
         const std::uint32_t name_length = read_u32_le(body.data() + name_length_offset);
         if (name_length > kMaxNameLength)
         {
-            throw std::runtime_error("adbcpp: the entry name is longer than 255 bytes");
+            return tl::unexpected(Error{ErrorCode::Protocol, "the entry name is longer than 255 bytes"});
         }
         std::vector<std::byte> name(name_length);
-        stream.read(name);
+        if (const auto read = stream->read(name); !read)
+        {
+            return tl::unexpected(read.error());
+        }
 
         // v2 reports a failed `lstat` per entry instead of dropping it. The
         // error is the first field of the body.
@@ -296,50 +322,67 @@ std::vector<DirEntry> list(Connection &connection, std::string_view path)
         entries.push_back(std::move(entry));
     }
 
-    write_quit(stream);
+    if (const auto quit = write_quit(*stream); !quit)
+    {
+        return tl::unexpected(quit.error());
+    }
 
     return entries;
 }
 
-void pull(Connection &connection, std::string_view remote_path, const std::filesystem::path &local_path)
+Status pull(Connection &connection, std::string_view remote_path, const std::filesystem::path &local_path)
 {
     if (remote_path.size() > kMaxPathLength)
     {
-        throw std::runtime_error("adbcpp: the path is longer than the sync limit of 1024 bytes");
+        return tl::unexpected(
+            Error{ErrorCode::InvalidArgument, "the path is longer than the sync limit of 1024 bytes"});
     }
 
     // Requesting the `sync:` service puts the stream in sync mode.
-    Stream stream(connection, "sync:");
+    auto stream = Stream::open(connection, "sync:");
+    if (!stream)
+    {
+        return tl::unexpected(stream.error());
+    }
 
     // RECV(id, path_length, "path"), the same request layout as LIST. The v1 form
     // is used because the v2 form only adds compression flags, which this does not
     // need; both send the file as `DATA` chunks.
-    write_path_request(stream, kRecvV1, remote_path);
+    if (const auto written = write_path_request(*stream, kRecvV1, remote_path); !written)
+    {
+        return tl::unexpected(written.error());
+    }
 
     // Create or truncate the local file before the transfer starts, so a failure
     // leaves a partial file rather than a missing one.
     std::ofstream output(local_path, std::ios::binary | std::ios::trunc);
     if (!output)
     {
-        throw std::runtime_error("adbcpp: cannot open the local file for writing");
+        return tl::unexpected(Error{ErrorCode::Io, "cannot open the local file for writing"});
     }
 
     while (true)
     {
         // Every response starts with a four-byte id.
         std::array<std::byte, 4> id_bytes{};
-        stream.read(id_bytes);
+        if (const auto read = stream->read(id_bytes); !read)
+        {
+            return tl::unexpected(read.error());
+        }
         const std::uint32_t id = read_u32_le(id_bytes.data());
 
         if (id == kFail)
         {
-            throw_sync_fail(stream);
+            return tl::unexpected(sync_fail(*stream));
         }
 
         // DATA and DONE are both `sync_data { id, size }`: DATA is followed by
         // `size` bytes, and DONE carries nothing and ends the transfer.
         std::array<std::byte, 4> size_bytes{};
-        stream.read(size_bytes);
+        if (const auto read = stream->read(size_bytes); !read)
+        {
+            return tl::unexpected(read.error());
+        }
         const std::uint32_t size = read_u32_le(size_bytes.data());
 
         if (id == kDone)
@@ -349,47 +392,61 @@ void pull(Connection &connection, std::string_view remote_path, const std::files
 
         if (id != kData)
         {
-            throw std::runtime_error("adbcpp: unexpected sync response");
+            return tl::unexpected(Error{ErrorCode::Protocol, "unexpected sync response"});
         }
 
         // The daemon caps a chunk at SYNC_DATA_MAX, so a larger one is not a
         // chunk of a file.
         if (size > kMaxChunkSize)
         {
-            throw std::runtime_error("adbcpp: the sync chunk is larger than 64 KiB");
+            return tl::unexpected(Error{ErrorCode::Protocol, "the sync chunk is larger than 64 KiB"});
         }
 
         // Each chunk is written as it arrives, so the file is never held in
         // memory whole.
         std::vector<std::byte> chunk(size);
-        stream.read(chunk);
+        if (const auto read = stream->read(chunk); !read)
+        {
+            return tl::unexpected(read.error());
+        }
         output.write(reinterpret_cast<const char *>(chunk.data()), static_cast<std::streamsize>(chunk.size()));
         if (!output)
         {
-            throw std::runtime_error("adbcpp: failed to write the local file");
+            return tl::unexpected(Error{ErrorCode::Io, "failed to write the local file"});
         }
     }
 
-    write_quit(stream);
+    return write_quit(*stream);
 }
 
-std::optional<FileStat> stat(Connection &connection, std::string_view path)
+Result<std::optional<FileStat>> stat(Connection &connection, std::string_view path)
 {
     if (path.size() > kMaxPathLength)
     {
-        throw std::runtime_error("adbcpp: the path is longer than the sync limit of 1024 bytes");
+        return tl::unexpected(
+            Error{ErrorCode::InvalidArgument, "the path is longer than the sync limit of 1024 bytes"});
     }
 
     // `stat_v2` selects the v2 STAT form, which reports an error instead of
     // failing the request. Matching adb, it is an exact feature match.
     const bool v2 = connection.supports_feature(kStatV2Feature);
 
-    Stream stream(connection, "sync:");
-    write_path_request(stream, v2 ? kStatV2 : kStatV1, path);
+    auto stream = Stream::open(connection, "sync:");
+    if (!stream)
+    {
+        return tl::unexpected(stream.error());
+    }
+    if (const auto written = write_path_request(*stream, v2 ? kStatV2 : kStatV1, path); !written)
+    {
+        return tl::unexpected(written.error());
+    }
 
     // Every response starts with a four-byte id.
     std::array<std::byte, 4> id_bytes{};
-    stream.read(id_bytes);
+    if (const auto read = stream->read(id_bytes); !read)
+    {
+        return tl::unexpected(read.error());
+    }
 
     FileStat result;
     if (v2)
@@ -397,13 +454,19 @@ std::optional<FileStat> stat(Connection &connection, std::string_view path)
         // v2 is the v2 DENT body without the name: `error`, `dev`, `ino`,
         // `mode`, `nlink`, `uid`, `gid`, `size`, `atime`, `mtime`, `ctime`.
         std::array<std::byte, kStatV2BodySize> body{};
-        stream.read(body);
+        if (const auto read = stream->read(body); !read)
+        {
+            return tl::unexpected(read.error());
+        }
 
         // The device reports a missing path here rather than failing the request.
         if (read_u32_le(body.data()) != 0)
         {
-            write_quit(stream);
-            return std::nullopt;
+            if (const auto quit = write_quit(*stream); !quit)
+            {
+                return tl::unexpected(quit.error());
+            }
+            return std::optional<FileStat>{};
         }
         result.mode = read_u32_le(body.data() + 20);
         result.size = read_u64_le(body.data() + 36);
@@ -414,34 +477,47 @@ std::optional<FileStat> stat(Connection &connection, std::string_view path)
         // v1 is `mode`, `size`, `mtime`. It has no error field, so a missing
         // path comes back as all zeros and cannot be told from an empty file.
         std::array<std::byte, kStatV1BodySize> body{};
-        stream.read(body);
+        if (const auto read = stream->read(body); !read)
+        {
+            return tl::unexpected(read.error());
+        }
         if (read_u32_le(body.data()) == 0 && read_u32_le(body.data() + 4) == 0 && read_u32_le(body.data() + 8) == 0)
         {
-            write_quit(stream);
-            return std::nullopt;
+            if (const auto quit = write_quit(*stream); !quit)
+            {
+                return tl::unexpected(quit.error());
+            }
+            return std::optional<FileStat>{};
         }
         result.mode = read_u32_le(body.data());
         result.size = read_u32_le(body.data() + 4);
         result.mtime = read_u32_le(body.data() + 8);
     }
 
-    write_quit(stream);
-    return result;
+    if (const auto quit = write_quit(*stream); !quit)
+    {
+        return tl::unexpected(quit.error());
+    }
+    return std::optional<FileStat>{result};
 }
 
-void push(Connection &connection, const std::filesystem::path &local_path, std::string_view remote_path)
+Status push(Connection &connection, const std::filesystem::path &local_path, std::string_view remote_path)
 {
     std::error_code error;
     if (!std::filesystem::is_regular_file(local_path, error))
     {
-        throw std::runtime_error("adbcpp: the local file is not a regular file");
+        return tl::unexpected(Error{ErrorCode::InvalidArgument, "the local file is not a regular file"});
     }
 
     // A destination that is an existing directory receives the file under its local
     // name, exactly like `adb push local.txt /sdcard/`.
     std::string destination(remote_path);
     const auto existing = stat(connection, remote_path);
-    if (existing && existing->is_directory())
+    if (!existing)
+    {
+        return tl::unexpected(existing.error());
+    }
+    if (*existing && (*existing)->is_directory())
     {
         destination.push_back('/');
         destination += local_path.filename().string();
@@ -452,15 +528,22 @@ void push(Connection &connection, const std::filesystem::path &local_path, std::
     // `open`, which uses only its permission bits.
     const std::string spec = destination + ',' + std::to_string(local_mode(local_path));
 
-    Stream stream(connection, "sync:");
-    write_path_request(stream, kSendV1, spec);
+    auto stream = Stream::open(connection, "sync:");
+    if (!stream)
+    {
+        return tl::unexpected(stream.error());
+    }
+    if (const auto written = write_path_request(*stream, kSendV1, spec); !written)
+    {
+        return tl::unexpected(written.error());
+    }
 
     // The contents follow as DATA chunks, and DONE ends the transfer with the
     // file's modification time as its size.
     std::ifstream input(local_path, std::ios::binary);
     if (!input)
     {
-        throw std::runtime_error("adbcpp: cannot open the local file");
+        return tl::unexpected(Error{ErrorCode::Io, "cannot open the local file"});
     }
 
     std::vector<char> buffer(kMaxChunkSize);
@@ -481,24 +564,33 @@ void push(Connection &connection, const std::filesystem::path &local_path, std::
         write_u32_le(block.data() + 4, static_cast<std::uint32_t>(count));
         std::copy_n(reinterpret_cast<const std::byte *>(buffer.data()), static_cast<std::ptrdiff_t>(count),
                     block.begin() + 8);
-        stream.write(block);
+        if (const auto written = stream->write(block); !written)
+        {
+            return tl::unexpected(written.error());
+        }
     }
 
     if (!input.eof())
     {
-        throw std::runtime_error("adbcpp: failed to read the local file");
+        return tl::unexpected(Error{ErrorCode::Io, "failed to read the local file"});
     }
 
     std::array<std::byte, 8> done{};
     write_u32_le(done.data(), kDone);
     write_u32_le(done.data() + 4, static_cast<std::uint32_t>(local_mtime(local_path)));
-    stream.write(done);
+    if (const auto written = stream->write(done); !written)
+    {
+        return tl::unexpected(written.error());
+    }
 
     // Unlike a listing or a transfer, the device acknowledges the final DONE with
     // OKAY, or rejects the request with FAIL.
-    read_status(stream);
+    if (const auto status = read_status(*stream); !status)
+    {
+        return tl::unexpected(status.error());
+    }
 
-    write_quit(stream);
+    return write_quit(*stream);
 }
 
 } // namespace adbcpp

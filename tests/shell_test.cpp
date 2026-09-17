@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "adbcpp/connection.hpp"
@@ -17,6 +18,15 @@
 namespace
 {
 
+// Returns the value of a `Result` the test expects to succeed, failing the test
+// otherwise.
+template <typename T>
+T unwrap(adbcpp::Result<T> result)
+{
+    REQUIRE(result.has_value());
+    return std::move(*result);
+}
+
 adbcpp::protocol::Message make_message(std::uint32_t command, std::uint32_t arg0, std::uint32_t arg1,
                                        std::span<const std::byte> payload = {})
 {
@@ -24,7 +34,7 @@ adbcpp::protocol::Message make_message(std::uint32_t command, std::uint32_t arg0
     message.command = command;
     message.arg0 = arg0;
     message.arg1 = arg1;
-    message.data_length = adbcpp::protocol::Message::data_length_of(payload);
+    message.data_length = *adbcpp::protocol::Message::data_length_of(payload);
     message.data_crc32 = adbcpp::protocol::Message::compute_crc32(payload);
     message.magic = adbcpp::protocol::Message::compute_magic(command);
     return message;
@@ -92,8 +102,8 @@ TEST_CASE("run reassembles stdout and reads the exit code", "[shell]")
     feed_exit(transport, 0);
     feed_close(transport);
 
-    adbcpp::Connection connection(transport);
-    const auto result = adbcpp::run(connection, "echo hello");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    const auto result = unwrap(adbcpp::run(connection, "echo hello"));
 
     REQUIRE(result.output == "hello\n");
     REQUIRE(result.exit_code == 0);
@@ -108,8 +118,8 @@ TEST_CASE("run merges stderr into the output", "[shell]")
     feed_exit(transport, 0);
     feed_close(transport);
 
-    adbcpp::Connection connection(transport);
-    const auto result = adbcpp::run(connection, "command");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    const auto result = unwrap(adbcpp::run(connection, "command"));
 
     REQUIRE(result.output == "outerr");
 }
@@ -121,8 +131,8 @@ TEST_CASE("run reads a nonzero exit code from the exit packet's data", "[shell]"
     feed_exit(transport, 42);
     feed_close(transport);
 
-    adbcpp::Connection connection(transport);
-    const auto result = adbcpp::run(connection, "false");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    const auto result = unwrap(adbcpp::run(connection, "false"));
 
     REQUIRE(result.exit_code == 42);
 }

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "adbcpp/protocol/commands.hpp"
@@ -18,6 +19,15 @@ using adbcpp::protocol::Message;
 
 namespace
 {
+
+// Returns the value of a `Result` the test expects to succeed, failing the test
+// otherwise.
+template <typename T>
+T unwrap(adbcpp::Result<T> result)
+{
+    REQUIRE(result.has_value());
+    return std::move(*result);
+}
 
 adbcpp::protocol::Message make_message(std::uint32_t command, std::uint32_t arg0, std::uint32_t arg1,
                                        std::span<const std::byte> payload = {})
@@ -41,7 +51,7 @@ TEST_CASE("connection completes the handshake without authentication", "[connect
     const auto device = make_message(adbcpp::protocol::kCnxn, 0x01000001u, 4096u);
     transport.feed(device.encode());
 
-    adbcpp::Connection connection(transport);
+    const auto connection = unwrap(adbcpp::Connection::connect(transport));
 
     REQUIRE(connection.device_version() == 0x01000001u);
     REQUIRE(connection.max_data() == 4096u);
@@ -63,7 +73,7 @@ TEST_CASE("connection answers an AUTH request with the public key", "[connection
     std::vector<std::byte> key(public_key.begin(), public_key.end());
     key.push_back(std::byte{0});
 
-    adbcpp::Connection connection(transport, public_key);
+    const auto connection = unwrap(adbcpp::Connection::connect(transport, public_key));
 
     std::vector<std::byte> identity(
         reinterpret_cast<const std::byte *>(adbcpp::kSystemIdentity.data()),
@@ -109,7 +119,7 @@ TEST_CASE("connection offers the public key when the signature is rejected", "[c
         return signature;
     };
 
-    adbcpp::Connection connection(transport, public_key, signer);
+    const auto connection = unwrap(adbcpp::Connection::connect(transport, public_key, signer));
 
     std::vector<std::byte> identity(
         reinterpret_cast<const std::byte *>(adbcpp::kSystemIdentity.data()),
@@ -143,5 +153,7 @@ TEST_CASE("connection fails when a key is required but not provided", "[connecti
     transport.feed(auth.encode());
     transport.feed(token);
 
-    REQUIRE_THROWS(adbcpp::Connection(transport));
+    const auto connection = adbcpp::Connection::connect(transport);
+    REQUIRE_FALSE(connection.has_value());
+    REQUIRE(connection.error().code == adbcpp::ErrorCode::Crypto);
 }

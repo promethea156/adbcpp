@@ -2,6 +2,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -10,6 +11,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "adbcpp/adbcpp.hpp"
@@ -22,6 +24,29 @@
 // protocol is explained in `docs/06-sync-protocol.md`.
 namespace
 {
+
+// Returns the value of a `Result` the example expects to succeed, reporting the
+// error and exiting otherwise.
+template <typename T>
+T unwrap(adbcpp::Result<T> result)
+{
+    if (!result)
+    {
+        std::cerr << "error: " << result.error().message << '\n';
+        std::exit(1);
+    }
+    return std::move(*result);
+}
+
+// The same for an operation with nothing to report.
+void unwrap(adbcpp::Status status)
+{
+    if (!status)
+    {
+        std::cerr << "error: " << status.error().message << '\n';
+        std::exit(1);
+    }
+}
 
 // A stream is keyed by two ids, and the ids are relative to the sender, so each
 // side's local id is the other's remote id. These are the values a real device uses
@@ -64,7 +89,7 @@ adbcpp::protocol::Message message(std::uint32_t command, std::uint32_t arg0, std
     header.command = command;
     header.arg0 = arg0;
     header.arg1 = arg1;
-    header.data_length = adbcpp::protocol::Message::data_length_of(payload);
+    header.data_length = *adbcpp::protocol::Message::data_length_of(payload);
     header.data_crc32 = adbcpp::protocol::Message::compute_crc32(payload);
     header.magic = adbcpp::protocol::Message::compute_magic(command);
     return header;
@@ -211,17 +236,17 @@ int main()
     feed(transport, message(adbcpp::protocol::kWrte, kFourthDeviceId, kFourthLocalId, okay), okay);
 
     // The connection performs the handshake against the queued CNXN.
-    adbcpp::Connection connection(transport);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
 
     std::cout << "listing /sdcard:\n";
-    for (const auto &entry : adbcpp::list(connection, "/sdcard"))
+    for (const auto &entry : unwrap(adbcpp::list(connection, "/sdcard")))
     {
         std::cout << "  " << (entry.is_directory() ? 'd' : '-') << ' ' << entry.size << ' ' << entry.name << '\n';
     }
 
     // `pull` writes the chunks to a local file as they arrive.
     const auto local = std::filesystem::temp_directory_path() / "adbcpp_sync_example.txt";
-    adbcpp::pull(connection, "/sdcard/file.txt", local);
+    unwrap(adbcpp::pull(connection, "/sdcard/file.txt", local));
 
     // The file has to be closed before it can be removed, which Windows enforces.
     std::string contents;
@@ -238,7 +263,7 @@ int main()
         std::ofstream output(upload, std::ios::binary | std::ios::trunc);
         output << "pushed from the host\n";
     }
-    adbcpp::push(connection, upload, "/sdcard/upload.txt");
+    unwrap(adbcpp::push(connection, upload, "/sdcard/upload.txt"));
     std::filesystem::remove(upload);
     std::cout << "pushed a local file to /sdcard/upload.txt\n";
 

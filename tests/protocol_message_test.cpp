@@ -71,6 +71,6 @@ TEST_CASE("data_length_of reports the payload size as a 32-bit length", "[protoc
 {
     const std::array<std::byte, 3> payload{std::byte{'a'}, std::byte{'b'}, std::byte{'c'}};
 
-    REQUIRE(Message::data_length_of(payload) == 3u);
-    REQUIRE(Message::data_length_of({}) == 0u);
+    REQUIRE(*Message::data_length_of(payload) == 3u);
+    REQUIRE(*Message::data_length_of({}) == 0u);
 }

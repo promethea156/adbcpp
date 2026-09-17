@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include "adbcpp/connection.hpp"
+#include "adbcpp/error.hpp"
 #include "adbcpp/export.hpp"
 
 namespace adbcpp
@@ -17,6 +18,9 @@ struct ADBCPP_API CommandResult
     std::string output;
     /// The command's exit code.
     std::uint8_t exit_code = 0;
+    /// Whether the device reported the command worked. For a plain command this is
+    /// `exit_code == 0`.
+    bool success = false;
 };
 
 /**
@@ -32,6 +36,6 @@ struct ADBCPP_API CommandResult
  * The `raw` suffix asks the device to run the command directly instead of
  * through a login shell, and is the form adb itself uses for `adb shell`.
  */
-CommandResult ADBCPP_API run(Connection &connection, std::string_view command);
+Result<CommandResult> ADBCPP_API run(Connection &connection, std::string_view command);
 
 } // namespace adbcpp

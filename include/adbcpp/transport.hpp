@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <span>
 
+#include "adbcpp/error.hpp"
 #include "adbcpp/export.hpp"
 
 namespace adbcpp
@@ -28,22 +29,29 @@ public:
     /**
      * @brief Reads up to `buffer.size()` bytes into `buffer`.
      *
-     * @return the number of bytes read, or 0 on end of stream.
+     * @return the number of bytes read, 0 on end of stream, or the reason the
+     * link failed.
      */
-    virtual std::size_t read(std::span<std::byte> buffer) = 0;
+    virtual Result<std::size_t> read(std::span<std::byte> buffer) = 0;
 
     /**
      * @brief Writes the whole of `data`.
      *
-     * @throws std::runtime_error if the data cannot be written.
+     * @return nothing, or the reason the link failed.
      */
-    virtual void write(std::span<const std::byte> data) = 0;
+    virtual Status write(std::span<const std::byte> data) = 0;
 
     /// Closes the transport, releasing any underlying resources.
     virtual void close() = 0;
 
 protected:
     Transport() = default;
+
+    /// A transport is move-only, so a concrete transport can be returned by
+    /// value from its factory. The move is protected because only a derived
+    /// class's own move constructor calls it.
+    Transport(Transport &&) = default;
+    Transport &operator=(Transport &&) = default;
 };
 
 } // namespace adbcpp

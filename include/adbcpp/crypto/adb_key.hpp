@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "adbcpp/error.hpp"
 #include "adbcpp/export.hpp"
 
 namespace adbcpp::crypto
@@ -36,10 +37,10 @@ public:
     Key &operator=(const Key &) = delete;
 
     /// Generates a new RSA-2048 key pair.
-    static Key generate();
+    static Result<Key> generate();
 
     /// Loads the key pair from `~/.android/adbkey`, generating it if absent.
-    static Key load_or_generate();
+    static Result<Key> load_or_generate();
 
     /// The ADB public key string, as sent with AUTH type 3.
     const std::string &public_key() const noexcept;
@@ -51,7 +52,7 @@ public:
     /// computers" list shows, so it is useful for checking that this library and adb
     /// use the same key. adb's own log prints a SHA-256 of the DER
     /// `SubjectPublicKeyInfo` instead, so the two fingerprints do not match.
-    std::string fingerprint() const;
+    Result<std::string> fingerprint() const;
 
     /**
      * Signs `token` with the private key (PKCS#1 v1.5, SHA-1).
@@ -59,7 +60,7 @@ public:
      * The token is the SHA-1 digest itself and is signed directly, exactly like
      * adb's `RSA_sign(NID_sha1, token, ...)`; it is not re-hashed.
      */
-    std::vector<std::byte> sign(std::span<const std::byte> token) const;
+    Result<std::vector<std::byte>> sign(std::span<const std::byte> token) const;
 
 private:
     Key();

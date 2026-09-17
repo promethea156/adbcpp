@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "adbcpp/connection.hpp"
@@ -19,6 +20,15 @@ using adbcpp::protocol::Message;
 
 namespace
 {
+
+// Returns the value of a `Result` the test expects to succeed, failing the test
+// otherwise.
+template <typename T>
+T unwrap(adbcpp::Result<T> result)
+{
+    REQUIRE(result.has_value());
+    return std::move(*result);
+}
 
 adbcpp::protocol::Message make_message(std::uint32_t command, std::uint32_t arg0, std::uint32_t arg1,
                                        std::span<const std::byte> payload = {})
@@ -55,7 +65,7 @@ TEST_CASE("stream opens with a zero send buffer when delayed ack is off", "[stre
     const auto device = make_message(adbcpp::protocol::kCnxn, 0x01000001u, 4096u);
     feed_frame(transport, device);
 
-    adbcpp::Connection connection(transport);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
     REQUIRE_FALSE(connection.supports_delayed_ack());
     const auto before = transport.written().size();
 
@@ -75,7 +85,7 @@ TEST_CASE("stream opens with a zero send buffer when delayed ack is off", "[stre
     expected.insert(expected.end(), payload.begin(), payload.end());
 
     {
-        adbcpp::Stream stream(connection, service);
+        auto stream = unwrap(adbcpp::Stream::open(connection, service));
         const auto &written = transport.written();
         REQUIRE(written.size() == before + expected.size());
         REQUIRE(std::equal(written.begin() + static_cast<std::ptrdiff_t>(before), written.end(), expected.begin()));
@@ -90,7 +100,7 @@ TEST_CASE("stream sends the delayed ack window when negotiated", "[stream]")
     const auto banner_bytes = std::span(reinterpret_cast<const std::byte *>(banner.data()), banner.size());
     feed_frame(transport, make_message(adbcpp::protocol::kCnxn, 0x01000001u, 4096u, banner_bytes), banner_bytes);
 
-    adbcpp::Connection connection(transport, {}, {}, true);
+    auto connection = unwrap(adbcpp::Connection::connect(transport, {}, {}, true));
     REQUIRE(connection.supports_delayed_ack());
     const auto before = transport.written().size();
 
@@ -109,7 +119,7 @@ TEST_CASE("stream sends the delayed ack window when negotiated", "[stream]")
     expected.insert(expected.end(), payload.begin(), payload.end());
 
     {
-        adbcpp::Stream stream(connection, service);
+        auto stream = unwrap(adbcpp::Stream::open(connection, service));
         const auto &written = transport.written();
         REQUIRE(written.size() == before + expected.size());
         REQUIRE(std::equal(written.begin() + static_cast<std::ptrdiff_t>(before), written.end(), expected.begin()));
@@ -129,11 +139,11 @@ TEST_CASE("stream opens and collects output until close", "[stream]")
     feed_frame(transport, make_message(adbcpp::protocol::kWrte, kRemoteId, kLocalId, output_bytes), output_bytes);
     feed_frame(transport, make_message(adbcpp::protocol::kClse, kRemoteId, kLocalId));
 
-    adbcpp::Connection connection(transport);
-    adbcpp::Stream stream(connection, "shell:echo hello");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    auto stream = unwrap(adbcpp::Stream::open(connection, "shell:echo hello"));
 
     REQUIRE(stream.service() == "shell:echo hello");
-    const auto collected = stream.read_all();
+    const auto collected = unwrap(stream.read_all());
 
     REQUIRE(collected.size() == output.size());
     REQUIRE(std::equal(collected.begin(), collected.end(), output_bytes.begin()));
@@ -149,10 +159,10 @@ TEST_CASE("stream sends OKAY for each WRTE", "[stream]")
     feed_frame(transport, make_message(adbcpp::protocol::kWrte, kRemoteId, kLocalId));
     feed_frame(transport, make_message(adbcpp::protocol::kClse, kRemoteId, kLocalId));
 
-    adbcpp::Connection connection(transport);
-    adbcpp::Stream stream(connection, "shell:id");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    auto stream = unwrap(adbcpp::Stream::open(connection, "shell:id"));
     const auto before = transport.written().size();
-    stream.read_all();
+    REQUIRE(stream.read_all().has_value());
 
     const auto expected = make_message(adbcpp::protocol::kOkay, kLocalId, kRemoteId, {}).encode();
     const auto &written = transport.written();
@@ -173,11 +183,13 @@ TEST_CASE("stream rejects a write larger than the negotiated maximum payload", "
     feed_frame(transport, device);
     feed_frame(transport, make_message(adbcpp::protocol::kOkay, kRemoteId, kLocalId));
 
-    adbcpp::Connection connection(transport);
-    adbcpp::Stream stream(connection, "shell:id");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    auto stream = unwrap(adbcpp::Stream::open(connection, "shell:id"));
 
     const std::vector<std::byte> too_large(4097, std::byte{0});
-    REQUIRE_THROWS(stream.write(too_large));
+    const auto written = stream.write(too_large);
+    REQUIRE_FALSE(written.has_value());
+    REQUIRE(written.error().code == adbcpp::ErrorCode::InvalidArgument);
 }
 
 TEST_CASE("stream ignores a frame for another stream while opening", "[stream]")
@@ -192,8 +204,8 @@ TEST_CASE("stream ignores a frame for another stream while opening", "[stream]")
     feed_frame(transport, make_message(adbcpp::protocol::kClse, kRemoteId, 9));
     feed_frame(transport, make_message(adbcpp::protocol::kOkay, kRemoteId, kLocalId));
 
-    adbcpp::Connection connection(transport);
-    adbcpp::Stream stream(connection, "shell:id");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    auto stream = unwrap(adbcpp::Stream::open(connection, "shell:id"));
 
     REQUIRE(stream.service() == "shell:id");
 }
@@ -214,14 +226,14 @@ TEST_CASE("stream skips the OKAY that acknowledges a write", "[stream]")
     feed_frame(transport, make_message(adbcpp::protocol::kWrte, kRemoteId, kLocalId, output_bytes), output_bytes);
     feed_frame(transport, make_message(adbcpp::protocol::kClse, kRemoteId, kLocalId));
 
-    adbcpp::Connection connection(transport);
-    adbcpp::Stream stream(connection, "sync:");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    auto stream = unwrap(adbcpp::Stream::open(connection, "sync:"));
 
     const std::string request = "LIST";
     const auto request_bytes = std::span(reinterpret_cast<const std::byte *>(request.data()), request.size());
-    stream.write(request_bytes);
+    REQUIRE(stream.write(request_bytes).has_value());
 
-    const auto collected = stream.read_all();
+    const auto collected = unwrap(stream.read_all());
     REQUIRE(collected.size() == output.size());
     REQUIRE(std::equal(collected.begin(), collected.end(), output_bytes.begin()));
 }

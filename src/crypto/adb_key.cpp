@@ -14,10 +14,9 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <iterator>
 #include <span>
-#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace adbcpp::crypto
@@ -86,30 +85,32 @@ std::uint32_t inverse_mod_2_32(std::uint32_t value)
 // Writes a bignum into `out` in little-endian byte order. mbedTLS serializes
 // big-endian, which is the opposite of what ADB's key blob uses, so the result is
 // reversed.
-void to_little_endian(const mbedtls_mpi &value, std::span<std::byte> out)
+Status to_little_endian(const mbedtls_mpi &value, std::span<std::byte> out)
 {
     std::vector<unsigned char> big_endian(out.size(), 0);
     if (mbedtls_mpi_write_binary(&value, big_endian.data(), big_endian.size()) != 0)
     {
-        throw std::runtime_error("adbcpp: failed to serialize an RSA component");
+        return tl::unexpected(Error{ErrorCode::Crypto, "failed to serialize an RSA component"});
     }
     for (std::size_t i = 0; i < out.size(); ++i)
     {
         out[i] = static_cast<std::byte>(big_endian[out.size() - 1 - i]);
     }
+    return {};
 }
 
 // Computes rr = R^2 mod n, where R = 2^(8 * kModulusBytes).
-void compute_rr(mbedtls_mpi &rr, const mbedtls_mpi &n)
+Status compute_rr(mbedtls_mpi &rr, const mbedtls_mpi &n)
 {
     if (mbedtls_mpi_lset(&rr, 1) != 0 || mbedtls_mpi_shift_l(&rr, 8 * kModulusBytes * 2) != 0 ||
         mbedtls_mpi_mod_mpi(&rr, &rr, &n) != 0)
     {
-        throw std::runtime_error("adbcpp: failed to derive RSA key parameters");
+        return tl::unexpected(Error{ErrorCode::Crypto, "failed to derive RSA key parameters"});
     }
+    return {};
 }
 
-std::string encode_public_key(const mbedtls_pk_context &pk)
+Result<std::string> encode_public_key(const mbedtls_pk_context &pk)
 {
     mbedtls_mpi n;
     mbedtls_mpi e;
@@ -117,22 +118,45 @@ std::string encode_public_key(const mbedtls_pk_context &pk)
     mbedtls_mpi_init(&n);
     mbedtls_mpi_init(&e);
     mbedtls_mpi_init(&rr);
-    if (mbedtls_rsa_export(mbedtls_pk_rsa(pk), &n, nullptr, nullptr, nullptr, &e) != 0)
+
+    // The three bignums are owned by this scope, so every exit path frees them.
+    const auto cleanup = [&n, &e, &rr]()
     {
         mbedtls_mpi_free(&rr);
         mbedtls_mpi_free(&e);
         mbedtls_mpi_free(&n);
-        throw std::runtime_error("adbcpp: failed to export the RSA key");
+    };
+
+    if (mbedtls_rsa_export(mbedtls_pk_rsa(pk), &n, nullptr, nullptr, nullptr, &e) != 0)
+    {
+        cleanup();
+        return tl::unexpected(Error{ErrorCode::Crypto, "failed to export the RSA key"});
     }
-    compute_rr(rr, n);
+    if (const auto computed = compute_rr(rr, n); !computed)
+    {
+        cleanup();
+        return tl::unexpected(computed.error());
+    }
 
     // Lay the blob out exactly as `android_pubkey_encode` does: the word count,
     // then n0inv, the modulus, rr, and the exponent, all little-endian.
     std::array<std::byte, kBlobSize> blob{};
     auto modulus = std::span(blob).subspan(8, kModulusBytes);
-    to_little_endian(n, modulus);
-    to_little_endian(rr, std::span(blob).subspan(8 + kModulusBytes, kModulusBytes));
-    to_little_endian(e, std::span(blob).subspan(8 + 2 * kModulusBytes, 4));
+    if (const auto status = to_little_endian(n, modulus); !status)
+    {
+        cleanup();
+        return tl::unexpected(status.error());
+    }
+    if (const auto status = to_little_endian(rr, std::span(blob).subspan(8 + kModulusBytes, kModulusBytes)); !status)
+    {
+        cleanup();
+        return tl::unexpected(status.error());
+    }
+    if (const auto status = to_little_endian(e, std::span(blob).subspan(8 + 2 * kModulusBytes, 4)); !status)
+    {
+        cleanup();
+        return tl::unexpected(status.error());
+    }
 
     // n0inv is -1 / n[0] mod 2^32, where n[0] is the least significant word
     // of the modulus. Unsigned negation is how the reference implementation
@@ -141,16 +165,14 @@ std::string encode_public_key(const mbedtls_pk_context &pk)
     write_u32_le(blob.data() + 0, static_cast<std::uint32_t>(kModulusBytes / 4));
     write_u32_le(blob.data() + 4, 0u - inverse_mod_2_32(n0));
 
-    mbedtls_mpi_free(&rr);
-    mbedtls_mpi_free(&e);
-    mbedtls_mpi_free(&n);
+    cleanup();
 
     std::vector<unsigned char> encoded(4 * ((kBlobSize + 2) / 3) + 1, 0);
     std::size_t length = 0;
     if (mbedtls_base64_encode(encoded.data(), encoded.size(), &length,
                               reinterpret_cast<const unsigned char *>(blob.data()), blob.size()) != 0)
     {
-        throw std::runtime_error("adbcpp: failed to encode the public key");
+        return tl::unexpected(Error{ErrorCode::Crypto, "failed to encode the public key"});
     }
 
     // AUTH type 3 sends "<base64 blob> <user>@<host>", and adbd splits on the
@@ -161,35 +183,57 @@ std::string encode_public_key(const mbedtls_pk_context &pk)
     return key;
 }
 
-// Returns the user's home directory, or throws if it is not set. On Windows this
-// uses the secure `_dupenv_s`, which allocates the value and must be freed.
-std::filesystem::path home_directory()
+// Returns the user's home directory, or an `Io` error if it is not set. On Windows
+// this uses the secure `_dupenv_s`, which allocates the value and must be freed.
+Result<std::filesystem::path> home_directory()
 {
 #if defined(_WIN32)
     char *value = nullptr;
     std::size_t size = 0;
     if (_dupenv_s(&value, &size, "USERPROFILE") != 0 || value == nullptr)
     {
-        throw std::runtime_error("adbcpp: cannot locate the home directory");
+        return tl::unexpected(Error{ErrorCode::Io, "cannot locate the home directory"});
     }
-    const std::filesystem::path home(value);
-    std::free(value);
-    return home;
+    // `path`'s constructor from a narrow string can throw on an encoding error,
+    // so it is built inside a catch and converted to an `Io` error.
+    try
+    {
+        const std::filesystem::path home(value);
+        std::free(value);
+        return home;
+    }
+    catch (const std::filesystem::filesystem_error &)
+    {
+        std::free(value);
+        return tl::unexpected(Error{ErrorCode::Io, "cannot locate the home directory"});
+    }
 #else
     const char *value = std::getenv("HOME");
     if (value == nullptr || *value == '\0')
     {
-        throw std::runtime_error("adbcpp: cannot locate the home directory");
+        return tl::unexpected(Error{ErrorCode::Io, "cannot locate the home directory"});
     }
-    return std::filesystem::path(value);
+    try
+    {
+        return std::filesystem::path(value);
+    }
+    catch (const std::filesystem::filesystem_error &)
+    {
+        return tl::unexpected(Error{ErrorCode::Io, "cannot locate the home directory"});
+    }
 #endif
 }
 
 // ADB keeps its keys in `~/.android`, so adb and this library share the same
 // key pair. Sharing the key is what avoids a new authorization prompt.
-std::filesystem::path key_directory()
+Result<std::filesystem::path> key_directory()
 {
-    return home_directory() / ".android";
+    const auto home = home_directory();
+    if (!home)
+    {
+        return tl::unexpected(home.error());
+    }
+    return *home / ".android";
 }
 
 } // namespace
@@ -223,7 +267,7 @@ const std::string &Key::public_key() const noexcept
     return impl_->public_key;
 }
 
-std::string Key::fingerprint() const
+Result<std::string> Key::fingerprint() const
 {
     const std::string encoded = impl_->public_key.substr(0, impl_->public_key.find(' '));
 
@@ -232,7 +276,7 @@ std::string Key::fingerprint() const
     if (mbedtls_base64_decode(blob.data(), blob.size(), &blob_size,
                               reinterpret_cast<const unsigned char *>(encoded.data()), encoded.size()) != 0)
     {
-        throw std::runtime_error("adbcpp: failed to decode the ADB public key");
+        return tl::unexpected(Error{ErrorCode::Crypto, "failed to decode the ADB public key"});
     }
 
     std::array<unsigned char, 16> digest{};
@@ -253,12 +297,12 @@ std::string Key::fingerprint() const
     return result;
 }
 
-Key Key::generate()
+Result<Key> Key::generate()
 {
     Key key;
     if (mbedtls_pk_setup(&key.impl_->pk, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA)) != 0)
     {
-        throw std::runtime_error("adbcpp: failed to set up an RSA key");
+        return tl::unexpected(Error{ErrorCode::Crypto, "failed to set up an RSA key"});
     }
 
     mbedtls_entropy_context entropy;
@@ -275,23 +319,39 @@ Key Key::generate()
     mbedtls_entropy_free(&entropy);
     if (rc != 0)
     {
-        throw std::runtime_error("adbcpp: failed to generate an RSA key");
+        return tl::unexpected(Error{ErrorCode::Crypto, "failed to generate an RSA key"});
     }
 
-    key.impl_->public_key = encode_public_key(key.impl_->pk);
+    const auto public_key = encode_public_key(key.impl_->pk);
+    if (!public_key)
+    {
+        return tl::unexpected(public_key.error());
+    }
+    key.impl_->public_key = *public_key;
     return key;
 }
 
-Key Key::load_or_generate()
+Result<Key> Key::load_or_generate()
 {
     const auto directory = key_directory();
-    const auto private_path = directory / "adbkey";
-    const auto public_path = directory / "adbkey.pub";
+    if (!directory)
+    {
+        return tl::unexpected(directory.error());
+    }
+    const auto private_path = *directory / "adbkey";
+    const auto public_path = *directory / "adbkey.pub";
 
     // Reuse adb's key if it is already there. `adbkey` is a PKCS#8 PEM, which
     // `mbedtls_pk_parse_keyfile` reads directly, so no manual ASN.1 parsing is
     // needed (blocker 8 in `04-blockers.md`).
-    if (std::filesystem::exists(private_path))
+    std::error_code exists_error;
+    const bool private_exists = std::filesystem::exists(private_path, exists_error);
+    if (exists_error)
+    {
+        return tl::unexpected(Error{ErrorCode::Io, "cannot check the ADB private key"});
+    }
+
+    if (private_exists)
     {
         mbedtls_entropy_context entropy;
         mbedtls_ctr_drbg_context drbg;
@@ -310,36 +370,71 @@ Key Key::load_or_generate()
         mbedtls_entropy_free(&entropy);
         if (rc != 0)
         {
-            throw std::runtime_error("adbcpp: failed to load the ADB private key (" + std::to_string(rc) + ")");
+            return tl::unexpected(
+                Error{ErrorCode::Crypto, "failed to load the ADB private key (" + std::to_string(rc) + ")"});
         }
 
-        key.impl_->public_key = encode_public_key(key.impl_->pk);
+        const auto public_key = encode_public_key(key.impl_->pk);
+        if (!public_key)
+        {
+            return tl::unexpected(public_key.error());
+        }
+        key.impl_->public_key = *public_key;
         return key;
     }
 
     // No key yet: create `~/.android` and write both files in adb's format, so
     // that adb and this library can share the key afterwards.
-    Key key = generate();
-    std::filesystem::create_directories(directory);
-
-    std::array<unsigned char, kPemBufferSize> pem{};
-    const int length = mbedtls_pk_write_key_pem(&key.impl_->pk, pem.data(), pem.size());
-    if (length == 0)
+    auto generated = generate();
+    if (!generated)
     {
-        throw std::runtime_error("adbcpp: failed to store the ADB private key");
+        return tl::unexpected(generated.error());
     }
+    Key key = std::move(*generated);
+
+    std::error_code create_error;
+    std::filesystem::create_directories(*directory, create_error);
+    if (create_error)
+    {
+        return tl::unexpected(Error{ErrorCode::Io, "cannot create the ADB key directory"});
+    }
+
+    // `mbedtls_pk_write_key_pem` returns zero on success and writes a
+    // null-terminated string, so the stored length is its `strlen`, not the return
+    // value.
+    std::array<unsigned char, kPemBufferSize> pem{};
+    if (mbedtls_pk_write_key_pem(&key.impl_->pk, pem.data(), pem.size()) != 0)
+    {
+        return tl::unexpected(Error{ErrorCode::Crypto, "failed to store the ADB private key"});
+    }
+    const auto length =
+        static_cast<std::streamsize>(std::char_traits<char>::length(reinterpret_cast<const char *>(pem.data())));
+
     std::ofstream private_output(private_path, std::ios::binary | std::ios::trunc);
+    if (!private_output)
+    {
+        return tl::unexpected(Error{ErrorCode::Io, "cannot open the ADB private key for writing"});
+    }
     private_output.write(reinterpret_cast<const char *>(pem.data()), length);
+    if (!private_output)
+    {
+        return tl::unexpected(Error{ErrorCode::Io, "failed to store the ADB private key"});
+    }
 
     std::ofstream public_output(public_path, std::ios::binary | std::ios::trunc);
-    if (public_output)
+    if (!public_output)
     {
-        public_output << key.public_key() << '\n';
+        return tl::unexpected(Error{ErrorCode::Io, "cannot open the ADB public key for writing"});
+    }
+    public_output << key.public_key() << '\n';
+    if (!public_output)
+    {
+        return tl::unexpected(Error{ErrorCode::Io, "failed to store the ADB public key"});
     }
     return key;
 }
 
-std::vector<std::byte> Key::sign(std::span<const std::byte> token) const
+Result<std::vector<std::byte>> Key::sign(std::span<const std::byte> token) const
 {
     mbedtls_entropy_context entropy;
     mbedtls_ctr_drbg_context drbg;
@@ -370,7 +465,7 @@ std::vector<std::byte> Key::sign(std::span<const std::byte> token) const
     mbedtls_entropy_free(&entropy);
     if (rc != 0)
     {
-        throw std::runtime_error("adbcpp: failed to sign the token (" + std::to_string(rc) + ")");
+        return tl::unexpected(Error{ErrorCode::Crypto, "failed to sign the token (" + std::to_string(rc) + ")"});
     }
     signature.resize(length);
 

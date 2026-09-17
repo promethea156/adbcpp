@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "adbcpp/connection.hpp"
+#include "adbcpp/error.hpp"
 #include "adbcpp/export.hpp"
 
 namespace adbcpp
@@ -87,7 +88,7 @@ struct ADBCPP_API FileStat
  * full POSIX metadata (`dev`, `ino`, `nlink`, `uid`, `gid`, `atime`, `ctime`) and
  * reports a per-entry error instead of silently dropping entries.
  */
-std::vector<DirEntry> ADBCPP_API list(Connection &connection, std::string_view path);
+Result<std::vector<DirEntry>> ADBCPP_API list(Connection &connection, std::string_view path);
 
 /**
  * @brief Copies a file from the device to `local_path`.
@@ -95,26 +96,27 @@ std::vector<DirEntry> ADBCPP_API list(Connection &connection, std::string_view p
  * Opens the `sync:` service, sends a RECV request for `remote_path`, and writes each
  * `DATA` chunk to `local_path` as it arrives, so the file is never held in memory.
  * The device ends the transfer with `DONE`. A request the device rejects arrives as a
- * `FAIL` message and is thrown as a `std::runtime_error`.
+ * `FAIL` message and is returned as an `ErrorCode::Device` error carrying the
+ * daemon's reason.
  *
  * `local_path` is created if it does not exist and truncated if it does, and its
  * parent directory must already exist. A transfer that fails part way through leaves
  * the partial file behind, exactly as adb leaves it, so the caller can decide whether
  * to retry or remove it.
  */
-void ADBCPP_API pull(Connection &connection, std::string_view remote_path, const std::filesystem::path &local_path);
+Status ADBCPP_API pull(Connection &connection, std::string_view remote_path, const std::filesystem::path &local_path);
 
 /**
  * @brief Stats a path on the device, following symbolic links.
  *
  * Opens the `sync:` service and sends a STAT request for `path`. The device
  * reports a missing path as an error in its response rather than failing the
- * request, so that case is returned as `std::nullopt` instead of throwing.
+ * request, so that case is an empty `optional`, not an `Error`.
  *
  * When the device advertises `stat_v2`, the v2 form is used; otherwise the v1
  * form is, which has no error field and reports a missing path as all zeros.
  */
-std::optional<FileStat> ADBCPP_API stat(Connection &connection, std::string_view path);
+Result<std::optional<FileStat>> ADBCPP_API stat(Connection &connection, std::string_view path);
 
 /**
  * @brief Copies a local file to `remote_path` on the device.
@@ -122,7 +124,7 @@ std::optional<FileStat> ADBCPP_API stat(Connection &connection, std::string_view
  * Opens the `sync:` service, stats `remote_path`, and sends a SEND request
  * followed by the file's contents as `DATA` chunks of at most 64 KiB. The device
  * acknowledges the last `DONE` with `OKAY`, or rejects the request with `FAIL`,
- * which is thrown as a `std::runtime_error`.
+ * which is returned as an `ErrorCode::Device` error carrying the daemon's reason.
  *
  * The device creates `remote_path`, or overwrites it if it already exists. When
  * `remote_path` names an existing directory, the file is created inside it under
@@ -130,6 +132,6 @@ std::optional<FileStat> ADBCPP_API stat(Connection &connection, std::string_view
  * creates the file with `local_path`'s permissions and modification time, so far as
  * the platform reports them.
  */
-void ADBCPP_API push(Connection &connection, const std::filesystem::path &local_path, std::string_view remote_path);
+Status ADBCPP_API push(Connection &connection, const std::filesystem::path &local_path, std::string_view remote_path);
 
 } // namespace adbcpp

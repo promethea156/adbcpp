@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "adbcpp/error.hpp"
 #include "adbcpp/export.hpp"
 #include "adbcpp/protocol/message.hpp"
 #include "adbcpp/session.hpp"
@@ -47,7 +48,7 @@ inline constexpr std::string_view kDelayedAckFeature = "delayed_ack";
 /**
  * @brief An authenticated ADB connection to a device.
  *
- * The CNXN handshake is performed on construction, following the sequence in
+ * The CNXN handshake is performed by `connect`, following the sequence in
  * `docs/dev/protocol.md`:
  *
  *   https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/docs/dev/protocol.md
@@ -70,17 +71,30 @@ inline constexpr std::string_view kDelayedAckFeature = "delayed_ack";
 class ADBCPP_API Connection
 {
 public:
-    /// Signs an AUTH token with the private key.
-    using Signer = std::function<std::vector<std::byte>(std::span<const std::byte>)>;
+    /// Signs an AUTH token with the private key, or reports why it cannot.
+    using Signer = std::function<Result<std::vector<std::byte>>(std::span<const std::byte>)>;
 
-    explicit Connection(Transport &transport, std::span<const std::byte> public_key = {}, Signer signer = {},
-                        bool advertise_delayed_ack = false);
+    /**
+     * @brief Connects to `transport` and performs the handshake above.
+     *
+     * The handshake can fail, and a constructor cannot report that, so this is a
+     * named factory and the constructor is private.
+     */
+    static Result<Connection> connect(Transport &transport, std::span<const std::byte> public_key = {},
+                                      Signer signer = {}, bool advertise_delayed_ack = false);
+
+    Connection(const Connection &) = delete;
+    Connection &operator=(const Connection &) = delete;
+
+    /// A connection is returned by value, so it moves.
+    Connection(Connection &&) noexcept = default;
+    Connection &operator=(Connection &&) noexcept = default;
 
     /// Sends a header and optional payload on the connection.
-    void send(const protocol::Message &header, std::span<const std::byte> payload = {});
+    Status send(const protocol::Message &header, std::span<const std::byte> payload = {});
 
     /// Receives the next frame from the connection.
-    Frame receive();
+    Result<Frame> receive();
 
     /// Allocates a unique, non-zero local stream id.
     std::uint32_t allocate_local_id() noexcept
@@ -121,6 +135,10 @@ public:
     }
 
 private:
+    // Connecting is done by `connect`, which owns the handshake, so the
+    // constructor only holds the session.
+    explicit Connection(Transport &transport);
+
     Session session_;
     std::uint32_t device_version_ = 0;
     std::uint32_t max_data_ = 0;

@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 // These tests pin down ADB's key formats: the 524-byte custom `RSAPublicKey`
@@ -18,9 +19,23 @@
 //   https://android.googlesource.com/platform/system/core/+/refs/heads/main/libcrypto_utils/android_pubkey.cpp
 #include "adbcpp/crypto/adb_key.hpp"
 
+namespace
+{
+
+// Returns the value of a `Result` the test expects to succeed, failing the test
+// otherwise.
+template <typename T>
+T unwrap(adbcpp::Result<T> result)
+{
+    REQUIRE(result.has_value());
+    return std::move(*result);
+}
+
+} // namespace
+
 TEST_CASE("generated public key has the ADB format", "[crypto]")
 {
-    const auto key = adbcpp::crypto::Key::generate();
+    const auto key = unwrap(adbcpp::crypto::Key::generate());
     const std::string &public_key = key.public_key();
 
     const auto space = public_key.find(' ');
@@ -32,24 +47,25 @@ TEST_CASE("generated public key has the ADB format", "[crypto]")
 
 TEST_CASE("generated public keys are unique", "[crypto]")
 {
-    REQUIRE(adbcpp::crypto::Key::generate().public_key() != adbcpp::crypto::Key::generate().public_key());
+    REQUIRE(unwrap(adbcpp::crypto::Key::generate()).public_key() !=
+            unwrap(adbcpp::crypto::Key::generate()).public_key());
 }
 
 TEST_CASE("a token signature is 256 bytes", "[crypto]")
 {
-    const auto key = adbcpp::crypto::Key::generate();
+    const auto key = unwrap(adbcpp::crypto::Key::generate());
     const std::array<std::byte, 20> token{};
 
-    const auto signature = key.sign(token);
+    const auto signature = unwrap(key.sign(token));
     REQUIRE(signature.size() == 256);
 }
 
 TEST_CASE("a token signature verifies against the ADB public key", "[crypto]")
 {
-    const auto key = adbcpp::crypto::Key::generate();
+    const auto key = unwrap(adbcpp::crypto::Key::generate());
 
     const std::array<std::byte, 20> token{std::byte{0x01}, std::byte{0x02}};
-    const auto signature = key.sign(token);
+    const auto signature = unwrap(key.sign(token));
 
     const std::string &public_key = key.public_key();
     const std::string encoded = public_key.substr(0, public_key.find(' '));
@@ -93,7 +109,7 @@ TEST_CASE("a token signature verifies against the ADB public key", "[crypto]")
 
 TEST_CASE("the ADB public key has valid Montgomery parameters", "[crypto]")
 {
-    const auto key = adbcpp::crypto::Key::generate();
+    const auto key = unwrap(adbcpp::crypto::Key::generate());
 
     const std::string &public_key = key.public_key();
     const std::string encoded = public_key.substr(0, public_key.find(' '));

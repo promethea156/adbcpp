@@ -9,8 +9,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
-#include <stdexcept>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace adbcpp::usb
@@ -28,9 +29,12 @@ constexpr std::uint8_t kAdbInterfaceProtocol = 0x01;
 // least as large as the maximum payload the peer may send.
 constexpr std::size_t kReadBufferSize = 256 * 1024;
 
-[[noreturn]] void fail(const std::string &what, int code)
+// libusb is a C API, so it reports a failure as a code rather than throwing;
+// this turns one into an `Error`.
+Error fail(std::string_view what, int code)
 {
-    throw std::runtime_error("adbcpp: " + what + ": " + libusb_strerror(static_cast<enum libusb_error>(code)));
+    return Error{ErrorCode::Transport,
+                 std::string(what) + ": " + libusb_strerror(static_cast<enum libusb_error>(code))};
 }
 
 libusb_device *find_device(libusb_device **devices, ssize_t count, DeviceId id)
@@ -52,12 +56,13 @@ libusb_device *find_device(libusb_device **devices, ssize_t count, DeviceId id)
 
 } // namespace
 
-bool UsbTransport::is_present(DeviceId id)
+Result<bool> UsbTransport::is_present(DeviceId id)
 {
     libusb_context *context = nullptr;
-    if (libusb_init(&context) != 0)
+    const int initialized = libusb_init(&context);
+    if (initialized != 0)
     {
-        return false;
+        return tl::unexpected(fail("libusb_init", initialized));
     }
 
     libusb_device **devices = nullptr;
@@ -128,22 +133,31 @@ struct UsbTransport::Impl
     }
 };
 
-UsbTransport::UsbTransport(DeviceId id, unsigned int transfer_timeout_ms)
+UsbTransport::UsbTransport()
     : impl_(std::make_unique<Impl>())
 {
-    impl_->transfer_timeout_ms = transfer_timeout_ms;
+}
 
-    int rc = libusb_init(&impl_->context);
+UsbTransport::UsbTransport(UsbTransport &&) noexcept = default;
+UsbTransport &UsbTransport::operator=(UsbTransport &&) noexcept = default;
+
+Result<UsbTransport> UsbTransport::open(DeviceId id, unsigned int transfer_timeout_ms, unsigned int transfer_budget_ms)
+{
+    UsbTransport transport;
+    transport.impl_->transfer_timeout_ms = transfer_timeout_ms;
+    transport.impl_->transfer_budget_ms = transfer_budget_ms;
+
+    int rc = libusb_init(&transport.impl_->context);
     if (rc != 0)
     {
-        fail("libusb_init", rc);
+        return tl::unexpected(fail("libusb_init", rc));
     }
 
     libusb_device **devices = nullptr;
-    const ssize_t count = libusb_get_device_list(impl_->context, &devices);
+    const ssize_t count = libusb_get_device_list(transport.impl_->context, &devices);
     if (count < 0)
     {
-        fail("libusb_get_device_list", static_cast<int>(count));
+        return tl::unexpected(fail("libusb_get_device_list", static_cast<int>(count)));
     }
 
     libusb_device *match = find_device(devices, count, id);
@@ -151,7 +165,7 @@ UsbTransport::UsbTransport(DeviceId id, unsigned int transfer_timeout_ms)
     if (match == nullptr)
     {
         libusb_free_device_list(devices, 1);
-        throw std::runtime_error("adbcpp: no USB device matching the given id");
+        return tl::unexpected(Error{ErrorCode::Transport, "no USB device matching the given id"});
     }
 
     libusb_config_descriptor *config = nullptr;
@@ -163,10 +177,10 @@ UsbTransport::UsbTransport(DeviceId id, unsigned int transfer_timeout_ms)
     if (rc != 0)
     {
         libusb_free_device_list(devices, 1);
-        fail("libusb_get_config_descriptor", rc);
+        return tl::unexpected(fail("libusb_get_config_descriptor", rc));
     }
 
-    for (std::uint8_t i = 0; i < config->bNumInterfaces && impl_->interface_number < 0; ++i)
+    for (std::uint8_t i = 0; i < config->bNumInterfaces && transport.impl_->interface_number < 0; ++i)
     {
         const libusb_interface &interface = config->interface[i];
         for (int j = 0; j < interface.num_altsetting; ++j)
@@ -178,7 +192,7 @@ UsbTransport::UsbTransport(DeviceId id, unsigned int transfer_timeout_ms)
             {
                 continue;
             }
-            impl_->interface_number = altsetting.bInterfaceNumber;
+            transport.impl_->interface_number = altsetting.bInterfaceNumber;
             for (std::uint8_t k = 0; k < altsetting.bNumEndpoints; ++k)
             {
                 const libusb_endpoint_descriptor &endpoint = altsetting.endpoint[k];
@@ -188,11 +202,11 @@ UsbTransport::UsbTransport(DeviceId id, unsigned int transfer_timeout_ms)
                 }
                 if ((endpoint.bEndpointAddress & LIBUSB_ENDPOINT_DIR_MASK) == LIBUSB_ENDPOINT_IN)
                 {
-                    impl_->endpoint_in = endpoint.bEndpointAddress;
+                    transport.impl_->endpoint_in = endpoint.bEndpointAddress;
                 }
                 else
                 {
-                    impl_->endpoint_out = endpoint.bEndpointAddress;
+                    transport.impl_->endpoint_out = endpoint.bEndpointAddress;
                 }
             }
             break;
@@ -201,38 +215,41 @@ UsbTransport::UsbTransport(DeviceId id, unsigned int transfer_timeout_ms)
 
     libusb_free_config_descriptor(config);
 
-    if (impl_->interface_number < 0 || impl_->endpoint_in == 0 || impl_->endpoint_out == 0)
+    if (transport.impl_->interface_number < 0 || transport.impl_->endpoint_in == 0 ||
+        transport.impl_->endpoint_out == 0)
     {
         libusb_free_device_list(devices, 1);
-        throw std::runtime_error("adbcpp: ADB USB interface not found");
+        return tl::unexpected(Error{ErrorCode::Transport, "ADB USB interface not found"});
     }
 
-    rc = libusb_open(match, &impl_->handle);
+    rc = libusb_open(match, &transport.impl_->handle);
     libusb_free_device_list(devices, 1);
     if (rc != 0)
     {
-        fail("libusb_open", rc);
+        return tl::unexpected(fail("libusb_open", rc));
     }
 
 #if defined(__linux__)
-    libusb_set_auto_detach_kernel_driver(impl_->handle, 1);
+    libusb_set_auto_detach_kernel_driver(transport.impl_->handle, 1);
 #endif
 
     // The ADB interface must be claimed before any bulk transfer, and released
     // again on close, so adb and this library do not use it at the same time.
-    rc = libusb_claim_interface(impl_->handle, impl_->interface_number);
+    rc = libusb_claim_interface(transport.impl_->handle, transport.impl_->interface_number);
     if (rc != 0)
     {
-        fail("libusb_claim_interface", rc);
+        return tl::unexpected(fail("libusb_claim_interface", rc));
     }
-    impl_->claimed = true;
+    transport.impl_->claimed = true;
 
     // A failed transfer can leave a bulk endpoint halted, which makes every later
     // transfer on it fail. Clearing the halt on open recovers from that state
     // (blocker 4 in `04-blockers.md`). The device's own endpoint may also stay
     // halted until the device is replugged, which the host cannot fix.
-    libusb_clear_halt(impl_->handle, impl_->endpoint_in);
-    libusb_clear_halt(impl_->handle, impl_->endpoint_out);
+    libusb_clear_halt(transport.impl_->handle, transport.impl_->endpoint_in);
+    libusb_clear_halt(transport.impl_->handle, transport.impl_->endpoint_out);
+
+    return transport;
 }
 
 UsbTransport::~UsbTransport() = default;
@@ -257,7 +274,7 @@ unsigned int UsbTransport::transfer_budget() const noexcept
     return impl_->transfer_budget_ms;
 }
 
-std::size_t UsbTransport::read(std::span<std::byte> buffer)
+Result<std::size_t> UsbTransport::read(std::span<std::byte> buffer)
 {
     // One bulk transfer is read at a time, but the caller may ask for fewer bytes
     // than the transfer carries, so the remainder is buffered and handed out by
@@ -274,7 +291,7 @@ std::size_t UsbTransport::read(std::span<std::byte> buffer)
         // bytes are used and the caller reads on.
         if (rc != 0 && !(rc == LIBUSB_ERROR_TIMEOUT && transferred > 0))
         {
-            fail("libusb_bulk_transfer", rc);
+            return tl::unexpected(fail("libusb_bulk_transfer", rc));
         }
         impl_->incoming.resize(static_cast<std::size_t>(transferred));
         impl_->incoming_offset = 0;
@@ -292,13 +309,13 @@ std::size_t UsbTransport::read(std::span<std::byte> buffer)
     return count;
 }
 
-void UsbTransport::write(std::span<const std::byte> data)
+Status UsbTransport::write(std::span<const std::byte> data)
 {
     // A zero-length transfer would be a zero-length packet, which some USB stacks
     // reject, so an empty write is simply a no-op.
     if (data.empty())
     {
-        return;
+        return {};
     }
 
     int transferred = 0;
@@ -311,16 +328,17 @@ void UsbTransport::write(std::span<const std::byte> data)
         // prefix of a message, and sending the rest would desynchronize the stream.
         if (rc == LIBUSB_ERROR_TIMEOUT && transferred > 0)
         {
-            throw std::runtime_error("adbcpp: short USB write: the stream is desynchronized");
+            return tl::unexpected(Error{ErrorCode::Transport, "short USB write: the stream is desynchronized"});
         }
-        fail("libusb_bulk_transfer", rc);
+        return tl::unexpected(fail("libusb_bulk_transfer", rc));
     }
     // A short write means the device received only part of a message, which would
     // desynchronize the stream, so it is treated as an error.
     if (static_cast<std::size_t>(transferred) != data.size())
     {
-        throw std::runtime_error("adbcpp: short USB write");
+        return tl::unexpected(Error{ErrorCode::Transport, "short USB write"});
     }
+    return {};
 }
 
 void UsbTransport::close()
