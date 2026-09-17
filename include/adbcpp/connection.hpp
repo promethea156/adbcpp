@@ -65,6 +65,11 @@ public:
   /// Whether delayed acknowledgements were negotiated with the device.
   bool supports_delayed_ack() const noexcept { return delayed_ack_; }
 
+  /// Whether the device rejected the signature and asked for authorization.
+  bool requested_authorization() const noexcept {
+    return requested_authorization_;
+  }
+
 private:
   Session session_;
   std::uint32_t device_version_ = 0;
@@ -72,6 +77,7 @@ private:
   // adb reserves local id 1; streams start at 2.
   std::uint32_t next_local_id_ = 2;
   bool delayed_ack_ = false;
+  bool requested_authorization_ = false;
 };
 
 } // namespace adbcpp

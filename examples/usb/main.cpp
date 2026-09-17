@@ -28,11 +28,16 @@ int main(int argc, char **argv) {
         reinterpret_cast<const std::byte *>(public_key_string.data()),
         public_key_string.size());
 
+    std::cerr << "key fingerprint: " << key.fingerprint() << '\n';
     std::cerr << "connecting; approve the USB debugging prompt on the device "
                  "if it appears\n";
     adbcpp::Connection connection(
         transport, public_key,
         [&key](std::span<const std::byte> token) { return key.sign(token); });
+    if (connection.requested_authorization()) {
+      std::cerr << "the device rejected the signature and requested "
+                   "authorization\n";
+    }
     std::cout << "connected to a device running protocol 0x" << std::hex
               << connection.device_version() << std::dec << '\n';
 

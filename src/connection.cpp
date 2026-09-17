@@ -56,6 +56,7 @@ Connection::Connection(Transport &transport,
     // The device did not recognize the signature; offer the public key so it can
     // ask the user to authorize it, exactly like adb.
     if (frame.header.command == protocol::kAuth) {
+      requested_authorization_ = true;
       if (public_key.empty()) {
         throw std::runtime_error(
             "adbcpp: the device rejected the signature and no public key is "
