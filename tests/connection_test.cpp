@@ -64,10 +64,11 @@ TEST_CASE("connection answers an AUTH request with the public key",
 
   adbcpp::Connection connection(transport, public_key);
 
-  const std::vector<std::byte> identity(
+  std::vector<std::byte> identity(
       reinterpret_cast<const std::byte *>(adbcpp::kSystemIdentity.data()),
       reinterpret_cast<const std::byte *>(adbcpp::kSystemIdentity.data()) +
           adbcpp::kSystemIdentity.size());
+  identity.push_back(std::byte{0});
   const auto cnxn = make_message(adbcpp::protocol::kCnxn,
                                 adbcpp::protocol::kVersion,
                                 adbcpp::protocol::kMaxData, identity);
@@ -113,10 +114,11 @@ TEST_CASE("connection offers the public key when the signature is rejected",
 
   adbcpp::Connection connection(transport, public_key, signer);
 
-  const std::vector<std::byte> identity(
+  std::vector<std::byte> identity(
       reinterpret_cast<const std::byte *>(adbcpp::kSystemIdentity.data()),
       reinterpret_cast<const std::byte *>(adbcpp::kSystemIdentity.data()) +
           adbcpp::kSystemIdentity.size());
+  identity.push_back(std::byte{0});
   const auto cnxn = make_message(adbcpp::protocol::kCnxn,
                                 adbcpp::protocol::kVersion,
                                 adbcpp::protocol::kMaxData, identity);

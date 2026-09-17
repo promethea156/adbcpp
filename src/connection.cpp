@@ -32,6 +32,7 @@ Connection::Connection(Transport &transport,
     identity += ',';
     identity += kDelayedAckFeature;
   }
+  identity.push_back('\0');
   const auto identity_bytes = std::span(
       reinterpret_cast<const std::byte *>(identity.data()), identity.size());
 
