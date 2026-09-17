@@ -298,6 +298,34 @@ so pulling a large file costs no more memory than pulling a small one.
 6. Read the device's reply, which is the only `OKAY` in the sync service
    (`src/sync.cpp:499`), and write `QUIT` (`src/sync.cpp:501`).
 
+## Measured transfer performance
+
+A round-trip was timed on a real device: a file of random bytes is pushed to
+`/data/local/tmp`, pulled back, and the two are compared by SHA-256, so a length or an
+ordering error anywhere in the transfer would be caught. The host is a Windows machine
+over USB 2.0. For comparison, `adb` on the same device and file measures 8.0 MB/s
+pushing and 12.5 MB/s pulling, so the two are comparable.
+
+| size | push | push rate | pull | pull rate | verified |
+| ---- | ---- | --------- | ---- | --------- | -------- |
+| 64 MiB | 9.4 s | 6.8 MB/s | 5.3 s | 12.0 MB/s | SHA-256 |
+| 128 MiB | 18.6 s | 6.9 MB/s | 10.5 s | 12.2 MB/s | SHA-256 |
+| 256 MiB | 37.0 s | 6.9 MB/s | 21.2 s | 12.1 MB/s | SHA-256 |
+| 1 GiB | 147.5 s | 6.9 MB/s | 84.5 s | 12.1 MB/s | SHA-256 |
+
+Pushing is slower than pulling because `SEND` is acknowledged per chunk while `RECV` is
+not, so every pushed chunk costs a round trip. The rates are otherwise flat across three
+orders of magnitude of file size, which is what the chunking is for: a 1 GiB file is 16384
+chunks of 64 KiB, each with its own transfer timeout, so a long transfer is never given a
+single deadline. The 1 GiB push takes longer than the 120 s transfer budget for the same
+reason, and is unaffected by it.
+
+The two error paths were exercised by dropping the per-transfer timeout to 1 ms. A pull then
+succeeds through short reads, because a partial read is usable, while a push fails
+immediately with `short USB write: the stream is desynchronized`, because sending the rest of
+a half-delivered message would corrupt the stream. See blocker 24 in
+[`04-blockers.md`](04-blockers.md).
+
 ## Two details that are not in the format
 
 The wire format above is all a sync reference documents, but two behaviours of the
