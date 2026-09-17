@@ -21,3 +21,20 @@ target_link_libraries(adbcpp_tests
 list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
 include(Catch)
 catch_discover_tests(adbcpp_tests)
+
+if(ADBCPP_BUILD_USB)
+  add_executable(adbcpp_device_tests device_test.cpp)
+  target_link_libraries(adbcpp_device_tests
+    PRIVATE adbcpp::usb adbcpp::crypto
+  )
+
+  add_custom_command(TARGET adbcpp_device_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:adbcpp_device_tests>
+            $<TARGET_FILE_DIR:adbcpp_device_tests>
+    COMMAND_EXPAND_LISTS
+  )
+
+  add_test(NAME device COMMAND adbcpp_device_tests)
+  set_tests_properties(device PROPERTIES SKIP_RETURN_CODE 77)
+endif()
