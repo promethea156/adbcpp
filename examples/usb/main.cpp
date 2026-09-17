@@ -4,6 +4,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "adbcpp/connection.hpp"
 #include "adbcpp/crypto/adb_key.hpp"
@@ -15,9 +16,26 @@
 // with adb, then either list a directory (`--list <path>`), pull a file
 // (`--pull <remote> <local>`), push a file (`--push <local> <remote>`), or run a
 // shell command (the default). All of them mirror what `adb` does, so they are
-// interchangeable on the device.
+// interchangeable on the device. `--timeout <ms>` raises the per-transfer timeout
+// anywhere on the command line, which a slow device may need for a large file.
 int main(int argc, char **argv)
 {
+    // `--timeout <ms>` sets the timeout for each bulk transfer, not for a whole
+    // file, so a large file does not get one deadline for all of it.
+    unsigned int transfer_timeout_ms = adbcpp::usb::UsbTransport::kDefaultTransferTimeoutMs;
+    std::vector<std::string> args;
+    for (int i = 1; i < argc; ++i)
+    {
+        if (std::string_view(argv[i]) == "--timeout" && i + 1 < argc)
+        {
+            transfer_timeout_ms = static_cast<unsigned int>(std::stoul(argv[++i]));
+        }
+        else
+        {
+            args.emplace_back(argv[i]);
+        }
+    }
+
     // The vendor/product id of the target device. Every Android device exposes its
     // ADB function with these particular ids.
     adbcpp::usb::DeviceId id;
@@ -35,7 +53,7 @@ int main(int argc, char **argv)
 
     try
     {
-        adbcpp::usb::UsbTransport transport(id);
+        adbcpp::usb::UsbTransport transport(id, transfer_timeout_ms);
 
         // Load the key adb already authorized, so the device does not prompt. The
         // public key is only needed for the AUTH type 3 fallback (blocker 11).
@@ -60,9 +78,9 @@ int main(int argc, char **argv)
         std::cout << "connected to a device running protocol 0x" << std::hex << connection.device_version() << std::dec
                   << '\n';
 
-        if (argc > 2 && std::string_view(argv[1]) == "--list")
+        if (args.size() > 1 && args[0] == "--list")
         {
-            for (const auto &entry : adbcpp::list(connection, argv[2]))
+            for (const auto &entry : adbcpp::list(connection, args[1]))
             {
                 std::cout << (entry.is_directory() ? 'd' : '-') << ' ' << entry.size << ' ' << entry.name << '\n';
             }
@@ -70,23 +88,23 @@ int main(int argc, char **argv)
             return 0;
         }
 
-        if (argc > 3 && std::string_view(argv[1]) == "--pull")
+        if (args.size() > 2 && args[0] == "--pull")
         {
-            adbcpp::pull(connection, argv[2], argv[3]);
-            std::cout << "pulled " << argv[2] << " to " << argv[3] << '\n';
+            adbcpp::pull(connection, args[1], args[2]);
+            std::cout << "pulled " << args[1] << " to " << args[2] << '\n';
             transport.close();
             return 0;
         }
 
-        if (argc > 3 && std::string_view(argv[1]) == "--push")
+        if (args.size() > 2 && args[0] == "--push")
         {
-            adbcpp::push(connection, argv[2], argv[3]);
-            std::cout << "pushed " << argv[2] << " to " << argv[3] << '\n';
+            adbcpp::push(connection, args[1], args[2]);
+            std::cout << "pushed " << args[1] << " to " << args[2] << '\n';
             transport.close();
             return 0;
         }
 
-        const std::string command = argc > 1 ? argv[1] : "echo hello";
+        const std::string command = args.empty() ? "echo hello" : args[0];
         const auto result = adbcpp::run(connection, command);
         std::cout << result.output;
 

@@ -41,14 +41,33 @@ struct ADBCPP_API DeviceId
 class ADBCPP_API UsbTransport : public Transport
 {
 public:
+    /// The default timeout for each bulk transfer, in milliseconds.
+    ///
+    /// The timeout applies to **one bulk transfer**, which carries at most one
+    /// message header or payload, and not to a whole file transfer. A large file
+    /// is a long sequence of small transfers, and each one gets the full timeout
+    /// again, so a slow device never accumulates a single deadline over a whole
+    /// file. The default is long enough to wait for the user to approve the
+    /// on-device debugging prompt; raise it for a device or host that is slow to
+    /// move a single chunk, for example when pulling a very large file.
+    static constexpr unsigned int kDefaultTransferTimeoutMs = 120000;
+
     /// Returns whether a USB device matching `id` is currently present.
     static bool is_present(DeviceId id);
 
-    explicit UsbTransport(DeviceId id);
+    /// @param transfer_timeout_ms The timeout for each bulk transfer, in
+    ///        milliseconds. See @ref kDefaultTransferTimeoutMs.
+    explicit UsbTransport(DeviceId id, unsigned int transfer_timeout_ms = kDefaultTransferTimeoutMs);
     ~UsbTransport() override;
 
     UsbTransport(const UsbTransport &) = delete;
     UsbTransport &operator=(const UsbTransport &) = delete;
+
+    /// Sets the timeout applied to each later bulk transfer, in milliseconds.
+    void set_transfer_timeout(unsigned int milliseconds) noexcept;
+
+    /// The timeout applied to each bulk transfer, in milliseconds.
+    unsigned int transfer_timeout() const noexcept;
 
     std::size_t read(std::span<std::byte> buffer) override;
     void write(std::span<const std::byte> data) override;

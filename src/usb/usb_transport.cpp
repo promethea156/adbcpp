@@ -23,8 +23,6 @@ namespace
 constexpr std::uint8_t kAdbInterfaceClass = 0xFF;
 constexpr std::uint8_t kAdbInterfaceSubClass = 0x42;
 constexpr std::uint8_t kAdbInterfaceProtocol = 0x01;
-// Long enough to wait for the user to approve the on-device debugging prompt.
-constexpr unsigned int kTransferTimeoutMs = 120000;
 // One bulk transfer holds at most one message header or payload. This must be at
 // least as large as the maximum payload the peer may send.
 constexpr std::size_t kReadBufferSize = 256 * 1024;
@@ -82,6 +80,7 @@ struct UsbTransport::Impl
     bool claimed = false;
     std::vector<std::byte> incoming;
     std::size_t incoming_offset = 0;
+    unsigned int transfer_timeout_ms = kDefaultTransferTimeoutMs;
 
     ~Impl()
     {
@@ -100,9 +99,11 @@ struct UsbTransport::Impl
     }
 };
 
-UsbTransport::UsbTransport(DeviceId id)
+UsbTransport::UsbTransport(DeviceId id, unsigned int transfer_timeout_ms)
     : impl_(std::make_unique<Impl>())
 {
+    impl_->transfer_timeout_ms = transfer_timeout_ms;
+
     int rc = libusb_init(&impl_->context);
     if (rc != 0)
     {
@@ -207,6 +208,16 @@ UsbTransport::UsbTransport(DeviceId id)
 
 UsbTransport::~UsbTransport() = default;
 
+void UsbTransport::set_transfer_timeout(unsigned int milliseconds) noexcept
+{
+    impl_->transfer_timeout_ms = milliseconds;
+}
+
+unsigned int UsbTransport::transfer_timeout() const noexcept
+{
+    return impl_->transfer_timeout_ms;
+}
+
 std::size_t UsbTransport::read(std::span<std::byte> buffer)
 {
     // One bulk transfer is read at a time, but the caller may ask for fewer bytes
@@ -217,9 +228,9 @@ std::size_t UsbTransport::read(std::span<std::byte> buffer)
     {
         impl_->incoming.resize(kReadBufferSize);
         int transferred = 0;
-        const int rc = libusb_bulk_transfer(impl_->handle, impl_->endpoint_in,
-                                            reinterpret_cast<unsigned char *>(impl_->incoming.data()),
-                                            static_cast<int>(impl_->incoming.size()), &transferred, kTransferTimeoutMs);
+        const int rc = libusb_bulk_transfer(
+            impl_->handle, impl_->endpoint_in, reinterpret_cast<unsigned char *>(impl_->incoming.data()),
+            static_cast<int>(impl_->incoming.size()), &transferred, impl_->transfer_timeout_ms);
         if (rc != 0)
         {
             fail("libusb_bulk_transfer", rc);
@@ -253,7 +264,7 @@ void UsbTransport::write(std::span<const std::byte> data)
     const int rc =
         libusb_bulk_transfer(impl_->handle, impl_->endpoint_out,
                              const_cast<unsigned char *>(reinterpret_cast<const unsigned char *>(data.data())),
-                             static_cast<int>(data.size()), &transferred, kTransferTimeoutMs);
+                             static_cast<int>(data.size()), &transferred, impl_->transfer_timeout_ms);
     if (rc != 0)
     {
         fail("libusb_bulk_transfer", rc);
