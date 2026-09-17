@@ -9,8 +9,7 @@ namespace adbcpp
 namespace
 {
 
-protocol::Message make_message(std::uint32_t command, std::uint32_t arg0,
-                               std::uint32_t arg1,
+protocol::Message make_message(std::uint32_t command, std::uint32_t arg0, std::uint32_t arg1,
                                std::span<const std::byte> payload)
 {
     protocol::Message message;
@@ -38,18 +37,12 @@ Stream::Stream(Connection &connection, std::string_view service)
     // key, but not of the CNXN banner (blocker 7 in `04-blockers.md`).
     std::string destination(service_);
     destination.push_back('\0');
-    const auto payload =
-        std::span(reinterpret_cast<const std::byte *>(destination.data()),
-                  destination.size());
+    const auto payload = std::span(reinterpret_cast<const std::byte *>(destination.data()), destination.size());
     // `arg1` is the initial delayed-acknowledgement window. A peer that supports
     // the feature closes the stream when it is zero, so a non-zero value is only
     // sent once `delayed_ack` has been negotiated (blocker 12).
-    const std::uint32_t send_buffer = connection_->supports_delayed_ack()
-                                          ? protocol::kInitialDelayedAckBytes
-                                          : 0;
-    connection_->send(
-        make_message(protocol::kOpen, local_id_, send_buffer, payload),
-        payload);
+    const std::uint32_t send_buffer = connection_->supports_delayed_ack() ? protocol::kInitialDelayedAckBytes : 0;
+    connection_->send(make_message(protocol::kOpen, local_id_, send_buffer, payload), payload);
 
     // The device accepts with OKAY(local-id, remote-id), or refuses with CLSE.
     // Its `arg0` is the device's id for this stream, which is our `remote_id`.
@@ -69,8 +62,7 @@ Stream::~Stream()
     {
         try
         {
-            connection_->send(
-                make_message(protocol::kClse, local_id_, remote_id_, {}));
+            connection_->send(make_message(protocol::kClse, local_id_, remote_id_, {}));
         }
         catch (...)
         {
@@ -83,8 +75,7 @@ void Stream::write(std::span<const std::byte> data)
 {
     // WRITE(local-id, remote-id, "data"). The payload must fit in one message,
     // which is why it must not exceed the negotiated maximum payload size.
-    connection_->send(
-        make_message(protocol::kWrte, local_id_, remote_id_, data), data);
+    connection_->send(make_message(protocol::kWrte, local_id_, remote_id_, data), data);
 }
 
 std::vector<std::byte> Stream::read_all()
@@ -99,21 +90,17 @@ std::vector<std::byte> Stream::read_all()
                 // Each WRITE is acknowledged with OKAY so the device may send the next
                 // one. Without delayed acknowledgements this handshake is what paces the
                 // stream (blocker 12).
-                output.insert(output.end(), frame.payload.begin(),
-                              frame.payload.end());
-                connection_->send(
-                    make_message(protocol::kOkay, local_id_, remote_id_, {}));
+                output.insert(output.end(), frame.payload.begin(), frame.payload.end());
+                connection_->send(make_message(protocol::kOkay, local_id_, remote_id_, {}));
                 break;
             case protocol::kClse:
                 // The device closes its side when the service is done. CLOSE is
                 // bidirectional: the same message closes this side in return.
                 closed_ = true;
-                connection_->send(
-                    make_message(protocol::kClse, local_id_, remote_id_, {}));
+                connection_->send(make_message(protocol::kClse, local_id_, remote_id_, {}));
                 break;
             default:
-                throw std::runtime_error(
-                    "adbcpp: unexpected message on the stream");
+                throw std::runtime_error("adbcpp: unexpected message on the stream");
         }
     }
     return output;

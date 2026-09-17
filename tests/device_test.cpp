@@ -28,8 +28,8 @@ int main()
 
     if (!adbcpp::usb::UsbTransport::is_present(id))
     {
-        std::cerr << "no USB device " << std::hex << id.vendor_id << ':'
-                  << id.product_id << std::dec << " found; skipping\n";
+        std::cerr << "no USB device " << std::hex << id.vendor_id << ':' << id.product_id << std::dec
+                  << " found; skipping\n";
         return kSkip;
     }
 
@@ -39,13 +39,11 @@ int main()
 
         const auto key = adbcpp::crypto::Key::load_or_generate();
         const std::string &public_key_string = key.public_key();
-        const auto public_key = std::span(
-            reinterpret_cast<const std::byte *>(public_key_string.data()),
-            public_key_string.size());
+        const auto public_key =
+            std::span(reinterpret_cast<const std::byte *>(public_key_string.data()), public_key_string.size());
 
-        std::cerr
-            << "connecting; approve the USB debugging prompt on the device "
-               "if it appears\n";
+        std::cerr << "connecting; approve the USB debugging prompt on the device "
+                     "if it appears\n";
         adbcpp::Connection connection(transport, public_key,
                                       [&key](std::span<const std::byte> token)
                                       {

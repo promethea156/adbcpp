@@ -54,8 +54,7 @@ TEST_CASE("magic is the bitwise inverse of command", "[protocol]")
 {
     REQUIRE(Message::compute_magic(0u) == 0xFFFFFFFFu);
     REQUIRE(Message::compute_magic(0xFFFFFFFFu) == 0u);
-    REQUIRE(Message::compute_magic(adbcpp::protocol::kCnxn) ==
-            (adbcpp::protocol::kCnxn ^ 0xFFFFFFFFu));
+    REQUIRE(Message::compute_magic(adbcpp::protocol::kCnxn) == (adbcpp::protocol::kCnxn ^ 0xFFFFFFFFu));
 }
 
 TEST_CASE("crc32 matches the standard test vector", "[protocol]")

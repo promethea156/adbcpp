@@ -18,12 +18,9 @@ void write_u32_le(std::byte *out, std::uint32_t value) noexcept
 std::uint32_t read_u32_le(const std::byte *in) noexcept
 {
     return static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(in[0])) |
-           (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(in[1]))
-            << 8) |
-           (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(in[2]))
-            << 16) |
-           (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(in[3]))
-            << 24);
+           (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(in[1])) << 8) |
+           (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(in[2])) << 16) |
+           (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(in[3])) << 24);
 }
 
 } // namespace
@@ -64,8 +61,7 @@ std::array<std::byte, kMessageHeaderSize> Message::encode() const noexcept
     return bytes;
 }
 
-Message Message::decode(
-    std::span<const std::byte, kMessageHeaderSize> bytes) noexcept
+Message Message::decode(std::span<const std::byte, kMessageHeaderSize> bytes) noexcept
 {
     Message message;
     message.command = read_u32_le(bytes.data() + 0);

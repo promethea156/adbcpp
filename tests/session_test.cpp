@@ -60,8 +60,7 @@ TEST_CASE("session writes a payload as a separate transport write", "[session]")
     adbcpp::testing::MockTransport transport;
     adbcpp::Session session(transport);
 
-    const std::array<std::byte, 5> payload{std::byte{'h'}, std::byte{'e'},
-                                           std::byte{'l'}, std::byte{'l'},
+    const std::array<std::byte, 5> payload{std::byte{'h'}, std::byte{'e'}, std::byte{'l'}, std::byte{'l'},
                                            std::byte{'o'}};
 
     Message outbound;
@@ -76,8 +75,7 @@ TEST_CASE("session writes a payload as a separate transport write", "[session]")
 
     REQUIRE(written.size() == header.size() + payload.size());
     REQUIRE(std::equal(header.begin(), header.end(), written.begin()));
-    REQUIRE(std::equal(payload.begin(), payload.end(),
-                       written.begin() + header.size()));
+    REQUIRE(std::equal(payload.begin(), payload.end(), written.begin() + header.size()));
 }
 
 TEST_CASE("session reassembles a message split across reads", "[session]")
@@ -108,8 +106,7 @@ TEST_CASE("session reads a payload after its header", "[session]")
 {
     adbcpp::testing::MockTransport transport;
 
-    const std::vector<std::byte> payload{std::byte{'w'}, std::byte{'o'},
-                                         std::byte{'r'}, std::byte{'l'},
+    const std::vector<std::byte> payload{std::byte{'w'}, std::byte{'o'}, std::byte{'r'}, std::byte{'l'},
                                          std::byte{'d'}};
 
     Message inbound;

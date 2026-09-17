@@ -39,8 +39,7 @@ public:
     explicit Session(Transport &transport) noexcept;
 
     /// Writes a header, then its payload as a separate transport write.
-    void send(const protocol::Message &header,
-              std::span<const std::byte> payload = {});
+    void send(const protocol::Message &header, std::span<const std::byte> payload = {});
 
     /// Reads exactly one header and its payload.
     Frame receive();

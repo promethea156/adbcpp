@@ -16,8 +16,7 @@ namespace
 // `docs/dev/protocol.md`: `type` is one of the `kAuth*` constants and `arg1` is
 // always zero. The payload is a token, a signature, or a public key depending on
 // `type`.
-protocol::Message make_auth(std::uint32_t type,
-                            std::span<const std::byte> payload)
+protocol::Message make_auth(std::uint32_t type, std::span<const std::byte> payload)
 {
     protocol::Message auth;
     auth.command = protocol::kAuth;
@@ -30,8 +29,7 @@ protocol::Message make_auth(std::uint32_t type,
 
 } // namespace
 
-Connection::Connection(Transport &transport,
-                       std::span<const std::byte> public_key, Signer signer,
+Connection::Connection(Transport &transport, std::span<const std::byte> public_key, Signer signer,
                        bool advertise_delayed_ack)
     : session_(transport)
 {
@@ -46,8 +44,7 @@ Connection::Connection(Transport &transport,
         identity += ',';
         identity += kDelayedAckFeature;
     }
-    const auto identity_bytes = std::span(
-        reinterpret_cast<const std::byte *>(identity.data()), identity.size());
+    const auto identity_bytes = std::span(reinterpret_cast<const std::byte *>(identity.data()), identity.size());
 
     protocol::Message connect;
     connect.command = protocol::kCnxn;
@@ -69,8 +66,7 @@ Connection::Connection(Transport &transport,
             // AUTH type 2: the 256-byte PKCS#1 v1.5 SHA-1 signature of the token.
             // `Key::sign` signs the token as-is; re-hashing it here was blocker 16.
             const auto signature = signer(frame.payload);
-            session_.send(make_auth(protocol::kAuthSignature, signature),
-                          signature);
+            session_.send(make_auth(protocol::kAuthSignature, signature), signature);
             frame = session_.receive();
         }
 
@@ -97,8 +93,7 @@ Connection::Connection(Transport &transport,
 
     if (frame.header.command != protocol::kCnxn)
     {
-        throw std::runtime_error(
-            "adbcpp: unexpected response to the CNXN message");
+        throw std::runtime_error("adbcpp: unexpected response to the CNXN message");
     }
 
     device_version_ = frame.header.arg0;
@@ -107,15 +102,11 @@ Connection::Connection(Transport &transport,
     // The device's banner reports its own features. `delayed_ack` is only enabled
     // if both sides advertised it, so a device that does not support it keeps the
     // OPEN window at zero.
-    const std::string banner(
-        reinterpret_cast<const char *>(frame.payload.data()),
-        frame.payload.size());
-    delayed_ack_ = advertise_delayed_ack &&
-                   banner.find(kDelayedAckFeature) != std::string::npos;
+    const std::string banner(reinterpret_cast<const char *>(frame.payload.data()), frame.payload.size());
+    delayed_ack_ = advertise_delayed_ack && banner.find(kDelayedAckFeature) != std::string::npos;
 }
 
-void Connection::send(const protocol::Message &header,
-                      std::span<const std::byte> payload)
+void Connection::send(const protocol::Message &header, std::span<const std::byte> payload)
 {
     session_.send(header, payload);
 }

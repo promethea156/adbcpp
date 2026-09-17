@@ -31,9 +31,7 @@ constexpr std::size_t kReadBufferSize = 256 * 1024;
 
 [[noreturn]] void fail(const std::string &what, int code)
 {
-    throw std::runtime_error(
-        "adbcpp: " + what + ": " +
-        libusb_strerror(static_cast<enum libusb_error>(code)));
+    throw std::runtime_error("adbcpp: " + what + ": " + libusb_strerror(static_cast<enum libusb_error>(code)));
 }
 
 libusb_device *find_device(libusb_device **devices, ssize_t count, DeviceId id)
@@ -45,8 +43,7 @@ libusb_device *find_device(libusb_device **devices, ssize_t count, DeviceId id)
         {
             continue;
         }
-        if (descriptor.idVendor == id.vendor_id &&
-            descriptor.idProduct == id.product_id)
+        if (descriptor.idVendor == id.vendor_id && descriptor.idProduct == id.product_id)
         {
             return devices[i];
         }
@@ -139,14 +136,12 @@ UsbTransport::UsbTransport(DeviceId id)
         fail("libusb_get_config_descriptor", rc);
     }
 
-    for (std::uint8_t i = 0;
-         i < config->bNumInterfaces && impl_->interface_number < 0; ++i)
+    for (std::uint8_t i = 0; i < config->bNumInterfaces && impl_->interface_number < 0; ++i)
     {
         const libusb_interface &interface = config->interface[i];
         for (int j = 0; j < interface.num_altsetting; ++j)
         {
-            const libusb_interface_descriptor &altsetting =
-                interface.altsetting[j];
+            const libusb_interface_descriptor &altsetting = interface.altsetting[j];
             if (altsetting.bInterfaceClass != kAdbInterfaceClass ||
                 altsetting.bInterfaceSubClass != kAdbInterfaceSubClass ||
                 altsetting.bInterfaceProtocol != kAdbInterfaceProtocol)
@@ -156,15 +151,12 @@ UsbTransport::UsbTransport(DeviceId id)
             impl_->interface_number = altsetting.bInterfaceNumber;
             for (std::uint8_t k = 0; k < altsetting.bNumEndpoints; ++k)
             {
-                const libusb_endpoint_descriptor &endpoint =
-                    altsetting.endpoint[k];
-                if ((endpoint.bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) !=
-                    LIBUSB_TRANSFER_TYPE_BULK)
+                const libusb_endpoint_descriptor &endpoint = altsetting.endpoint[k];
+                if ((endpoint.bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) != LIBUSB_TRANSFER_TYPE_BULK)
                 {
                     continue;
                 }
-                if ((endpoint.bEndpointAddress & LIBUSB_ENDPOINT_DIR_MASK) ==
-                    LIBUSB_ENDPOINT_IN)
+                if ((endpoint.bEndpointAddress & LIBUSB_ENDPOINT_DIR_MASK) == LIBUSB_ENDPOINT_IN)
                 {
                     impl_->endpoint_in = endpoint.bEndpointAddress;
                 }
@@ -179,8 +171,7 @@ UsbTransport::UsbTransport(DeviceId id)
 
     libusb_free_config_descriptor(config);
 
-    if (impl_->interface_number < 0 || impl_->endpoint_in == 0 ||
-        impl_->endpoint_out == 0)
+    if (impl_->interface_number < 0 || impl_->endpoint_in == 0 || impl_->endpoint_out == 0)
     {
         libusb_free_device_list(devices, 1);
         throw std::runtime_error("adbcpp: ADB USB interface not found");
@@ -226,11 +217,9 @@ std::size_t UsbTransport::read(std::span<std::byte> buffer)
     {
         impl_->incoming.resize(kReadBufferSize);
         int transferred = 0;
-        const int rc = libusb_bulk_transfer(
-            impl_->handle, impl_->endpoint_in,
-            reinterpret_cast<unsigned char *>(impl_->incoming.data()),
-            static_cast<int>(impl_->incoming.size()), &transferred,
-            kTransferTimeoutMs);
+        const int rc = libusb_bulk_transfer(impl_->handle, impl_->endpoint_in,
+                                            reinterpret_cast<unsigned char *>(impl_->incoming.data()),
+                                            static_cast<int>(impl_->incoming.size()), &transferred, kTransferTimeoutMs);
         if (rc != 0)
         {
             fail("libusb_bulk_transfer", rc);
@@ -243,11 +232,9 @@ std::size_t UsbTransport::read(std::span<std::byte> buffer)
         }
     }
 
-    const std::size_t available =
-        impl_->incoming.size() - impl_->incoming_offset;
+    const std::size_t available = impl_->incoming.size() - impl_->incoming_offset;
     const std::size_t count = std::min(available, buffer.size());
-    std::copy_n(impl_->incoming.begin() +
-                    static_cast<std::ptrdiff_t>(impl_->incoming_offset),
+    std::copy_n(impl_->incoming.begin() + static_cast<std::ptrdiff_t>(impl_->incoming_offset),
                 static_cast<std::ptrdiff_t>(count), buffer.begin());
     impl_->incoming_offset += count;
     return count;
@@ -263,11 +250,10 @@ void UsbTransport::write(std::span<const std::byte> data)
     }
 
     int transferred = 0;
-    const int rc = libusb_bulk_transfer(
-        impl_->handle, impl_->endpoint_out,
-        const_cast<unsigned char *>(
-            reinterpret_cast<const unsigned char *>(data.data())),
-        static_cast<int>(data.size()), &transferred, kTransferTimeoutMs);
+    const int rc =
+        libusb_bulk_transfer(impl_->handle, impl_->endpoint_out,
+                             const_cast<unsigned char *>(reinterpret_cast<const unsigned char *>(data.data())),
+                             static_cast<int>(data.size()), &transferred, kTransferTimeoutMs);
     if (rc != 0)
     {
         fail("libusb_bulk_transfer", rc);

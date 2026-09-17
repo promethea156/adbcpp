@@ -32,8 +32,7 @@ TEST_CASE("generated public key has the ADB format", "[crypto]")
 
 TEST_CASE("generated public keys are unique", "[crypto]")
 {
-    REQUIRE(adbcpp::crypto::Key::generate().public_key() !=
-            adbcpp::crypto::Key::generate().public_key());
+    REQUIRE(adbcpp::crypto::Key::generate().public_key() != adbcpp::crypto::Key::generate().public_key());
 }
 
 TEST_CASE("a token signature is 256 bytes", "[crypto]")
@@ -57,10 +56,8 @@ TEST_CASE("a token signature verifies against the ADB public key", "[crypto]")
 
     std::vector<unsigned char> blob(4 * ((524 + 2) / 3) + 1);
     std::size_t blob_size = 0;
-    REQUIRE(mbedtls_base64_decode(
-                blob.data(), blob.size(), &blob_size,
-                reinterpret_cast<const unsigned char *>(encoded.data()),
-                encoded.size()) == 0);
+    REQUIRE(mbedtls_base64_decode(blob.data(), blob.size(), &blob_size,
+                                  reinterpret_cast<const unsigned char *>(encoded.data()), encoded.size()) == 0);
     REQUIRE(blob_size == 524);
 
     std::array<unsigned char, 256> modulus{};
@@ -85,11 +82,9 @@ TEST_CASE("a token signature verifies against the ADB public key", "[crypto]")
 
     // The token is signed directly as the SHA-1 digest, exactly like adb's
     // RSA_sign(NID_sha1, token, token_size, ...); it is not re-hashed.
-    REQUIRE(mbedtls_rsa_pkcs1_verify(
-                &rsa, MBEDTLS_MD_SHA1, token.size(),
-                reinterpret_cast<const unsigned char *>(token.data()),
-                reinterpret_cast<const unsigned char *>(signature.data())) ==
-            0);
+    REQUIRE(mbedtls_rsa_pkcs1_verify(&rsa, MBEDTLS_MD_SHA1, token.size(),
+                                     reinterpret_cast<const unsigned char *>(token.data()),
+                                     reinterpret_cast<const unsigned char *>(signature.data())) == 0);
 
     mbedtls_rsa_free(&rsa);
     mbedtls_mpi_free(&e);
@@ -105,16 +100,13 @@ TEST_CASE("the ADB public key has valid Montgomery parameters", "[crypto]")
 
     std::vector<unsigned char> blob(4 * ((524 + 2) / 3) + 1);
     std::size_t blob_size = 0;
-    REQUIRE(mbedtls_base64_decode(
-                blob.data(), blob.size(), &blob_size,
-                reinterpret_cast<const unsigned char *>(encoded.data()),
-                encoded.size()) == 0);
+    REQUIRE(mbedtls_base64_decode(blob.data(), blob.size(), &blob_size,
+                                  reinterpret_cast<const unsigned char *>(encoded.data()), encoded.size()) == 0);
     REQUIRE(blob_size == 524);
 
     const auto read_u32 = [&blob](std::size_t offset)
     {
-        return static_cast<std::uint32_t>(blob[offset]) |
-               (static_cast<std::uint32_t>(blob[offset + 1]) << 8) |
+        return static_cast<std::uint32_t>(blob[offset]) | (static_cast<std::uint32_t>(blob[offset + 1]) << 8) |
                (static_cast<std::uint32_t>(blob[offset + 2]) << 16) |
                (static_cast<std::uint32_t>(blob[offset + 3]) << 24);
     };
@@ -142,8 +134,7 @@ TEST_CASE("the ADB public key has valid Montgomery parameters", "[crypto]")
     mbedtls_mpi_init(&expected);
     mbedtls_mpi_init(&r);
     REQUIRE(mbedtls_mpi_read_binary(&n, modulus.data(), modulus.size()) == 0);
-    REQUIRE(mbedtls_mpi_read_binary(&rr, rr_bytes.data(), rr_bytes.size()) ==
-            0);
+    REQUIRE(mbedtls_mpi_read_binary(&rr, rr_bytes.data(), rr_bytes.size()) == 0);
 
     REQUIRE(mbedtls_mpi_lset(&r, 1) == 0);
     REQUIRE(mbedtls_mpi_shift_l(&r, 2048) == 0);

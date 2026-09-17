@@ -22,12 +22,9 @@ constexpr std::uint8_t kExit = 3;
 std::uint32_t read_u32_le(const std::byte *in) noexcept
 {
     return static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(in[0])) |
-           (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(in[1]))
-            << 8) |
-           (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(in[2]))
-            << 16) |
-           (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(in[3]))
-            << 24);
+           (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(in[1])) << 8) |
+           (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(in[2])) << 16) |
+           (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(in[3])) << 24);
 }
 
 } // namespace
@@ -56,8 +53,7 @@ CommandResult run(Connection &connection, std::string_view command)
         {
             // stdout and stderr are interleaved in the order the device produced
             // them; they are concatenated here, which is what `adb shell` does too.
-            result.output.append(
-                reinterpret_cast<const char *>(raw.data() + offset), length);
+            result.output.append(reinterpret_cast<const char *>(raw.data() + offset), length);
         }
         else if (id == kExit)
         {

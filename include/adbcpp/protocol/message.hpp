@@ -52,15 +52,13 @@ struct ADBCPP_API Message
     /// the payload, although a later change made the CRC advisory: the receiving
     /// side no longer verifies it, since USB and TCP already have their own
     /// integrity checks (see `docs/dev/delayed_ack.md`).
-    static std::uint32_t compute_crc32(
-        std::span<const std::byte> data) noexcept;
+    static std::uint32_t compute_crc32(std::span<const std::byte> data) noexcept;
 
     /// Serializes the header into 24 little-endian bytes.
     std::array<std::byte, kMessageHeaderSize> encode() const noexcept;
 
     /// Parses a 24-byte little-endian header.
-    static Message decode(
-        std::span<const std::byte, kMessageHeaderSize> bytes) noexcept;
+    static Message decode(std::span<const std::byte, kMessageHeaderSize> bytes) noexcept;
 };
 
 } // namespace adbcpp::protocol

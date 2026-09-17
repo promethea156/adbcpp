@@ -2,13 +2,13 @@
 #
 # Applied with clang-format 19. The style is deliberately roomy so the protocol
 # code stays easy to read: braces on their own lines (Allman), 4-space indentation,
-# an 80-column limit, and comments left exactly as written.
+# a 120-column limit, and comments left exactly as written.
 ---
 Language: Cpp
 BasedOnStyle: Google
 
 Standard: c++20
-ColumnLimit: 80
+ColumnLimit: 120
 IndentWidth: 4
 TabWidth: 4
 UseTab: Never

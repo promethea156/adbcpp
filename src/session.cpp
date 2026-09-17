@@ -33,8 +33,7 @@ Session::Session(Transport &transport) noexcept
 {
 }
 
-void Session::send(const protocol::Message &header,
-                   std::span<const std::byte> payload)
+void Session::send(const protocol::Message &header, std::span<const std::byte> payload)
 {
     // The header is always sent on its own, before the payload. The device's
     // transport reads exactly that way, and `data_length` in the header tells it how

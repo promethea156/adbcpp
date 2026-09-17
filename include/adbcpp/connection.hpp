@@ -69,16 +69,13 @@ class ADBCPP_API Connection
 {
 public:
     /// Signs an AUTH token with the private key.
-    using Signer =
-        std::function<std::vector<std::byte>(std::span<const std::byte>)>;
+    using Signer = std::function<std::vector<std::byte>(std::span<const std::byte>)>;
 
-    explicit Connection(Transport &transport,
-                        std::span<const std::byte> public_key = {},
-                        Signer signer = {}, bool advertise_delayed_ack = false);
+    explicit Connection(Transport &transport, std::span<const std::byte> public_key = {}, Signer signer = {},
+                        bool advertise_delayed_ack = false);
 
     /// Sends a header and optional payload on the connection.
-    void send(const protocol::Message &header,
-              std::span<const std::byte> payload = {});
+    void send(const protocol::Message &header, std::span<const std::byte> payload = {});
 
     /// Receives the next frame from the connection.
     Frame receive();
