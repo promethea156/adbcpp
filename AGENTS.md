@@ -22,6 +22,34 @@ $result.Output
 
 Give a command that moves a large file a correspondingly larger `-TimeoutSeconds`. `adb` also holds the device's USB interface while it runs, so stop it (`adb kill-server`) before opening the same device with `adbcpp` (blocker 5).
 
+## Testing
+
+Build and run the suite from the repository root:
+
+```powershell
+cmake -S . -B build -DADBCPP_BUILD_TESTS=ON -DADBCPP_BUILD_EXAMPLES=ON
+cmake --build build --config Release
+ctest --test-dir build -C Release -E device --output-on-failure
+```
+
+Check the formatting with clang-format 19.1.1 before committing:
+
+```powershell
+cmake --build build --target format-check
+```
+
+### `-E device` also matches test names that contain `device`
+
+`ctest -E` matches the test *name* as a regular expression, not only the test registered as `device`, so a test whose name merely contains `device` is skipped silently and the run still reports success. No test is named after the word for this reason. To exclude only the device test, anchor it:
+
+```powershell
+ctest --test-dir build -C Release -E "^device$" --output-on-failure
+```
+
+### The device test is destructive when it is configured to be
+
+`adbcpp_device_tests` exits with code 77 (a CTest skip) when no matching device is attached. It always checks the install and uninstall failure paths, which touch no package, and it runs the install and uninstall round trip only when `ADBCPP_TEST_APK` and `ADBCPP_TEST_PACKAGE` name a disposable APK. That round trip uninstalls and reinstalls the package and loses its data, so only set those variables for a package the user has agreed to replace.
+
 ## Commit Messages
 
 All commits MUST follow the [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/#specification) specification.
