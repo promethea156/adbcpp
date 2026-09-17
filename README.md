@@ -6,6 +6,10 @@ A simplified, customized reimplementation of **ADB (Android Debug Bridge) as a C
 
 > **Status:** early development. Slice 0 (the walking skeleton) and Slice 1 (shell over USB) are complete. See [`docs/03-roadmap.md`](docs/03-roadmap.md) for the plan.
 
+> **Learning:** want to understand the protocol rather than just use it?
+> [`LEARNING.md`](LEARNING.md) is a guided curriculum that uses this
+> repository as a worked example, module by module.
+
 ## Goals
 
 - **Self-contained**: no reliance on external ADB components.
@@ -110,6 +114,10 @@ examples/          Sample project (examples + manual integration harness)
 docs/              Design documents and Doxygen configuration
 cmake/             CMake package configuration
 ```
+
+## Learning
+
+- [`LEARNING.md`](LEARNING.md) — a guided curriculum that uses this repository as a worked example, from byte channels to a full shell session
 
 ## Design Documents
 
