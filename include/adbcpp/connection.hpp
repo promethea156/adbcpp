@@ -21,22 +21,20 @@ inline constexpr std::string_view kSystemIdentity =
     "sendrecv_v2_dry_run_send,openscreen_mdns,devicetracker_proto_format,devraw,"
     "app_info,server_status,track_mdns";
 
-/**
- * Whether the host advertises delayed acknowledgements in its feature list.
- *
- * Kept in sync with @ref kSystemIdentity: when disabled, the feature must be
- * absent from the string above and OPEN messages must send a zero send buffer.
- */
-inline constexpr bool kAdvertiseDelayedAck = false;
+/// Feature appended to @ref kSystemIdentity when delayed acknowledgements are enabled.
+inline constexpr std::string_view kDelayedAckFeature = "delayed_ack";
 
 /**
  * @brief An authenticated ADB connection to a device.
  *
  * The CNXN handshake is performed on construction. If the device requests
  * authentication, the token is signed with `signer` and returned as an AUTH type 2
- * message, exactly like adb; when no signer is given the public key is sent
- * instead (AUTH type 3), which opens the on-device approval prompt.
- */
+   * message, exactly like adb; when no signer is given the public key is sent
+   * instead (AUTH type 3), which opens the on-device approval prompt.
+   *
+   * When `advertise_delayed_ack` is set, `delayed_ack` is added to the advertised
+   * feature list and OPEN messages send a non-zero receive window.
+   */
 class ADBCPP_API Connection {
 public:
   /// Signs an AUTH token with the private key.
@@ -45,7 +43,8 @@ public:
 
   explicit Connection(Transport &transport,
                       std::span<const std::byte> public_key = {},
-                      Signer signer = {});
+                      Signer signer = {},
+                      bool advertise_delayed_ack = false);
 
   /// Sends a header and optional payload on the connection.
   void send(const protocol::Message &header,

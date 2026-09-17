@@ -24,21 +24,25 @@ protocol::Message make_auth(std::uint32_t type,
 } // namespace
 
 Connection::Connection(Transport &transport,
-                        std::span<const std::byte> public_key,
-                        Signer signer)
+                        std::span<const std::byte> public_key, Signer signer,
+                        bool advertise_delayed_ack)
     : session_(transport) {
-  const auto identity = std::span(
-      reinterpret_cast<const std::byte *>(kSystemIdentity.data()),
-      kSystemIdentity.size());
+  std::string identity(kSystemIdentity);
+  if (advertise_delayed_ack) {
+    identity += ',';
+    identity += kDelayedAckFeature;
+  }
+  const auto identity_bytes = std::span(
+      reinterpret_cast<const std::byte *>(identity.data()), identity.size());
 
   protocol::Message connect;
   connect.command = protocol::kCnxn;
   connect.arg0 = protocol::kVersion;
   connect.arg1 = protocol::kMaxData;
-  connect.data_length = identity.size();
-  connect.data_crc32 = protocol::Message::compute_crc32(identity);
+  connect.data_length = identity_bytes.size();
+  connect.data_crc32 = protocol::Message::compute_crc32(identity_bytes);
   connect.magic = protocol::Message::compute_magic(connect.command);
-  session_.send(connect, identity);
+  session_.send(connect, identity_bytes);
 
   auto frame = session_.receive();
   if (frame.header.command == protocol::kAuth) {
@@ -73,8 +77,8 @@ Connection::Connection(Transport &transport,
   const std::string banner(
       reinterpret_cast<const char *>(frame.payload.data()),
       frame.payload.size());
-  delayed_ack_ =
-      kAdvertiseDelayedAck && banner.find("delayed_ack") != std::string::npos;
+  delayed_ack_ = advertise_delayed_ack &&
+                 banner.find(kDelayedAckFeature) != std::string::npos;
 }
 
 void Connection::send(const protocol::Message &header,
