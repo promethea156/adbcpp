@@ -186,7 +186,54 @@ compression codec (`kSyncFlagBrotli`, `kSyncFlagLz4`, or `kSyncFlagZstd`). With
 not implement decompression; the `sendrecv_v2` feature that the device advertises only
 matters when a codec is requested.
 
-## How `list` and `pull` are implemented
+## Pushing a file
+
+`SEND` stores a file. Its request is the `id` + `path_length` + `path` form again,
+but the path is a **spec**: the destination path, a comma, and the file mode as a
+decimal number that includes the file type bits, for example
+`/sdcard/upload.txt,33188` (`33188` is `0100644`). adb sends the local file's
+`st_mode`; the daemon splits the spec on its last comma and parses the mode with
+`strtoul(..., 0)`.
+
+The contents follow as `DATA` chunks, exactly as they do for `RECV`, and a `DONE`
+whose size is the file's modification time ends the transfer:
+
+```
+53 45 4e 44   18 00 00 00   /sdcard/upload.txt,33188      SEND
+44 41 54 41   06 00 00 00   68 65 6c 6c 6f 20            DATA "hello "
+44 41 54 41   06 00 00 00   77 6f 72 6c 64 0a            DATA "world\n"
+44 4f 4e 45   <mtime>                                       DONE
+```
+
+Unlike a listing or a transfer, the device **answers** the final `DONE`, with `OKAY`
+when the file was written or `FAIL` and a reason when it was not:
+
+```
+4f 4b 41 59   00 00 00 00                                    OKAY
+```
+
+The device creates the file, or overwrites it if it already exists, and copies the
+user permission bits to the group and other bits, so a `0644` local file becomes
+`0666` on the device. That is the daemon's behaviour, not this library's.
+
+## STAT
+
+`STAT` reports a path's metadata and follows symbolic links, so a destination that
+is a symlink to a directory is reported as a directory. The v1 form is
+`sync_stat_v1 { id, mode, size, mtime }`:
+
+```
++---------------+---------------+---------------+---------------+
+|      STAT     |     mode      |     size      |     mtime     |
++---------------+---------------+---------------+---------------+
+```
+
+The v2 form, `STA2`, is the v2 `DENT` body without the name, so it inserts an
+`error` before the metadata and widens `size` and `mtime` to 64 bits. Unlike the v1
+form, which reports a path that does not exist as all zeros, it reports the error
+directly, so a missing path can be told from a real one.
+
+## How `list`, `pull`, and `push` are implemented
 
 [`src/sync.cpp`](../src/sync.cpp) is short. Read it alongside this list.
 
@@ -211,18 +258,45 @@ next response; a short read here would desynchronize the whole listing.
 `pull`:
 
 1. Reject a path longer than 1024 bytes, the same check as `list`
-   (`src/sync.cpp:216`).
+   (`src/sync.cpp:308`).
 2. Open the `sync:` stream and write the `RECV` request
-   (`src/sync.cpp:220`, `src/sync.cpp:225`).
+   (`src/sync.cpp:312`, `src/sync.cpp:317`).
 3. Open the local file before the transfer starts, so a failure leaves a partial
-   file rather than a missing one (`src/sync.cpp:229`).
+   file rather than a missing one (`src/sync.cpp:321`).
 4. Loop: read the id and the chunk size, write each `DATA` chunk to the file as it
-   arrives, and stop at `DONE` (`src/sync.cpp:235`). A chunk larger than 64 KiB is
-   rejected rather than trusted (`src/sync.cpp:265`).
-5. Write `QUIT` (`src/sync.cpp:281`).
+   arrives, and stop at `DONE` (`src/sync.cpp:327`). A chunk larger than 64 KiB is
+   rejected rather than trusted (`src/sync.cpp:357`).
+5. Write `QUIT` (`src/sync.cpp:373`).
 
 Because each chunk is written as it arrives, the file is never held in memory whole,
 so pulling a large file costs no more memory than pulling a small one.
+
+`stat`:
+
+1. Reject a path longer than 1024 bytes (`src/sync.cpp:380`).
+2. Choose the v1 or v2 form from `connection.supports_feature("stat_v2")`
+   (`src/sync.cpp:385`).
+3. Open the `sync:` stream and write the `STAT`/`STA2` request
+   (`src/sync.cpp:387`, `src/sync.cpp:388`).
+4. Read the id and the body. The v2 form's leading error field, or the v1 form's
+   all-zero body, means the path does not exist, which is reported rather than
+   thrown (`src/sync.cpp:405`).
+5. Write `QUIT` (`src/sync.cpp:428`).
+
+`push`:
+
+1. Reject a local path that is not a regular file (`src/sync.cpp:435`).
+2. Stat the destination, so that an existing directory receives the file under the
+   local file's name (`src/sync.cpp:443`).
+3. Build the `"<path>,<mode>"` spec from the local file's permissions
+   (`src/sync.cpp:453`).
+4. Open the `sync:` stream and write the `SEND` request
+   (`src/sync.cpp:455`, `src/sync.cpp:456`).
+5. Read the local file in 64 KiB chunks, write each as a `DATA` chunk, and finish
+   with a `DONE` that carries the local file's modification time
+   (`src/sync.cpp:494`).
+6. Read the device's reply, which is the only `OKAY` in the sync service
+   (`src/sync.cpp:499`), and write `QUIT` (`src/sync.cpp:501`).
 
 ## Two details that are not in the format
 
@@ -258,10 +332,10 @@ known in advance.
 
 ## Try it without a device
 
-[`examples/sync/main.cpp`](../examples/sync/main.cpp) runs a full `list` and `pull`
-exchange against the mock transport, so the real `list` and `pull` code executes with no
-device attached. It prints the entries, the pulled file's contents, and the `LIS2` and
-`RECV` request headers that `list` and `pull` wrote:
+[`examples/sync/main.cpp`](../examples/sync/main.cpp) runs a full `list`, `pull`, and
+`push` exchange against the mock transport, so the real code executes with no device
+attached. It prints the entries, the pulled file's contents, and the `LIS2`, `RECV`, and
+`SEND` request headers that were written:
 
 ```
 cmake --build build --config Release --target adbcpp_sync_example

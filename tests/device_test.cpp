@@ -93,7 +93,35 @@ int main()
         adbcpp::run(connection, "rm -f " + remote);
         std::filesystem::remove(local);
 
+        // Push a file back: create one in the temporary directory, copy it over
+        // sync, and pull it back to prove it arrived.
+        const auto pushed_local = std::filesystem::temp_directory_path() / "adbcpp_device_push_test.txt";
+        {
+            std::ofstream output(pushed_local, std::ios::binary | std::ios::trunc);
+            output << "adbcpp-push-test\n";
+        }
+
+        const std::string pushed_remote = "/data/local/tmp/adbcpp_device_push_test.txt";
+        adbcpp::push(connection, pushed_local, pushed_remote);
+
+        const auto pushed_back = std::filesystem::temp_directory_path() / "adbcpp_device_push_back.txt";
+        adbcpp::pull(connection, pushed_remote, pushed_back);
+
+        std::string pushed_contents;
+        {
+            std::ifstream input(pushed_back, std::ios::binary);
+            pushed_contents.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+        }
+        adbcpp::run(connection, "rm -f " + pushed_remote);
+        std::filesystem::remove(pushed_local);
+        std::filesystem::remove(pushed_back);
+
         transport.close();
+        if (pushed_contents != "adbcpp-push-test\n")
+        {
+            std::cerr << "unexpected pushed contents: " << pushed_contents << '\n';
+            return 1;
+        }
         if (contents != "adbcpp-pull-test\n")
         {
             std::cerr << "unexpected pulled contents: " << contents << '\n';

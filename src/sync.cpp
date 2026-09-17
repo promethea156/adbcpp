@@ -2,14 +2,20 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
+
+#if !defined(_WIN32)
+#    include <sys/stat.h>
+#endif
 
 #include "adbcpp/protocol/commands.hpp"
 #include "adbcpp/stream.hpp"
@@ -26,16 +32,21 @@ namespace
 //   https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/file_sync_protocol.h
 //
 // `kListV1` and `kListV2` are the two LIST requests, `kDentV1` and `kDentV2`
-// the matching directory entries, `kRecvV1` retrieves a file, `kData` carries one
-// chunk of it, `kDone` ends a listing or a transfer, `kFail` rejects the request,
-// and `kQuit` leaves sync mode.
+// the matching directory entries, `kRecvV1` retrieves a file, `kSendV1` stores
+// one, `kStatV2` and `kStatV1` report a path's metadata, `kData` carries one
+// chunk of a file, `kDone` ends a listing or a transfer, `kOkay` acknowledges a
+// completed transfer, `kFail` rejects the request, and `kQuit` leaves sync mode.
 constexpr std::uint32_t kListV1 = protocol::make_command('L', 'I', 'S', 'T');
 constexpr std::uint32_t kListV2 = protocol::make_command('L', 'I', 'S', '2');
 constexpr std::uint32_t kDentV1 = protocol::make_command('D', 'E', 'N', 'T');
 constexpr std::uint32_t kDentV2 = protocol::make_command('D', 'N', 'T', '2');
 constexpr std::uint32_t kRecvV1 = protocol::make_command('R', 'E', 'C', 'V');
+constexpr std::uint32_t kSendV1 = protocol::make_command('S', 'E', 'N', 'D');
+constexpr std::uint32_t kStatV2 = protocol::make_command('S', 'T', 'A', '2');
+constexpr std::uint32_t kStatV1 = protocol::make_command('S', 'T', 'A', 'T');
 constexpr std::uint32_t kData = protocol::make_command('D', 'A', 'T', 'A');
 constexpr std::uint32_t kDone = protocol::make_command('D', 'O', 'N', 'E');
+constexpr std::uint32_t kOkay = protocol::make_command('O', 'K', 'A', 'Y');
 constexpr std::uint32_t kFail = protocol::make_command('F', 'A', 'I', 'L');
 constexpr std::uint32_t kQuit = protocol::make_command('Q', 'U', 'I', 'T');
 
@@ -53,8 +64,15 @@ constexpr std::size_t kDentV2NameLengthOffset = 68;
 // The name length is capped at NAME_MAX, which is 255 on Linux, like adb.
 constexpr std::size_t kMaxNameLength = 255;
 
-// The `ls_v2` feature selects the v2 DENT form, exactly like adb.
+// A STAT body follows its id. v1 is `mode`, `size`, `mtime`; v2 is the v2 DENT
+// body without the trailing name, so it inserts an error before the metadata.
+constexpr std::size_t kStatV1BodySize = 12;
+constexpr std::size_t kStatV2BodySize = 68;
+
+// The `ls_v2` feature selects the v2 DENT form and `stat_v2` the v2 STAT form,
+// exactly like adb.
 constexpr std::string_view kLsV2Feature = "ls_v2";
+constexpr std::string_view kStatV2Feature = "stat_v2";
 
 // A RECV transfer arrives as `DATA` chunks of at most this many bytes, which is
 // `SYNC_DATA_MAX` in `file_sync_protocol.h`. The daemon never exceeds it, so a
@@ -117,6 +135,80 @@ void write_quit(Stream &stream)
     std::array<std::byte, kRequestSize> quit{};
     write_u32_le(quit.data(), kQuit);
     stream.write(quit);
+}
+
+// Reads the device's reply to a request it acknowledges with `OKAY`, or rejects
+// with `FAIL` and a reason. The reply is `sync_status { id, msglen }`; only `FAIL`
+// has a message behind it.
+void read_status(Stream &stream)
+{
+    std::array<std::byte, 4> id_bytes{};
+    stream.read(id_bytes);
+    const std::uint32_t id = read_u32_le(id_bytes.data());
+
+    if (id == kFail)
+    {
+        throw_sync_fail(stream);
+    }
+    if (id != kOkay)
+    {
+        throw std::runtime_error("adbcpp: unexpected sync response");
+    }
+
+    // The acknowledged message length is zero and is ignored.
+    std::array<std::byte, 4> length_bytes{};
+    stream.read(length_bytes);
+}
+
+// The device applies the final `DONE`'s size as the file's modification time, so
+// the local file's is converted to seconds since the epoch. A
+// `std::filesystem::file_time_type` is not a Unix time and its epoch differs by
+// platform, so the offset between the file clock and the system clock is measured
+// once and applied to the file's time.
+std::int64_t local_mtime(const std::filesystem::path &path)
+{
+    std::error_code error;
+    const auto file_time = std::filesystem::last_write_time(path, error);
+    if (error)
+    {
+        return std::time(nullptr);
+    }
+
+    const auto file_now = std::filesystem::file_time_type::clock::now();
+    const auto system_now = std::chrono::system_clock::now();
+    const auto offset = std::chrono::duration_cast<std::chrono::seconds>(system_now.time_since_epoch()) -
+                        std::chrono::duration_cast<std::chrono::seconds>(file_now.time_since_epoch());
+    const auto mtime = std::chrono::duration_cast<std::chrono::seconds>(file_time.time_since_epoch()) + offset;
+    return std::chrono::system_clock::to_time_t(std::chrono::system_clock::time_point(mtime));
+}
+
+// The mode sent with `SEND` is the local file's, so the device creates the file
+// with the same permissions.
+std::uint32_t local_mode(const std::filesystem::path &path)
+{
+    // S_IFREG, because the file being pushed is always a regular file.
+    std::uint32_t mode = 0100000u;
+
+#if defined(_WIN32)
+    // Windows has no POSIX mode and reports only whether a file is read-only, so
+    // either 0644 or 0444 is used, like adb's own Windows support.
+    std::error_code error;
+    const auto permissions = std::filesystem::status(path, error).permissions();
+    if (error || (permissions & std::filesystem::perms::owner_write) == std::filesystem::perms::none)
+    {
+        return mode | 0444u;
+    }
+    return mode | 0644u;
+#else
+    struct stat info{};
+    if (::stat(path.c_str(), &info) != 0)
+    {
+        return mode | 0600u;
+    }
+    // The daemon copies the user bits to the group and other bits, so only the
+    // permission bits are needed here.
+    return static_cast<std::uint32_t>(info.st_mode & 0777u);
+#endif
 }
 
 } // namespace
@@ -277,6 +369,134 @@ void pull(Connection &connection, std::string_view remote_path, const std::files
             throw std::runtime_error("adbcpp: failed to write the local file");
         }
     }
+
+    write_quit(stream);
+}
+
+std::optional<FileStat> stat(Connection &connection, std::string_view path)
+{
+    if (path.size() > kMaxPathLength)
+    {
+        throw std::runtime_error("adbcpp: the path is longer than the sync limit of 1024 bytes");
+    }
+
+    // `stat_v2` selects the v2 STAT form, which reports an error instead of
+    // failing the request. Matching adb, it is an exact feature match.
+    const bool v2 = connection.supports_feature(kStatV2Feature);
+
+    Stream stream(connection, "sync:");
+    write_path_request(stream, v2 ? kStatV2 : kStatV1, path);
+
+    // Every response starts with a four-byte id.
+    std::array<std::byte, 4> id_bytes{};
+    stream.read(id_bytes);
+
+    FileStat result;
+    if (v2)
+    {
+        // v2 is the v2 DENT body without the name: `error`, `dev`, `ino`,
+        // `mode`, `nlink`, `uid`, `gid`, `size`, `atime`, `mtime`, `ctime`.
+        std::array<std::byte, kStatV2BodySize> body{};
+        stream.read(body);
+
+        // The device reports a missing path here rather than failing the request.
+        if (read_u32_le(body.data()) != 0)
+        {
+            write_quit(stream);
+            return std::nullopt;
+        }
+        result.mode = read_u32_le(body.data() + 20);
+        result.size = read_u64_le(body.data() + 36);
+        result.mtime = static_cast<std::int64_t>(read_u64_le(body.data() + 52));
+    }
+    else
+    {
+        // v1 is `mode`, `size`, `mtime`. It has no error field, so a missing
+        // path comes back as all zeros and cannot be told from an empty file.
+        std::array<std::byte, kStatV1BodySize> body{};
+        stream.read(body);
+        if (read_u32_le(body.data()) == 0 && read_u32_le(body.data() + 4) == 0 && read_u32_le(body.data() + 8) == 0)
+        {
+            write_quit(stream);
+            return std::nullopt;
+        }
+        result.mode = read_u32_le(body.data());
+        result.size = read_u32_le(body.data() + 4);
+        result.mtime = read_u32_le(body.data() + 8);
+    }
+
+    write_quit(stream);
+    return result;
+}
+
+void push(Connection &connection, const std::filesystem::path &local_path, std::string_view remote_path)
+{
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(local_path, error))
+    {
+        throw std::runtime_error("adbcpp: the local file is not a regular file");
+    }
+
+    // A destination that is an existing directory receives the file under its local
+    // name, exactly like `adb push local.txt /sdcard/`.
+    std::string destination(remote_path);
+    const auto existing = stat(connection, remote_path);
+    if (existing && existing->is_directory())
+    {
+        destination.push_back('/');
+        destination += local_path.filename().string();
+    }
+
+    // SEND(id, path_length, "path,mode"). The mode is decimal and includes the
+    // file type bits; the daemon parses it with `strtoul(..., 0)` and passes it to
+    // `open`, which uses only its permission bits.
+    const std::string spec = destination + ',' + std::to_string(local_mode(local_path));
+
+    Stream stream(connection, "sync:");
+    write_path_request(stream, kSendV1, spec);
+
+    // The contents follow as DATA chunks, and DONE ends the transfer with the
+    // file's modification time as its size.
+    std::ifstream input(local_path, std::ios::binary);
+    if (!input)
+    {
+        throw std::runtime_error("adbcpp: cannot open the local file");
+    }
+
+    std::vector<char> buffer(kMaxChunkSize);
+    while (input)
+    {
+        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const auto count = input.gcount();
+        if (count <= 0)
+        {
+            break;
+        }
+
+        std::vector<std::byte> chunk(static_cast<std::size_t>(count));
+        std::copy_n(reinterpret_cast<const std::byte *>(buffer.data()), static_cast<std::ptrdiff_t>(count),
+                    chunk.begin());
+
+        std::array<std::byte, 8> header{};
+        write_u32_le(header.data(), kData);
+        write_u32_le(header.data() + 4, static_cast<std::uint32_t>(chunk.size()));
+        stream.write(header);
+        stream.write(chunk);
+    }
+
+    if (!input.eof())
+    {
+        throw std::runtime_error("adbcpp: failed to read the local file");
+    }
+
+    std::array<std::byte, 8> done{};
+    write_u32_le(done.data(), kDone);
+    write_u32_le(done.data() + 4, static_cast<std::uint32_t>(local_mtime(local_path)));
+    stream.write(done);
+
+    // Unlike a listing or a transfer, the device acknowledges the final DONE with
+    // OKAY, or rejects the request with FAIL.
+    read_status(stream);
 
     write_quit(stream);
 }

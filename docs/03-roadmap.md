@@ -52,7 +52,16 @@ The wire format is documented in [`06-sync-protocol.md`](06-sync-protocol.md), a
 
 A transfer's `DONE` is a `sync_data` record, not the DENT struct that ends a listing, so only its size is read; see [`06-sync-protocol.md`](06-sync-protocol.md).
 
-**Next:** Slice 4 — push a file over the `sync` service.
+**Slice 4 — complete.** A file is copied to the device with the `sync` `SEND` request:
+
+- `STAT` request and its v1/v2 responses, used to tell whether the destination is a directory.
+- `SEND` request, whose path is a `<path>,<mode>` spec, followed by the same `DATA` chunks as `RECV` and a `DONE` whose size is the file's modification time.
+- The device answers the final `DONE` with `OKAY`, unlike a listing or a transfer.
+- Public API: `stat(connection, path)` and `push(connection, local, remote)`.
+
+`stat` follows symbolic links, so a symlink to a directory is correctly reported as a directory. It returns a missing path as an empty result rather than an error, because the device reports it inside the response.
+
+**Next:** Slice 5 — install and uninstall an APK.
 
 ## Slice 0 — Walking Skeleton
 

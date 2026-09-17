@@ -260,7 +260,8 @@ that it has to keep reading across `WRTE` boundaries.
 1. [`docs/06-sync-protocol.md`](docs/06-sync-protocol.md) — the wire format,
    field by field.
 2. [`include/adbcpp/sync.hpp`](include/adbcpp/sync.hpp) and
-   [`src/sync.cpp`](src/sync.cpp) — `list`, `pull`, and `DirEntry`.
+   [`src/sync.cpp`](src/sync.cpp) — `list`, `pull`, `push`, `stat`, `DirEntry`,
+   and `FileStat`.
 3. AOSP's `docs/dev/sync.md`:
    <https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/docs/dev/sync.md>
 4. Blockers 17 and 18 in [`docs/04-blockers.md`](docs/04-blockers.md).
@@ -276,6 +277,13 @@ with a `DONE` that is a **full DENT struct**, so its body still has to be read. 
 transfer ends with a `DONE` that is a `sync_data` record, whose size is ignored, and
 it arrives as a series of `DATA` chunks of at most 64 KiB. Note that `pull` writes
 each chunk to the file as it arrives rather than collecting the file in memory.
+
+`SEND` reuses the request shape a third way: the "path" is a
+`<path>,<mode>` **spec**, which is where the destination file's permissions
+travel. Its `DONE` is the transfer's `DONE`, but its size is the file's
+modification time, and the device answers it — the only `OKAY` in the service.
+`STAT` is what tells `push` that its destination is a directory to receive the file
+under its local name, and it is also the second request with a v1 and a v2 form.
 
 **Run.**
 
@@ -296,6 +304,8 @@ fields go missing and why.
 - Why does the device answer a sync request with an `OKAY`, and why did the shell
   service never reveal that?
 - Why does `pull` write each chunk as it arrives instead of returning the file's bytes?
+- Why does `push` stat its destination before it sends anything?
+- Why does a `0644` local file become `0666` on the device?
 
 ## Module 8 — shell_v2
 
@@ -355,18 +365,14 @@ real device, and observe the failure. Then explain why the default is off.
 **Goal.** Choose the next slice and apply everything you have learned.
 
 **Read.** [`docs/03-roadmap.md`](docs/03-roadmap.md) — the remaining slices:
-push, install/uninstall, app control, and finally TCP plus silent authentication.
+install/uninstall, app control, and finally TCP plus silent authentication.
 
-**Exercise.** Implement Slice 4 (push a file with the sync `STAT` and `SEND`
-requests, whose chunks are `DATA` messages followed by a `DONE` whose size is the
-file's modification time). The `sync` service is documented in AOSP's
-`docs/dev/sync.md`:
-<https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/docs/dev/sync.md>
-
-Note how much of the work is already done: `pull` already reads a chunked transfer
-with `Stream::read`, and `SEND` is the same shape in the other direction. The new
-part is that the device acknowledges the final `DONE` with an `OKAY`, which
-`Stream` already skips for you.
+**Exercise.** Implement Slice 5 (install an APK by pushing it to
+`/data/local/tmp` with the `push` you already have, then running
+`pm install` over the shell service and reading its exit code). Note how little is
+new: the whole slice is composition, not protocol. `push` and `run` are both
+already there, and `pm install` reports success through the exit code that
+blocker 19 fixed.
 
 **Checkpoint.**
 
@@ -422,4 +428,6 @@ When you have finished, you should be able to:
   differs from the ADB protocol.
 - Pull a file over the `sync` service and explain why a transfer's `DONE` differs
   from a listing's.
+- Push a file and explain what the `<path>,<mode>` spec and the acknowledging
+  `OKAY` are for.
 - Capture a real `adb` session and use it as a baseline to debug your own.

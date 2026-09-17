@@ -4,7 +4,7 @@ A simplified, customized reimplementation of **ADB (Android Debug Bridge) as a C
 
 `adbcpp` is designed to be embedded directly into C++ applications, giving developers programmatic control over Android devices. It operates **without depending on Google's ADB server or the `adb` command-line tool** — no `adb.exe` process, no local server on port 5037, and no external binary.
 
-> **Status:** early development. Slice 0 (the walking skeleton), Slice 1 (shell over USB), Slice 2 (file listing over `sync`), and Slice 3 (pull over `sync`) are complete. See [`docs/03-roadmap.md`](docs/03-roadmap.md) for the plan.
+> **Status:** early development. Slice 0 (the walking skeleton), Slice 1 (shell over USB), Slice 2 (file listing over `sync`), Slice 3 (pull over `sync`), and Slice 4 (push, stat over `sync`) are complete. See [`docs/03-roadmap.md`](docs/03-roadmap.md) for the plan.
 
 > **Learning:** want to understand the protocol rather than just use it?
 > [`LEARNING.md`](LEARNING.md) is a guided curriculum that uses this

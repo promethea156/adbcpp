@@ -16,10 +16,10 @@
 #include "adbcpp/sync.hpp"
 #include "adbcpp/testing/mock_transport.hpp"
 
-// A `list` and `pull` round-trip with no device attached. The mock transport
-// queues the bytes a device would send, so the real `list` and `pull` code runs end
-// to end and both halves of each exchange are visible. The protocol is explained in
-// `docs/06-sync-protocol.md`.
+// A `list`, `pull`, and `push` round-trip with no device attached. The mock
+// transport queues the bytes a device would send, so the real `list`, `pull`, and
+// `push` code runs end to end and both halves of each exchange are visible. The
+// protocol is explained in `docs/06-sync-protocol.md`.
 namespace
 {
 
@@ -30,6 +30,10 @@ constexpr std::uint32_t kDeviceId = 7;
 constexpr std::uint32_t kLocalId = 2;
 constexpr std::uint32_t kSecondDeviceId = 8;
 constexpr std::uint32_t kSecondLocalId = 3;
+constexpr std::uint32_t kThirdDeviceId = 9;
+constexpr std::uint32_t kThirdLocalId = 4;
+constexpr std::uint32_t kFourthDeviceId = 10;
+constexpr std::uint32_t kFourthLocalId = 5;
 
 // Every binary integer in sync mode is little-endian, like the ADB header.
 void write_u32_le(std::byte *out, std::uint32_t value)
@@ -127,6 +131,27 @@ std::vector<std::byte> recv_done()
     return done;
 }
 
+// A STAT v2 response: id, error, dev, ino, mode, nlink, uid, gid, size, atime,
+// mtime, ctime. The field offsets are the ones `stat` parses.
+std::vector<std::byte> stat_v2(std::uint32_t error, std::uint32_t mode, std::uint64_t size)
+{
+    std::vector<std::byte> stat(72);
+    write_u32_le(stat.data(), sync_id("STA2"));
+    write_u32_le(stat.data() + 4, error);
+    write_u32_le(stat.data() + 24, mode);
+    write_u64_le(stat.data() + 40, size);
+    return stat;
+}
+
+// A reply the device acknowledges a request with: `sync_status { id, msglen }`.
+std::vector<std::byte> status(const char *four)
+{
+    std::vector<std::byte> reply(8);
+    write_u32_le(reply.data(), sync_id(four));
+    write_u32_le(reply.data() + 4, 0u);
+    return reply;
+}
+
 // Print bytes the way a capture shows them.
 void print_bytes(std::string_view label, std::span<const std::byte> data)
 {
@@ -175,6 +200,16 @@ int main()
     feed(transport, message(adbcpp::protocol::kWrte, kSecondDeviceId, kSecondLocalId, recv_done_bytes),
          recv_done_bytes);
 
+    // 6. `push` stats its destination on a third `sync:` stream and sends on a
+    //    fourth. The device accepts both, reports that the destination does not
+    //    exist, and acknowledges the transfer.
+    feed(transport, message(adbcpp::protocol::kOkay, kThirdDeviceId, kThirdLocalId));
+    const auto stat = stat_v2(2u, 0u, 0u); // ENOENT
+    feed(transport, message(adbcpp::protocol::kWrte, kThirdDeviceId, kThirdLocalId, stat), stat);
+    feed(transport, message(adbcpp::protocol::kOkay, kFourthDeviceId, kFourthLocalId));
+    const auto okay = status("OKAY");
+    feed(transport, message(adbcpp::protocol::kWrte, kFourthDeviceId, kFourthLocalId, okay), okay);
+
     // The connection performs the handshake against the queued CNXN.
     adbcpp::Connection connection(transport);
 
@@ -197,11 +232,21 @@ int main()
     std::filesystem::remove(local);
     std::cout << "pulled /sdcard/file.txt (" << contents.size() << " bytes): " << contents;
 
-    // Show the LIS2 and RECV request headers that `list` and `pull` wrote, to make
-    // the wire format concrete. Each is an id and a path length, and sits in the byte
+    // `push` sends the local file as DATA chunks and reads the OKAY.
+    const auto upload = std::filesystem::temp_directory_path() / "adbcpp_sync_example_upload.txt";
+    {
+        std::ofstream output(upload, std::ios::binary | std::ios::trunc);
+        output << "pushed from the host\n";
+    }
+    adbcpp::push(connection, upload, "/sdcard/upload.txt");
+    std::filesystem::remove(upload);
+    std::cout << "pushed a local file to /sdcard/upload.txt\n";
+
+    // Show the request headers that `list`, `pull`, and `push` wrote, to make the
+    // wire format concrete. Each is an id and a path length, and sits in the byte
     // stream after the ADB headers.
     const auto &written = transport.written();
-    for (const char *id : {"LIS2", "RECV"})
+    for (const char *id : {"LIS2", "RECV", "SEND"})
     {
         std::array<std::byte, 4> id_bytes{};
         write_u32_le(id_bytes.data(), sync_id(id));

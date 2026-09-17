@@ -13,8 +13,9 @@
 
 // A session over USB: open the ADB interface, authenticate with the key shared
 // with adb, then either list a directory (`--list <path>`), pull a file
-// (`--pull <remote> <local>`), or run a shell command (the default). All of them
-// mirror what `adb` does, so they are interchangeable on the device.
+// (`--pull <remote> <local>`), push a file (`--push <local> <remote>`), or run a
+// shell command (the default). All of them mirror what `adb` does, so they are
+// interchangeable on the device.
 int main(int argc, char **argv)
 {
     // The vendor/product id of the target device. Every Android device exposes its
@@ -73,6 +74,14 @@ int main(int argc, char **argv)
         {
             adbcpp::pull(connection, argv[2], argv[3]);
             std::cout << "pulled " << argv[2] << " to " << argv[3] << '\n';
+            transport.close();
+            return 0;
+        }
+
+        if (argc > 3 && std::string_view(argv[1]) == "--push")
+        {
+            adbcpp::push(connection, argv[2], argv[3]);
+            std::cout << "pushed " << argv[2] << " to " << argv[3] << '\n';
             transport.close();
             return 0;
         }
