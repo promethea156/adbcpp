@@ -126,8 +126,8 @@ TEST_CASE("stream opens and collects output until close", "[stream]")
 
     const std::string output = "hello\n";
     const auto output_bytes = std::span(reinterpret_cast<const std::byte *>(output.data()), output.size());
-    feed_frame(transport, make_message(adbcpp::protocol::kWrte, kLocalId, kRemoteId, output_bytes), output_bytes);
-    feed_frame(transport, make_message(adbcpp::protocol::kClse, kLocalId, kRemoteId));
+    feed_frame(transport, make_message(adbcpp::protocol::kWrte, kRemoteId, kLocalId, output_bytes), output_bytes);
+    feed_frame(transport, make_message(adbcpp::protocol::kClse, kRemoteId, kLocalId));
 
     adbcpp::Connection connection(transport);
     adbcpp::Stream stream(connection, "shell:echo hello");
@@ -146,8 +146,8 @@ TEST_CASE("stream sends OKAY for each WRTE", "[stream]")
     const auto device = make_message(adbcpp::protocol::kCnxn, 0x01000001u, 4096u);
     feed_frame(transport, device);
     feed_frame(transport, make_message(adbcpp::protocol::kOkay, kRemoteId, kLocalId));
-    feed_frame(transport, make_message(adbcpp::protocol::kWrte, kLocalId, kRemoteId));
-    feed_frame(transport, make_message(adbcpp::protocol::kClse, kLocalId, kRemoteId));
+    feed_frame(transport, make_message(adbcpp::protocol::kWrte, kRemoteId, kLocalId));
+    feed_frame(transport, make_message(adbcpp::protocol::kClse, kRemoteId, kLocalId));
 
     adbcpp::Connection connection(transport);
     adbcpp::Stream stream(connection, "shell:id");
@@ -178,4 +178,50 @@ TEST_CASE("stream rejects a write larger than the negotiated maximum payload", "
 
     const std::vector<std::byte> too_large(4097, std::byte{0});
     REQUIRE_THROWS(stream.write(too_large));
+}
+
+TEST_CASE("stream ignores a frame for another stream while opening", "[stream]")
+{
+    adbcpp::testing::MockTransport transport;
+
+    const auto device = make_message(adbcpp::protocol::kCnxn, 0x01000001u, 4096u);
+    feed_frame(transport, device);
+
+    // A stray CLOSE for another stream arrives before this stream's OKAY. The ids
+    // are relative to the sender, so `arg1` is our local id.
+    feed_frame(transport, make_message(adbcpp::protocol::kClse, kRemoteId, 9));
+    feed_frame(transport, make_message(adbcpp::protocol::kOkay, kRemoteId, kLocalId));
+
+    adbcpp::Connection connection(transport);
+    adbcpp::Stream stream(connection, "shell:id");
+
+    REQUIRE(stream.service() == "shell:id");
+}
+
+TEST_CASE("stream skips the OKAY that acknowledges a write", "[stream]")
+{
+    adbcpp::testing::MockTransport transport;
+
+    const auto device = make_message(adbcpp::protocol::kCnxn, 0x01000001u, 4096u);
+    feed_frame(transport, device);
+    feed_frame(transport, make_message(adbcpp::protocol::kOkay, kRemoteId, kLocalId));
+
+    // The device acknowledges the write we send, then sends its own WRTE. The
+    // acknowledgement carries no data, so the read must skip it.
+    const std::string output = "hello\n";
+    const auto output_bytes = std::span(reinterpret_cast<const std::byte *>(output.data()), output.size());
+    feed_frame(transport, make_message(adbcpp::protocol::kOkay, kRemoteId, kLocalId));
+    feed_frame(transport, make_message(adbcpp::protocol::kWrte, kRemoteId, kLocalId, output_bytes), output_bytes);
+    feed_frame(transport, make_message(adbcpp::protocol::kClse, kRemoteId, kLocalId));
+
+    adbcpp::Connection connection(transport);
+    adbcpp::Stream stream(connection, "sync:");
+
+    const std::string request = "LIST";
+    const auto request_bytes = std::span(reinterpret_cast<const std::byte *>(request.data()), request.size());
+    stream.write(request_bytes);
+
+    const auto collected = stream.read_all();
+    REQUIRE(collected.size() == output.size());
+    REQUIRE(std::equal(collected.begin(), collected.end(), output_bytes.begin()));
 }

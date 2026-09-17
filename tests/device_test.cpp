@@ -7,6 +7,7 @@
 #include "adbcpp/connection.hpp"
 #include "adbcpp/crypto/adb_key.hpp"
 #include "adbcpp/shell.hpp"
+#include "adbcpp/sync.hpp"
 #include "adbcpp/usb/usb_transport.hpp"
 
 // The end-to-end integration test: the same flow as `examples/usb`, run against a
@@ -51,11 +52,18 @@ int main()
                                       });
 
         const auto result = adbcpp::run(connection, "echo hello");
-        transport.close();
-
         if (result.output != "hello\n")
         {
             std::cerr << "unexpected output: " << result.output << '\n';
+            return 1;
+        }
+
+        // `/` is always present and always holds at least `sdcard`.
+        const auto entries = adbcpp::list(connection, "/");
+        transport.close();
+        if (entries.empty())
+        {
+            std::cerr << "the listing of / is empty\n";
             return 1;
         }
         return 0;

@@ -1,8 +1,11 @@
 #include "adbcpp/connection.hpp"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "adbcpp/protocol/commands.hpp"
@@ -25,6 +28,44 @@ protocol::Message make_auth(std::uint32_t type, std::span<const std::byte> paylo
     auth.data_crc32 = protocol::Message::compute_crc32(payload);
     auth.magic = protocol::Message::compute_magic(auth.command);
     return auth;
+}
+
+// Parses the `features=<a,b,c>` list from a CNXN banner. The banner may hold
+// other `key=value` properties separated by `;`, so the list ends at the next `;`
+// or at the end of the banner.
+std::vector<std::string> parse_features(std::string_view banner)
+{
+    constexpr std::string_view kPrefix = "features=";
+    const std::size_t position = banner.find(kPrefix);
+    if (position == std::string_view::npos)
+    {
+        return {};
+    }
+
+    std::string_view list = banner.substr(position + kPrefix.size());
+    const std::size_t end = list.find(';');
+    if (end != std::string_view::npos)
+    {
+        list = list.substr(0, end);
+    }
+
+    std::vector<std::string> features;
+    std::size_t start = 0;
+    while (start <= list.size())
+    {
+        const std::size_t comma = list.find(',', start);
+        const std::size_t stop = comma == std::string_view::npos ? list.size() : comma;
+        if (stop > start)
+        {
+            features.emplace_back(list.substr(start, stop - start));
+        }
+        if (comma == std::string_view::npos)
+        {
+            break;
+        }
+        start = comma + 1;
+    }
+    return features;
 }
 
 } // namespace
@@ -99,11 +140,19 @@ Connection::Connection(Transport &transport, std::span<const std::byte> public_k
     device_version_ = frame.header.arg0;
     max_data_ = frame.header.arg1;
 
-    // The device's banner reports its own features. `delayed_ack` is only enabled
-    // if both sides advertised it, so a device that does not support it keeps the
-    // OPEN window at zero.
+    // The device's banner reports its own features. They select the protocol
+    // variants, for example `ls_v2` for the v2 LIST/DENT form.
     const std::string banner(reinterpret_cast<const char *>(frame.payload.data()), frame.payload.size());
-    delayed_ack_ = advertise_delayed_ack && banner.find(kDelayedAckFeature) != std::string::npos;
+    features_ = parse_features(banner);
+
+    // `delayed_ack` is only enabled if both sides advertised it, so a device
+    // that does not support it keeps the OPEN window at zero (blocker 12).
+    delayed_ack_ = advertise_delayed_ack && supports_feature(kDelayedAckFeature);
+}
+
+bool Connection::supports_feature(std::string_view feature) const noexcept
+{
+    return std::find(features_.begin(), features_.end(), feature) != features_.end();
 }
 
 void Connection::send(const protocol::Message &header, std::span<const std::byte> payload)

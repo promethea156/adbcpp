@@ -114,6 +114,47 @@ int main()
 `CommandResult::output` is stdout and stderr combined, in the order the device
 produced them, and `exit_code` is the command's status.
 
+## List a Directory
+
+`list` opens the `sync:` service and returns a directory's entries as structured
+data. It uses the v2 `LIST`/`DNT2` form when the device advertises `ls_v2`, which
+most modern devices do.
+
+```cpp
+#include <iostream>
+#include <span>
+#include <string>
+
+#include "adbcpp/adbcpp.hpp"
+#include "adbcpp/crypto/adb_key.hpp"
+#include "adbcpp/sync.hpp"
+#include "adbcpp/usb/usb_transport.hpp"
+
+int main()
+{
+    adbcpp::usb::DeviceId id;
+    id.vendor_id = 0x22D9;
+    id.product_id = 0x2769;
+
+    adbcpp::usb::UsbTransport transport(id);
+    const auto key = adbcpp::crypto::Key::load_or_generate();
+    const std::string &public_key_string = key.public_key();
+    const auto public_key = std::span(reinterpret_cast<const std::byte *>(public_key_string.data()),
+                                     public_key_string.size());
+
+    adbcpp::Connection connection(transport, public_key,
+                                  [&key](std::span<const std::byte> token) { return key.sign(token); });
+
+    for (const auto &entry : adbcpp::list(connection, "/sdcard"))
+    {
+        std::cout << (entry.is_directory() ? 'd' : '-') << ' ' << entry.size << ' ' << entry.name << '\n';
+    }
+
+    transport.close();
+    return 0;
+}
+```
+
 ## Inspect the ADB Key
 
 The key lives in `~/.android/adbkey` (PKCS#8 PEM) and `~/.android/adbkey.pub`
@@ -420,6 +461,9 @@ int main()
 | Run a shell command                    | `adbcpp::run(connection, "echo hello")`                  |
 | Read a command's output                 | `result.output`                                         |
 | Read a command's exit code              | `result.exit_code`                                      |
+| List a directory                        | `adbcpp::list(connection, "/sdcard")`                    |
+| Check if an entry is a directory         | `entry.is_directory()`                                   |
+| Check if an entry is a regular file       | `entry.is_regular()`                                     |
 | Open a service manually                | `adbcpp::Stream stream(connection, "shell:echo hello")`   |
 | Read a stream until the device closes    | `stream.read_all()`                                     |
 | Write to a stream                      | `stream.write(bytes)`                                   |

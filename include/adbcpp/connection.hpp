@@ -4,7 +4,9 @@
 #include <cstdint>
 #include <functional>
 #include <span>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include "adbcpp/export.hpp"
 #include "adbcpp/protocol/message.hpp"
@@ -98,6 +100,14 @@ public:
         return max_data_;
     }
 
+    /// Whether the device advertised `feature` in its CNXN banner.
+    ///
+    /// The device's feature list selects the protocol variants, for example
+    /// `ls_v2` for the v2 LIST/DENT form or `stat_v2` for STAT. The match is
+    /// exact, because a plain substring search would treat `recv_v2` as matching
+    /// `sendrecv_v2`.
+    bool supports_feature(std::string_view feature) const noexcept;
+
     /// Whether delayed acknowledgements were negotiated with the device.
     bool supports_delayed_ack() const noexcept
     {
@@ -116,6 +126,8 @@ private:
     std::uint32_t max_data_ = 0;
     // adb reserves local id 1; streams start at 2.
     std::uint32_t next_local_id_ = 2;
+    // The device's `features=` list, parsed from its CNXN banner.
+    std::vector<std::string> features_;
     bool delayed_ack_ = false;
     bool requested_authorization_ = false;
 };

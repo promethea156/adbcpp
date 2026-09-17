@@ -36,6 +36,7 @@ add_library(adbcpp
   src/session.cpp
   src/shell.cpp
   src/stream.cpp
+  src/sync.cpp
 )
 add_library(adbcpp::adbcpp ALIAS adbcpp)
 

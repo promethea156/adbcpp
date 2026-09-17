@@ -28,7 +28,19 @@ Matching adb's values (local id `2`, `delayed_ack` removed from the feature list
 
 A third bug blocked silent authentication: `Key::sign` hashed the token with SHA-1 and then signed that hash as the digest, double-hashing it, so adbd rejected every signature and showed the authorization prompt on every run. `Key::sign` now signs the token directly as the digest, matching adb's `RSA_sign(NID_sha1, token, ...)`. This was confirmed with a USBPcap capture of one adb session and one `adbcpp` session; see blockers 10 and 16 in `04-blockers.md`.
 
-**Next:** Slice 2 — list files over the `sync` service.
+**Slice 2 — complete.** A directory is listed over the `sync` service and its entries are returned as structured data:
+
+- `sync:` stream setup, which puts the stream in a binary mode that differs from the ADB protocol.
+- `LIST` request and `DENT` response parsing, using the v2 `LIST`/`DNT2` form when the device advertises `ls_v2` (the device does, so the full POSIX metadata and per-entry errors are available).
+- Public API: `list(connection, path)` returning `DirEntry` values with `name`, `mode`, `size`, and `mtime`.
+- `Stream::read` reads an exact byte count across `WRTE` messages, which the length-prefixed sync responses need.
+
+Two more protocol details were found while getting `list` working:
+
+- The device acknowledges the `LIST` `WRTE` with an `OKAY`, so `Stream` must skip the `OKAY` frames that carry no data.
+- The device may send a second `CLOSE` for a previous stream while a new one opens, so `Stream` must ignore frames whose `arg1` is not its own local id.
+
+**Next:** Slice 3 — pull a file over the `sync` service.
 
 ## Slice 0 — Walking Skeleton
 

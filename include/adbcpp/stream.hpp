@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -42,6 +43,15 @@ public:
     /// Writes data to the remote stream.
     void write(std::span<const std::byte> data);
 
+    /**
+     * Reads exactly `buffer.size()` bytes from the remote stream.
+     *
+     * A WRTE payload may be larger or smaller than `buffer`, so the remainder is
+     * buffered and handed out by later reads. Each WRTE is acknowledged with
+     * OKAY as it is consumed. Throws if the device closes the stream first.
+     */
+    void read(std::span<std::byte> buffer);
+
     /// Reads all output until the remote closes the stream.
     std::vector<std::byte> read_all();
 
@@ -52,11 +62,17 @@ public:
     }
 
 private:
+    // Receives one WRTE into the buffer and acknowledges it with OKAY. Returns
+    // false when the device closed its side of the stream instead.
+    bool receive_more();
+
     Connection *connection_;
     std::string service_;
     std::uint32_t local_id_;
     std::uint32_t remote_id_ = 0;
     bool closed_ = false;
+    std::vector<std::byte> incoming_;
+    std::size_t incoming_offset_ = 0;
 };
 
 } // namespace adbcpp

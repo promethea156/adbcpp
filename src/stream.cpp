@@ -1,6 +1,9 @@
 #include "adbcpp/stream.hpp"
 
+#include <algorithm>
+#include <cstddef>
 #include <stdexcept>
+#include <utility>
 
 #include "adbcpp/protocol/commands.hpp"
 
@@ -46,7 +49,15 @@ Stream::Stream(Connection &connection, std::string_view service)
 
     // The device accepts with OKAY(local-id, remote-id), or refuses with CLSE.
     // Its `arg0` is the device's id for this stream, which is our `remote_id`.
-    const auto frame = connection_->receive();
+    //
+    // Frames carry the recipient's local id in `arg1`, so a stray frame for
+    // another stream may arrive first; for example the device may send a second
+    // CLOSE for the previous stream while this one opens. Those are skipped.
+    auto frame = connection_->receive();
+    while (frame.header.arg1 != local_id_)
+    {
+        frame = connection_->receive();
+    }
     if (frame.header.command != protocol::kOkay)
     {
         throw std::runtime_error("adbcpp: failed to open the stream");
@@ -84,30 +95,77 @@ void Stream::write(std::span<const std::byte> data)
     connection_->send(make_message(protocol::kWrte, local_id_, remote_id_, data), data);
 }
 
-std::vector<std::byte> Stream::read_all()
+bool Stream::receive_more()
 {
-    std::vector<std::byte> output;
-    while (!closed_)
+    while (true)
     {
         auto frame = connection_->receive();
+        // `arg1` is the recipient's local id, so a frame for another stream is
+        // skipped rather than mistaken for this stream's data.
+        if (frame.header.arg1 != local_id_)
+        {
+            continue;
+        }
         switch (frame.header.command)
         {
             case protocol::kWrte:
                 // Each WRITE is acknowledged with OKAY so the device may send the next
                 // one. Without delayed acknowledgements this handshake is what paces the
                 // stream (blocker 12).
-                output.insert(output.end(), frame.payload.begin(), frame.payload.end());
+                incoming_ = std::move(frame.payload);
+                incoming_offset_ = 0;
                 connection_->send(make_message(protocol::kOkay, local_id_, remote_id_, {}));
-                break;
+                return true;
+            case protocol::kOkay:
+                // The device acknowledges a WRITE we sent, for example a sync request.
+                // It carries no data, so the next frame is read instead.
+                continue;
             case protocol::kClse:
-                // The device closes its side when the service is done. CLOSE is
-                // bidirectional: the same message closes this side in return.
+                // The device closes its side when the service is done. The protocol is
+                // explicit that a CLOSE must not be answered with another CLOSE, so this
+                // side is simply marked closed.
                 closed_ = true;
-                connection_->send(make_message(protocol::kClse, local_id_, remote_id_, {}));
-                break;
+                return false;
             default:
                 throw std::runtime_error("adbcpp: unexpected message on the stream");
         }
+    }
+}
+
+void Stream::read(std::span<std::byte> buffer)
+{
+    std::size_t total = 0;
+    while (total < buffer.size())
+    {
+        if (incoming_offset_ >= incoming_.size())
+        {
+            if (!receive_more())
+            {
+                throw std::runtime_error("adbcpp: the device closed the stream");
+            }
+        }
+
+        const std::size_t available = incoming_.size() - incoming_offset_;
+        const std::size_t count = std::min(available, buffer.size() - total);
+        std::copy_n(incoming_.begin() + static_cast<std::ptrdiff_t>(incoming_offset_),
+                    static_cast<std::ptrdiff_t>(count), buffer.begin() + static_cast<std::ptrdiff_t>(total));
+        incoming_offset_ += count;
+        total += count;
+    }
+}
+
+std::vector<std::byte> Stream::read_all()
+{
+    // A previous read may have left part of a WRTE buffered, so drain it first.
+    std::vector<std::byte> output(incoming_.begin() + static_cast<std::ptrdiff_t>(incoming_offset_), incoming_.end());
+    incoming_.clear();
+    incoming_offset_ = 0;
+
+    while (receive_more())
+    {
+        output.insert(output.end(), incoming_.begin(), incoming_.end());
+        incoming_.clear();
+        incoming_offset_ = 0;
     }
     return output;
 }

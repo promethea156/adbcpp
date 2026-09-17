@@ -2,15 +2,18 @@
 #include <iostream>
 #include <span>
 #include <string>
+#include <string_view>
 
 #include "adbcpp/connection.hpp"
 #include "adbcpp/crypto/adb_key.hpp"
 #include "adbcpp/shell.hpp"
+#include "adbcpp/sync.hpp"
 #include "adbcpp/usb/usb_transport.hpp"
 
-// A complete Slice 1 session over USB: open the ADB interface, authenticate
-// with the key shared with adb, then run a shell command. The flow mirrors what
-// `adb shell <command>` does, so the two are interchangeable on the device.
+// A session over USB: open the ADB interface, authenticate with the key shared
+// with adb, then either list a directory (`--list <path>`) or run a shell command
+// (the default). Both mirror what `adb` does, so the two are interchangeable on
+// the device.
 int main(int argc, char **argv)
 {
     // The vendor/product id of the target device. Every Android device exposes its
@@ -54,6 +57,16 @@ int main(int argc, char **argv)
         }
         std::cout << "connected to a device running protocol 0x" << std::hex << connection.device_version() << std::dec
                   << '\n';
+
+        if (argc > 2 && std::string_view(argv[1]) == "--list")
+        {
+            for (const auto &entry : adbcpp::list(connection, argv[2]))
+            {
+                std::cout << (entry.is_directory() ? 'd' : '-') << ' ' << entry.size << ' ' << entry.name << '\n';
+            }
+            transport.close();
+            return 0;
+        }
 
         const std::string command = argc > 1 ? argv[1] : "echo hello";
         const auto result = adbcpp::run(connection, command);

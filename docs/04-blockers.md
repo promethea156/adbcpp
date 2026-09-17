@@ -130,3 +130,19 @@ Each entry has the same shape:
 - **Cause**: `Key::sign` hashed the token with SHA-1 and then signed that hash as the digest, i.e. it **double-hashed** the token. adb signs the token **directly as the digest** (`RSA_sign(NID_sha1, token, ...)`, see entry 10). adbd therefore rejected every signature and sent a fresh `AUTH` token, which the host answered with the public key and which triggered the prompt. This was invisible at the protocol layer because both sides sent well-formed `AUTH` type 2 messages; only the signature bytes differed.
 - **Resolution**: Remove the SHA-1 pre-hash in `Key::sign` and pass the token straight to `mbedtls_pk_sign` with `MBEDTLS_MD_SHA1` (`src/crypto/adb_key.cpp`). This was confirmed with a USBPcap capture: adb's signature verifies as `VerifyHash(token)` (and fails as `VerifyHash(SHA1(token))`), while ours did the opposite; after the fix ours also verifies as `VerifyHash(token)` and the device accepts it without a prompt.
 - **Note**: The earlier "byte-for-byte identical to an independent RSA implementation" check (entry 10) compared against `SignHash(SHA1(token))`, which matched the buggy double-hash and gave false confidence. The correct comparison is `SignHash(token)`. A `key fingerprint` and a `requested_authorization` diagnostic were added to the USB example to help; the MD5 fingerprint shown on the device's authorized-computers list is computed from the decoded public key blob, while adb's log fingerprint is a SHA-256 of the DER `SubjectPublicKeyInfo`, so the two formats are not interchangeable.
+
+## Sync and File Listing
+
+### 17. The device acknowledges a WRITE with OKAY
+
+- **Symptom**: `list` failed with "unexpected message on the stream" after the `LIST` request.
+- **Cause**: The recipient of a `WRTE` acknowledges it with `OKAY`. The shell service puts the command in the `OPEN` destination, so `run` never sends a `WRTE` and never sees this. A sync request **is** sent as a `WRTE`, so the device answered with an `OKAY` that carried no data, and `receive_more` treated it as unexpected.
+- **Resolution**: `Stream::receive_more` skips `OKAY` frames and reads the next frame instead (`src/stream.cpp`). This is the same behaviour as adb, whose socket layer consumes the acknowledgement.
+- **Note**: The `OKAY` also appears with delayed acknowledgements, where its payload is the acknowledged byte count. Skipping it is correct in both cases.
+
+### 18. The device sends a second CLOSE for a previous stream
+
+- **Symptom**: After `run` then `list` in one session, the `sync:` `OPEN` was refused with `CLSE` and `list` failed with "failed to open the stream". Running `list` on its own worked.
+- **Cause**: The device may send a second `CLOSE` for the previous stream, with the previous stream's ids in `arg0`/`arg1`, while the next stream's `OPEN` is in flight. The `OPEN` response read that frame and treated it as a refusal. A USBPcap capture showed the stray `CLOSE` arriving between the `sync:` `OPEN` and its `OKAY`.
+- **Resolution**: Frames carry the recipient's local id in `arg1`, so `Stream` skips any frame whose `arg1` is not its own local id, both while opening and while reading (`src/stream.cpp`).
+- **Note**: The same applies to `WRTE` and `OKAY`: a frame for another stream must never be mistaken for this stream's data. The protocol multiplexes streams over the one connection, so a stream must always check the ids.

@@ -241,9 +241,10 @@ A stream is a small state machine keyed by two ids, and the ids are **relative t
 the sender**, so each side's `local-id` is the other's `remote-id`. The `OPEN`
 payload is a null-terminated service name, unlike the CNXN banner.
 
-**Exercise.** Add a public helper that opens an arbitrary service and returns the raw
-bytes, then use it to run `sync:` and print what comes back. (This is the start of
-Slice 2 in the roadmap.)
+**Exercise.** Read [`src/sync.cpp`](src/sync.cpp) and follow how `list` builds the
+`LIST` request and parses the `DENT` entries. Then run
+`build/examples/Release/adbcpp_usb_example --list /` against a device and compare
+its output with `adb shell ls -l /`.
 
 **Checkpoint.**
 
@@ -305,12 +306,17 @@ real device, and observe the failure. Then explain why the default is off.
 **Goal.** Choose the next slice and apply everything you have learned.
 
 **Read.** [`docs/03-roadmap.md`](docs/03-roadmap.md) — the remaining slices:
-`sync` and file listing, pull, push, install/uninstall, app control, and finally
-TCP plus silent authentication.
+pull, push, install/uninstall, app control, and finally TCP plus silent
+authentication.
 
-**Exercise.** Implement Slice 2 (`sync:` with `LIST`/`DENT` and a `list(path)`
-helper). The `sync` service is documented in AOSP's `docs/dev/sync.md`:
+**Exercise.** Implement Slice 3 (pull a file with the sync `RECV` request, whose
+chunks are `DATA` messages followed by `DONE`). The `sync` service is documented
+in AOSP's `docs/dev/sync.md`:
 <https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/docs/dev/sync.md>
+
+Note how much of the work is already done: `Stream::read` reads an exact byte
+count across `WRTE` messages, which is exactly what the chunked `RECV` response
+needs. Only the request/response framing is new.
 
 **Checkpoint.**
 
@@ -362,4 +368,6 @@ When you have finished, you should be able to:
 - Explain why the AUTH token is signed as the SHA-1 digest and not re-hashed.
 - Describe how a byte channel becomes messages and streams over USB.
 - Implement a new service on top of `Stream` without touching the lower layers.
+- List a directory over the `sync` service and explain how its binary framing
+  differs from the ADB protocol.
 - Capture a real `adb` session and use it as a baseline to debug your own.
