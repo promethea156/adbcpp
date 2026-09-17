@@ -1,0 +1,136 @@
+# Blockers and Solutions
+
+This document records the significant problems encountered while implementing `adbcpp` and how they were resolved. It exists so that future contributors understand **why** the implementation looks the way it does, and can find better solutions than the ones recorded here. Several of these are undocumented ADB behaviours that are easy to rediscover the hard way.
+
+Each entry has the same shape:
+
+- **Symptom** — what was observed.
+- **Cause** — what was actually going on.
+- **Resolution** — what was changed.
+- **Note** — alternatives or caveats worth knowing.
+
+## Dependency Choices
+
+### 1. USB backend: libusb, dynamically linked
+
+- **Symptom**: The library needs USB access but must stay dependency-free and BSL-1.0.
+- **Cause**: Talking to a device over USB requires a platform USB API or a third-party library.
+- **Resolution**: Use **libusb**, acquired with CMake **FetchContent** from the community [`libusb/libusb-cmake`](https://github.com/libusb/libusb-cmake) build, and build it as a **shared** library (`LIBUSB_BUILD_SHARED_LIBS=ON`). libusb is LGPL-2.1-or-later, so it is deliberately linked dynamically as an **optional** backend target and never statically linked into the core library. Consumers that only need TCP or an emulator do not pull libusb in.
+- **Note**: The intended long-term replacement is platform-native USB APIs (WinUSB on Windows, IOKit on macOS, `usbfs` on Linux). That removes the third-party dependency and its license obligations entirely. See `docs/01-objective.md`.
+
+### 2. Crypto dependency: Botan replaced by mbedTLS
+
+- **Symptom**: A crypto dependency was needed for RSA key generation and token signing.
+- **Cause**: The first decision was **Botan** (BSD-2-Clause), but its CMake integration is not first-class and it is a large dependency to pull in for one RSA key pair.
+- **Resolution**: Switch to **mbedTLS** (Apache-2.0), which has first-class CMake support (`MbedTLS::mbedcrypto`) and is small enough to use only for key generation, parsing, and signing.
+- **Note**: mbedTLS can also provide TLS should the encrypted ADB transport turn out to be required (see the open questions in `docs/03-roadmap.md`).
+
+## USB Transport
+
+### 3. Header and payload are separate USB transfers
+
+- **Symptom**: A message written as one buffer was not understood by the device.
+- **Cause**: ADB over USB sends the 24-byte message header and its payload as **separate bulk transfers**, unlike TCP where they form a byte stream.
+- **Resolution**: The `Session` layer writes the header and payload as two separate transport writes, and reads them as two separate reads. `UsbTransport` returns one USB transfer per `read()`, so a header and its payload can arrive as separate reads. This is harmless for byte-stream transports such as TCP.
+- **Note**: If a different USB backend is written, it must preserve this framing. The `Transport` abstraction only moves bytes; `Session` assumes nothing about transfer boundaries.
+
+### 4. Stalled USB endpoints need `clear_halt` (and sometimes a replug)
+
+- **Symptom**: After a failed run, the next connection attempt timed out on the first bulk transfer.
+- **Cause**: A bulk endpoint can be left in a halted state by a failed transfer.
+- **Resolution**: `libusb_clear_halt` is called on both bulk endpoints when the transport is opened. Additionally, a failed run can leave the **device's** endpoint stalled until the device is physically replugged, so each failed attempt may need a replug.
+- **Note**: The replug requirement is device-side and cannot be fixed from the host.
+
+### 5. Device presence must be checked before opening
+
+- **Symptom**: Running the example with no device attached produced a hard error.
+- **Cause**: `libusb_open` on a missing device throws.
+- **Resolution**: `UsbTransport::is_present(DeviceId)` enumerates devices and returns whether a matching one exists, without opening it. The USB example warns and exits successfully when absent, and the device integration test exits with code `77` so CTest reports it as **skipped** rather than failed.
+- **Note**: If the device is present but its ADB interface is claimed by another process (for example a running adb server), the test still fails rather than skips, which is arguably correct.
+
+## Handshake and Authentication
+
+### 6. The CNXN banner must advertise host features
+
+- **Symptom**: The device did not accept `shell_v2` and the handshake did not progress.
+- **Cause**: AOSP's host sends `host::features=<list>` and adbd **resets its feature set from that banner**. Without a feature list the device treats the host as supporting nothing.
+- **Resolution**: Send the standard host feature set in the CNXN banner. See `kSystemIdentity` in `include/adbcpp/connection.hpp`.
+- **Note**: The exact feature list matters for `shell_v2` and for delayed acknowledgements. The current list is hand-maintained; deriving it from AOSP's `supported_features()` would be more robust.
+
+### 7. The CNXN/OPEN/AUTH payloads are null-terminated
+
+- **Symptom**: The device did not parse the banner, service string, or public key reliably.
+- **Cause**: AOSP null-terminates the connection banner, the stream destination, and the RSA public key payloads.
+- **Resolution**: Append a trailing `\0` to each payload and include it in `data_length`.
+- **Note**: This was later revisited. The current AOSP `send_connect` does **not** append a null to the CNXN banner (it assigns the string directly and uses its length), while it does for `OPEN` and the AUTH public key. Commit `6fd54c8` added the CNXN null, a later refactor dropped it, and it was restored in `be5bd08`. If this is revisited, compare against the AOSP revision that matches the target device rather than assuming.
+
+### 8. The ADB private key is PKCS#8 PEM
+
+- **Symptom**: Loading `~/.android/adbkey` failed or produced a key that the device did not recognise.
+- **Cause**: adb's `adbkey` is a **PKCS#8 PEM** private key, not the older raw `RSAPrivateKey` structure. Parsing it by hand is error-prone.
+- **Resolution**: Use mbedTLS's PK layer (`mbedtls_pk_parse_keyfile` / `mbedtls_pk_write_key_pem`) for parsing, storing, and signing. This also means the same key adb already authorized on the device is reused.
+- **Note**: The key is stored as PKCS#8 PEM so adb and `adbcpp` can share `~/.android/adbkey`.
+
+### 9. The ADB public key is a custom little-endian blob
+
+- **Symptom**: The device rejected the connection even though the key was correct.
+- **Cause**: ADB's public key format is not a standard DER `SubjectPublicKeyInfo`. It is a custom `RSAPublicKey` structure: `modulus_size_words` (64), `n0inv` (`-1/n[0] mod 2^32`), the modulus as **little-endian** 256 bytes, `rr` (`R^2 mod n`, little-endian), and the exponent (65537) as a little-endian `uint32_t`. The whole 524-byte blob is base64-encoded and followed by ` user@host`.
+- **Resolution**: Implement the encoding in `Key::public_key()` and verify it against AOSP's `libcrypto_utils/android_pubkey.cpp`. Unit tests assert the `n0inv` identity (`n0 * n0inv == 0xFFFFFFFF`) and that `rr == R^2 mod n`.
+- **Note**: AOSP's `android_pubkey_decode` explicitly **ignores** `n0inv` and `rr` (it lets BoringSSL recompute them), so a standard RSA verification is enough. They are still encoded for compatibility with older adbd implementations that use them.
+
+### 10. AUTH type 2 signs the token with SHA-1 PKCS#1 v1.5
+
+- **Symptom**: The device did not accept the signed AUTH response.
+- **Cause**: adbd verifies with `RSA_verify(NID_sha1, token, token_size, sig, sig.size(), key)` and adb signs with `RSA_sign(NID_sha1, token, token_size, ...)`. The signature is therefore a standard PKCS#1 v1.5 SHA-1 signature over the 20-byte token, 256 bytes long.
+- **Resolution**: Sign with mbedTLS's `mbedtls_pk_sign` using `MBEDTLS_MD_SHA1` over `SHA1(token)`. Unit tests verify the signature against both the private key and the modulus/exponent decoded from the public key blob. It was also manually cross-checked byte-for-byte against an independent RSA implementation (the .NET `RSA` class) over the same token.
+- **Note**: The device sends a fresh random token per connection, so signatures cannot be compared directly between two runs; compare against the same token.
+
+### 11. Fall back to the public key when the signature is rejected
+
+- **Symptom**: The device sent `AUTH` (token) a second time instead of `CNXN`, and the handshake threw.
+- **Cause**: If the device does not recognise the signature, adbd sends `AUTH` again. adb's host then replies with the **public key** (`AUTH` type 3) to trigger the on-device approval prompt.
+- **Resolution**: When a second `AUTH` arrives after sending the signature, send the public key (with a trailing null), then wait for the device's `CNXN`. `Connection::requested_authorization()` reports whether this happened.
+- **Note**: This is exactly adb's behaviour and is required for the first connection to a device, or after the device's authorizations have been revoked.
+
+## Stream and Shell
+
+### 12. OPEN `arg1` (send buffer) depends on delayed acknowledgements
+
+- **Symptom**: The device closed the stream immediately after `OPEN`.
+- **Cause**: On transports that support delayed acknowledgements, `OPEN.arg1` is the initial flow-control window (`INITIAL_DELAYED_ACK_BYTES`). Sending `0` makes adbd close the stream.
+- **Resolution**: Parse the device's `delayed_ack` feature from its banner and advertise a non-zero window when negotiated. This is configurable via `Connection`'s `advertise_delayed_ack`.
+- **Note**: Matching adb's host banner (which includes `delayed_ack`) made the negotiated window non-zero and **broke** `OPEN` on the test device, so the advertisement is currently off. The `OPEN` window value may need to match the negotiated maximum payload rather than a fixed `256 KiB`.
+
+### 13. The OPEN payload was never written (the shell blocker)
+
+- **Symptom**: The device never answered `OPEN`, so `shell,v2,raw:<command>` never ran. The handshake and the `AUTH` exchange completed.
+- **Cause**: `Stream`'s constructor passed the service payload to `make_message` but **not** to `Connection::send`. The `OPEN` header therefore advertised `data_length=24`, but the 24 payload bytes were never written. The device waited for bytes that never arrived. Comparing against a real adb connection had pointed at the `OPEN` local id and send buffer, which were red herrings; instrumenting the session showed the header advertised a payload the transport never sent.
+- **Resolution**: Pass the payload to `Connection::send` as well (`src/stream.cpp`). This was the real blocker for Slice 1.
+- **Note**: This class of bug (a header that disagrees with what is actually written) is easy to introduce because `Message` and `Session::send` take the payload separately. A defensive check that `header.data_length` matches the payload span would catch it.
+
+### 14. Use the `shell_v2` service and parse its packets
+
+- **Symptom**: Command output was empty or mangled.
+- **Cause**: The device advertises `shell_v2`, and adb opens commands as `shell,v2,raw:<command>`. The `shell:` service does not provide separate stdout/stderr or an exit code.
+- **Resolution**: Open `shell,v2,raw:<command>` and reassemble the shell_v2 packets: stdout (id 1), stderr (id 2), and exit (id 3). `CommandResult` carries the combined output and the exit code.
+- **Note**: stdout and stderr are currently merged. If they need to be separate, `CommandResult` can be extended.
+
+## Testing and Device Interaction
+
+### 15. The first connection after idle can time out
+
+- **Symptom**: The first connection attempt sometimes timed out on the first bulk transfer, then succeeded on retry.
+- **Cause**: Observed intermittently; the exact cause is not confirmed. It is not related to device presence (the device is enumerated) and predates the presence check.
+- **Resolution**: The transfer timeout was raised to 120 seconds, which also gives the user time to approve the on-device prompt. The device integration test can be re-run.
+- **Note**: This is worth revisiting with a raw USB capture. It may be a device or host controller quirk.
+
+### 16. The device prompts for authorization on every run
+
+- **Symptom**: The device shows the USB debugging authorization prompt on every run, even when "Always allow from this computer" is checked, and the device's authorized-computers list does not contain our key.
+- **Cause**: **Unresolved.** The host side has been verified correct:
+  - The key matches `~/.android/adbkey.pub` (the fingerprint is identical), so we are not regenerating keys.
+  - The signature is byte-for-byte identical to an independent RSA implementation's signature over the device's token.
+  - The public key blob's modulus and exponent verify that signature.
+  - `adb_allowed_connection_time` is `0` on the device, so "always allow" grants should never expire.
+- **Resolution**: None yet. The remaining difference must be in bytes that are not visible at the protocol layer. The next step is a raw USB capture (USBPcap + Wireshark) of one adb session and one `adbcpp` session, diffing the `CNXN` and `AUTH` messages byte-for-byte.
+- **Note**: A `key fingerprint` and a `requested_authorization` diagnostic were added to the USB example to help. The MD5 fingerprint shown on the device's authorized-computers list is computed from the decoded public key blob, while adb's log fingerprint is a SHA-256 of the DER `SubjectPublicKeyInfo`; the two formats are not interchangeable.

@@ -116,6 +116,7 @@ cmake/             CMake package configuration
 - [`docs/01-objective.md`](docs/01-objective.md) — objective, technical requirements, versioning, and commit conventions
 - [`docs/02-references.md`](docs/02-references.md) — reference material on the ADB protocol
 - [`docs/03-roadmap.md`](docs/03-roadmap.md) — vertical-slice implementation roadmap
+- [`docs/04-blockers.md`](docs/04-blockers.md) — significant blockers and how they were solved
 
 ## References
 
