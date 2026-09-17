@@ -1,10 +1,11 @@
 # Usage
 
 Practical, copy-pasteable examples for everything `adbcpp` can do today: connect
-over USB, run a shell command, list a directory, work with the ADB key, and use the
-lower-level protocol layers directly. Every example compiles against the library as it
-stands now. For the theory behind them, read [`LEARNING.md`](../LEARNING.md); for how
-the `sync` service works, read [`06-sync-protocol.md`](06-sync-protocol.md).
+over USB, run a shell command, list a directory, pull a file, work with the ADB key,
+and use the lower-level protocol layers directly. Every example compiles against the
+library as it stands now. For the theory behind them, read
+[`LEARNING.md`](../LEARNING.md); for how the `sync` service works, read
+[`06-sync-protocol.md`](06-sync-protocol.md).
 
 ## Linking the Library
 
@@ -164,12 +165,56 @@ v2 entry form uses a 64-bit size.
 
 ### List a Directory Without a Device
 
-To run `list` with no device attached, see
+To run `list` and `pull` with no device attached, see
 [`examples/sync/main.cpp`](../examples/sync/main.cpp). It queues a device's CNXN and
-its `DNT2` responses on the mock transport, calls the real `list`, prints the
-entries, and then prints the `LIS2` request bytes that `list` wrote. It is registered
-with CTest as `example_sync` and runs in CI. The wire format itself is explained in
+its `DNT2`, `DATA`, and `DONE` responses on the mock transport, calls the real
+`list` and `pull`, prints the entries and the pulled contents, and then prints the
+`LIS2` and `RECV` request headers that they wrote. It is registered with CTest as
+`example_sync` and runs in CI. The wire format itself is explained in
 [`06-sync-protocol.md`](06-sync-protocol.md).
+
+## Pull a File
+
+`pull` copies a file from the device to a local path. It writes each `DATA` chunk as
+it arrives, so the file is never held in memory whole and a large file costs no more
+memory than a small one.
+
+```cpp
+#include <filesystem>
+#include <iostream>
+#include <span>
+#include <string>
+
+#include "adbcpp/adbcpp.hpp"
+#include "adbcpp/crypto/adb_key.hpp"
+#include "adbcpp/sync.hpp"
+#include "adbcpp/usb/usb_transport.hpp"
+
+int main()
+{
+    adbcpp::usb::DeviceId id;
+    id.vendor_id = 0x22D9;
+    id.product_id = 0x2769;
+
+    adbcpp::usb::UsbTransport transport(id);
+    const auto key = adbcpp::crypto::Key::load_or_generate();
+    const std::string &public_key_string = key.public_key();
+    const auto public_key = std::span(reinterpret_cast<const std::byte *>(public_key_string.data()),
+                                     public_key_string.size());
+
+    adbcpp::Connection connection(transport, public_key,
+                                  [&key](std::span<const std::byte> token) { return key.sign(token); });
+
+    // The local file is created or truncated, and its directory must exist.
+    adbcpp::pull(connection, "/sdcard/Download/report.pdf", "report.pdf");
+
+    transport.close();
+    return 0;
+}
+```
+
+A transfer that fails part way through leaves the partial file in place, so the
+caller can decide whether to retry or remove it.
 
 ## Inspect the ADB Key
 
@@ -481,6 +526,7 @@ int main()
 | List a directory                        | `adbcpp::list(connection, "/sdcard")`                    |
 | Check if an entry is a directory         | `entry.is_directory()`                                   |
 | Check if an entry is a regular file       | `entry.is_regular()`                                     |
+| Pull a file from the device              | `adbcpp::pull(connection, "/sdcard/a", "a")`              |
 | Open a service manually                | `adbcpp::Stream stream(connection, "shell:echo hello")`   |
 | Read a stream until the device closes    | `stream.read_all()`                                     |
 | Read an exact number of bytes            | `stream.read(buffer)`                                    |
@@ -507,9 +553,12 @@ int main()
   requested, and `Session` handles that; do not assume one read is one message.
 - **`run` merges stdout and stderr.** They arrive interleaved, so the order is not
   guaranteed. `CommandResult` does not separate them.
-- **This is not a full `adb` replacement yet.** The shell service and `sync`-based
-  directory listing are exposed; file transfer, install, and app control are still on
-  the roadmap ([`03-roadmap.md`](03-roadmap.md)).
+- **This is not a full `adb` replacement yet.** The shell service, `sync`-based
+  directory listing, and pulling a file are exposed; pushing, install, and app control
+  are still on the roadmap ([`03-roadmap.md`](03-roadmap.md)).
+- **A pulled file may be partial.** `pull` creates or truncates the local file before
+  the transfer starts, so a transfer that fails leaves the chunks received so far
+  behind. The caller decides whether to retry or remove it.
 - **A stream ignores frames for other streams.** Frames carry the recipient's local id
   in `arg1`, and the device can send a `CLOSE` for a previous stream while the next
   one opens, so `Stream` skips any frame whose `arg1` is not its own local id. Do not

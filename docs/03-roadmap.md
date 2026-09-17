@@ -44,7 +44,15 @@ Two more protocol details were found while getting `list` working:
 
 The wire format is documented in [`06-sync-protocol.md`](06-sync-protocol.md), and `examples/sync/main.cpp` runs the whole exchange against the mock transport, so `list` is exercised with no device attached.
 
-**Next:** Slice 3 — pull a file over the `sync` service.
+**Slice 3 — complete.** A file is copied from the device with the `sync` `RECV` request:
+
+- `RECV` request and the `DATA` chunks that follow, ending with `DONE`.
+- Each chunk is written to the local file as it arrives, so a file of any size costs no more memory than a small one.
+- Public API: `pull(connection, remote, local)`.
+
+A transfer's `DONE` is a `sync_data` record, not the DENT struct that ends a listing, so only its size is read; see [`06-sync-protocol.md`](06-sync-protocol.md).
+
+**Next:** Slice 4 — push a file over the `sync` service.
 
 ## Slice 0 — Walking Skeleton
 

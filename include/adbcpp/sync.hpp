@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -57,5 +58,20 @@ struct ADBCPP_API DirEntry
  * reports a per-entry error instead of silently dropping entries.
  */
 std::vector<DirEntry> ADBCPP_API list(Connection &connection, std::string_view path);
+
+/**
+ * @brief Copies a file from the device to `local_path`.
+ *
+ * Opens the `sync:` service, sends a RECV request for `remote_path`, and writes each
+ * `DATA` chunk to `local_path` as it arrives, so the file is never held in memory.
+ * The device ends the transfer with `DONE`. A request the device rejects arrives as a
+ * `FAIL` message and is thrown as a `std::runtime_error`.
+ *
+ * `local_path` is created if it does not exist and truncated if it does, and its
+ * parent directory must already exist. A transfer that fails part way through leaves
+ * the partial file behind, exactly as adb leaves it, so the caller can decide whether
+ * to retry or remove it.
+ */
+void ADBCPP_API pull(Connection &connection, std::string_view remote_path, const std::filesystem::path &local_path);
 
 } // namespace adbcpp

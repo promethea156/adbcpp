@@ -52,6 +52,7 @@ Requests:
 | ---------- | ------ | ------------------------------ |
 | `kListV1`  | `LIST` | list a directory               |
 | `kListV2`  | `LIS2` | list a directory, v2 entries    |
+| `kRecvV1`  | `RECV` | retrieve a file                |
 | `kQuit`    | `QUIT` | leave sync mode                |
 
 Responses:
@@ -60,7 +61,8 @@ Responses:
 | ---------- | ------ | ------------------------------ |
 | `kDentV1`  | `DENT` | a directory entry              |
 | `kDentV2`  | `DNT2` | a directory entry, v2          |
-| `kDone`    | `DONE` | the listing is over             |
+| `kData`    | `DATA` | a chunk of a file              |
+| `kDone`    | `DONE` | the listing or transfer is over |
 | `kFail`    | `FAIL` | the request was rejected       |
 
 For `LIST`/`LIS2` the `data` is the path, **not** null-terminated, and it must be
@@ -130,25 +132,97 @@ Its body is still present and must still be read, even though it carries nothing
 `FAIL` is different again: its body is a four-byte length followed by the reason
 string, exactly like the request format.
 
-## How `list` is implemented
+## Pulling a file
 
-[`src/sync.cpp`](../src/sync.cpp) is short. Read it alongside this list:
+`RECV` retrieves a file. Its request is the same `id` + `path_length` + `path` form
+as `LIST`, and the response is a stream of chunks:
+
+```
+ 0               4               8
+ +---------------+---------------+-----------------------+
+ |      DATA     |     size      |    size bytes ...     |
+ +---------------+---------------+-----------------------+
+```
+
+Each `DATA` chunk carries at most 64 KiB, which is `SYNC_DATA_MAX` in
+`file_sync_protocol.h`. The device repeats `DATA` until the whole file has been
+sent, then sends `DONE`:
+
+```
+ 0               4
+ +---------------+---------------+
+ |      DONE     |   (ignored)   |
+ +---------------+---------------+
+```
+
+`DONE` here is a `sync_data` record, the same shape as `DATA`, **not** the DENT
+struct that ends a listing. Its size field is ignored, but it still has to be read. A
+request the device cannot satisfy, for example a missing file, arrives as `FAIL`
+instead, exactly as it does for `LIST`.
+
+### Worked example: pulling `/sdcard/file.txt`
+
+The request is the same shape as `LIST`, with the `RECV` id:
+
+```
+52 45 43 56   10 00 00 00   2f 73 64 63 61 72 64 2f 66 69 6c 65 2e 74 78 74
+R  E  C  V    16 (LE)         /  s  d  c  a  r  d  /  f  i  l  e  .  t  x  t
+```
+
+The device then answers with the file's chunks and `DONE`:
+
+```
+44 41 54 41   06 00 00 00   68 65 6c 6c 6f 20      DATA "hello "
+44 41 54 41   06 00 00 00   77 6f 72 6c 64 0a      DATA "world\n"
+44 4f 4e 45   00 00 00 00                           DONE
+```
+
+### RECV v2
+
+`RCV2` is the v2 form. It takes the same `id` + `path_length` + `path` request,
+followed by an extra 8-byte setup packet, `sync_recv_v2 { id, flags }`, that selects a
+compression codec (`kSyncFlagBrotli`, `kSyncFlagLz4`, or `kSyncFlagZstd`). With
+`flags = 0` the transfer is byte-for-byte the v1 form. `pull` uses v1 because it does
+not implement decompression; the `sendrecv_v2` feature that the device advertises only
+matters when a codec is requested.
+
+## How `list` and `pull` are implemented
+
+[`src/sync.cpp`](../src/sync.cpp) is short. Read it alongside this list.
+
+`list`:
 
 1. Reject a path longer than 1024 bytes up front, because the daemon would reject
-   it anyway (`src/sync.cpp:80`).
+   it anyway (`src/sync.cpp:126`).
 2. Choose the v1 or v2 form from `connection.supports_feature("ls_v2")`
-   (`src/sync.cpp:87`). The match is exact, like adb's.
+   (`src/sync.cpp:133`). The match is exact, like adb's.
 3. Open the `sync:` stream. This is the same `Stream` that `shell:` uses
-   (`src/sync.cpp:90`).
-4. Write the `LIST`/`LIS2` request as one write (`src/sync.cpp:94`).
+   (`src/sync.cpp:136`).
+4. Write the `LIST`/`LIS2` request as one write (`src/sync.cpp:139`).
 5. Loop: read a four-byte id, then the body, then the name, and build a
-   `DirEntry`. `FAIL` throws, `DONE` ends the loop (`src/sync.cpp:105`).
+   `DirEntry`. `FAIL` throws, `DONE` ends the loop (`src/sync.cpp:145`).
 6. Write `QUIT` to leave sync mode, after which the daemon closes the stream
-   (`src/sync.cpp:175`).
+   (`src/sync.cpp:207`).
 
 The loop reads the body **before** it checks the id, so that every path consumes
 exactly the bytes the daemon sent. That is what keeps the stream aligned for the
 next response; a short read here would desynchronize the whole listing.
+
+`pull`:
+
+1. Reject a path longer than 1024 bytes, the same check as `list`
+   (`src/sync.cpp:216`).
+2. Open the `sync:` stream and write the `RECV` request
+   (`src/sync.cpp:220`, `src/sync.cpp:225`).
+3. Open the local file before the transfer starts, so a failure leaves a partial
+   file rather than a missing one (`src/sync.cpp:229`).
+4. Loop: read the id and the chunk size, write each `DATA` chunk to the file as it
+   arrives, and stop at `DONE` (`src/sync.cpp:235`). A chunk larger than 64 KiB is
+   rejected rather than trusted (`src/sync.cpp:265`).
+5. Write `QUIT` (`src/sync.cpp:281`).
+
+Because each chunk is written as it arrives, the file is never held in memory whole,
+so pulling a large file costs no more memory than pulling a small one.
 
 ## Two details that are not in the format
 
@@ -184,9 +258,10 @@ known in advance.
 
 ## Try it without a device
 
-[`examples/sync/main.cpp`](../examples/sync/main.cpp) runs a full `list` exchange
-against the mock transport, so the real `list` code executes with no device attached.
-It prints the entries and the `LIS2` request that `list` wrote:
+[`examples/sync/main.cpp`](../examples/sync/main.cpp) runs a full `list` and `pull`
+exchange against the mock transport, so the real `list` and `pull` code executes with no
+device attached. It prints the entries, the pulled file's contents, and the `LIS2` and
+`RECV` request headers that `list` and `pull` wrote:
 
 ```
 cmake --build build --config Release --target adbcpp_sync_example

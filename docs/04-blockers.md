@@ -176,3 +176,12 @@ Each entry has the same shape:
 - **Cause**: mbedTLS's `MBEDTLS_FATAL_WARNINGS` option defaults to `ON` and adds `-Werror`. A newer AppleClang enables `-Wunterminated-string-initialization` by default, and mbedTLS's TLS 1.3 labels are deliberately not NUL-terminated (the array is sized to `sizeof(label) - 1`), so the warning fires and becomes an error.
 - **Resolution**: Set `MBEDTLS_FATAL_WARNINGS OFF` before fetching mbedTLS (`src/crypto/CMakeLists.txt`). The warning is a false positive in mbedTLS, and a dependency's warnings should not be able to fail this project's build.
 - **Note**: This is a compiler-version effect, not a code bug: the same mbedTLS version builds on Windows and on the older Clang that ships with the older macOS runner images. Disabling fatal warnings for third-party code is the conventional fix.
+
+## File Transfer
+
+### 23. A pulled file must be closed before it can be removed on Windows
+
+- **Symptom**: The device-free sync example crashed with `STATUS_STACK_BUFFER_OVERRUN` after a successful `pull`, with no output, while the same code passed as a unit test.
+- **Cause**: The example read the pulled file back and then called `std::filesystem::remove` while the `std::ifstream` was still open. Windows refuses to delete a file that another handle has open, so `remove` threw `std::filesystem::filesystem_error`, and the unhandled exception terminated the process. The unit test helper returned the string and closed the stream on return, so it was unaffected.
+- **Resolution**: Read the file inside its own scope so the stream is destroyed before `remove` runs.
+- **Note**: `std::filesystem::remove` has both a throwing and an `error_code` overload; this is a case where the throwing one is the less forgiving default. The same applies to renaming or replacing a file that is still open.

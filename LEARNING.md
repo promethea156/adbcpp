@@ -260,7 +260,7 @@ that it has to keep reading across `WRTE` boundaries.
 1. [`docs/06-sync-protocol.md`](docs/06-sync-protocol.md) — the wire format,
    field by field.
 2. [`include/adbcpp/sync.hpp`](include/adbcpp/sync.hpp) and
-   [`src/sync.cpp`](src/sync.cpp) — `list` and `DirEntry`.
+   [`src/sync.cpp`](src/sync.cpp) — `list`, `pull`, and `DirEntry`.
 3. AOSP's `docs/dev/sync.md`:
    <https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/docs/dev/sync.md>
 4. Blockers 17 and 18 in [`docs/04-blockers.md`](docs/04-blockers.md).
@@ -270,6 +270,12 @@ of a `WRTE`. Its requests are an id and a length, and the path is **not**
 null-terminated, unlike an `OPEN` payload. The v2 form (`LIS2`/`DNT2`) is chosen
 when the device advertises `ls_v2`, and it carries a 64-bit size and a per-entry
 error.
+
+`LIST` and `RECV` share that request shape but answer differently. A listing ends
+with a `DONE` that is a **full DENT struct**, so its body still has to be read. A
+transfer ends with a `DONE` that is a `sync_data` record, whose size is ignored, and
+it arrives as a series of `DATA` chunks of at most 64 KiB. Note that `pull` writes
+each chunk to the file as it arrives rather than collecting the file in memory.
 
 **Run.**
 
@@ -285,9 +291,11 @@ fields go missing and why.
 **Checkpoint.**
 
 - Why is the path not null-terminated when an `OPEN` payload is?
-- Why must `DONE`'s body still be read even though it carries no data?
+- Why must a listing's `DONE` body still be read, when a transfer's `DONE` size can
+  be ignored?
 - Why does the device answer a sync request with an `OKAY`, and why did the shell
   service never reveal that?
+- Why does `pull` write each chunk as it arrives instead of returning the file's bytes?
 
 ## Module 8 — shell_v2
 
@@ -347,17 +355,18 @@ real device, and observe the failure. Then explain why the default is off.
 **Goal.** Choose the next slice and apply everything you have learned.
 
 **Read.** [`docs/03-roadmap.md`](docs/03-roadmap.md) — the remaining slices:
-pull, push, install/uninstall, app control, and finally TCP plus silent
-authentication.
+push, install/uninstall, app control, and finally TCP plus silent authentication.
 
-**Exercise.** Implement Slice 3 (pull a file with the sync `RECV` request, whose
-chunks are `DATA` messages followed by `DONE`). The `sync` service is documented
-in AOSP's `docs/dev/sync.md`:
+**Exercise.** Implement Slice 4 (push a file with the sync `STAT` and `SEND`
+requests, whose chunks are `DATA` messages followed by a `DONE` whose size is the
+file's modification time). The `sync` service is documented in AOSP's
+`docs/dev/sync.md`:
 <https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/docs/dev/sync.md>
 
-Note how much of the work is already done: `Stream::read` reads an exact byte
-count across `WRTE` messages, which is exactly what the chunked `RECV` response
-needs. Only the request/response framing is new.
+Note how much of the work is already done: `pull` already reads a chunked transfer
+with `Stream::read`, and `SEND` is the same shape in the other direction. The new
+part is that the device acknowledges the final `DONE` with an `OKAY`, which
+`Stream` already skips for you.
 
 **Checkpoint.**
 
@@ -411,4 +420,6 @@ When you have finished, you should be able to:
 - Implement a new service on top of `Stream` without touching the lower layers.
 - List a directory over the `sync` service and explain how its binary framing
   differs from the ADB protocol.
+- Pull a file over the `sync` service and explain why a transfer's `DONE` differs
+  from a listing's.
 - Capture a real `adb` session and use it as a baseline to debug your own.

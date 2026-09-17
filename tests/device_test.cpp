@@ -1,6 +1,9 @@
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <span>
 #include <string>
 
@@ -65,10 +68,35 @@ int main()
 
         // `/` is always present and always holds at least `sdcard`.
         const auto entries = adbcpp::list(connection, "/");
-        transport.close();
         if (entries.empty())
         {
             std::cerr << "the listing of / is empty\n";
+            return 1;
+        }
+
+        // Pull a file back: create one in the temporary directory, copy it over
+        // sync, and compare the contents. `run` always goes through `sh -c`, so a
+        // redirection works.
+        const std::string remote = "/data/local/tmp/adbcpp_device_pull_test.txt";
+        adbcpp::run(connection, "echo adbcpp-pull-test > " + remote);
+
+        const auto local = std::filesystem::temp_directory_path() / "adbcpp_device_pull_test.txt";
+        adbcpp::pull(connection, remote, local);
+
+        // The file has to be closed before it can be removed, which Windows
+        // enforces.
+        std::string contents;
+        {
+            std::ifstream pulled(local, std::ios::binary);
+            contents.assign(std::istreambuf_iterator<char>(pulled), std::istreambuf_iterator<char>());
+        }
+        adbcpp::run(connection, "rm -f " + remote);
+        std::filesystem::remove(local);
+
+        transport.close();
+        if (contents != "adbcpp-pull-test\n")
+        {
+            std::cerr << "unexpected pulled contents: " << contents << '\n';
             return 1;
         }
         return 0;

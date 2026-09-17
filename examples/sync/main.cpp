@@ -2,8 +2,11 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <span>
 #include <string>
 #include <string_view>
@@ -13,18 +16,20 @@
 #include "adbcpp/sync.hpp"
 #include "adbcpp/testing/mock_transport.hpp"
 
-// A `list` round-trip with no device attached. The mock transport queues the
-// bytes a device would send, so the real `list` code runs end to end and both
-// halves of the exchange are visible. The protocol is explained in
+// A `list` and `pull` round-trip with no device attached. The mock transport
+// queues the bytes a device would send, so the real `list` and `pull` code runs end
+// to end and both halves of each exchange are visible. The protocol is explained in
 // `docs/06-sync-protocol.md`.
 namespace
 {
 
 // A stream is keyed by two ids, and the ids are relative to the sender, so each
-// side's local id is the other's remote id. These are the values a real device
-// uses for the first stream after the connection.
+// side's local id is the other's remote id. These are the values a real device uses
+// for the first two streams after the connection.
 constexpr std::uint32_t kDeviceId = 7;
 constexpr std::uint32_t kLocalId = 2;
+constexpr std::uint32_t kSecondDeviceId = 8;
+constexpr std::uint32_t kSecondLocalId = 3;
 
 // Every binary integer in sync mode is little-endian, like the ADB header.
 void write_u32_le(std::byte *out, std::uint32_t value)
@@ -93,11 +98,32 @@ std::vector<std::byte> dent_v2(std::uint32_t mode, std::uint64_t size, const std
     return dent;
 }
 
-// DONE is a full DENT struct whose id is DONE.
+// DONE for a listing is a full DENT struct whose id is DONE.
 std::vector<std::byte> done_v2()
 {
     std::vector<std::byte> done(76);
     write_u32_le(done.data(), sync_id("DONE"));
+    return done;
+}
+
+// One RECV chunk: id DATA, the chunk size, and the bytes.
+std::vector<std::byte> data_chunk(const std::string &text)
+{
+    std::vector<std::byte> chunk(8 + text.size());
+    write_u32_le(chunk.data(), sync_id("DATA"));
+    write_u32_le(chunk.data() + 4, static_cast<std::uint32_t>(text.size()));
+    std::copy_n(reinterpret_cast<const std::byte *>(text.data()), static_cast<std::ptrdiff_t>(text.size()),
+                chunk.begin() + 8);
+    return chunk;
+}
+
+// DONE for a transfer is `sync_data { id, size }`, not a DENT struct; the size is
+// ignored.
+std::vector<std::byte> recv_done()
+{
+    std::vector<std::byte> done(8);
+    write_u32_le(done.data(), sync_id("DONE"));
+    write_u32_le(done.data() + 4, 0u);
     return done;
 }
 
@@ -136,6 +162,19 @@ int main()
     const auto done = done_v2();
     feed(transport, message(adbcpp::protocol::kWrte, kDeviceId, kLocalId, done), done);
 
+    // 4. The device accepts the OPEN of a second `sync:` stream. `list` leaves the
+    //    first one with QUIT, so `pull` gets a fresh stream and its own ids.
+    feed(transport, message(adbcpp::protocol::kOkay, kSecondDeviceId, kSecondLocalId));
+
+    // 5. The file: two DATA chunks and DONE.
+    for (const auto &chunk : {data_chunk("hello "), data_chunk("world\n")})
+    {
+        feed(transport, message(adbcpp::protocol::kWrte, kSecondDeviceId, kSecondLocalId, chunk), chunk);
+    }
+    const auto recv_done_bytes = recv_done();
+    feed(transport, message(adbcpp::protocol::kWrte, kSecondDeviceId, kSecondLocalId, recv_done_bytes),
+         recv_done_bytes);
+
     // The connection performs the handshake against the queued CNXN.
     adbcpp::Connection connection(transport);
 
@@ -145,16 +184,33 @@ int main()
         std::cout << "  " << (entry.is_directory() ? 'd' : '-') << ' ' << entry.size << ' ' << entry.name << '\n';
     }
 
-    // Show the LIS2 request that `list` wrote, to make the wire format concrete.
-    // It sits in the byte stream after the CNXN and OPEN headers.
-    const auto &written = transport.written();
-    std::array<std::byte, 4> list_id{};
-    write_u32_le(list_id.data(), sync_id("LIS2"));
-    const auto found = std::search(written.begin(), written.end(), list_id.begin(), list_id.end());
-    if (found != written.end())
+    // `pull` writes the chunks to a local file as they arrive.
+    const auto local = std::filesystem::temp_directory_path() / "adbcpp_sync_example.txt";
+    adbcpp::pull(connection, "/sdcard/file.txt", local);
+
+    // The file has to be closed before it can be removed, which Windows enforces.
+    std::string contents;
     {
-        const auto offset = static_cast<std::size_t>(std::distance(written.begin(), found));
-        print_bytes("the host wrote LIS2", std::span(written).subspan(offset, 8 + 7));
+        std::ifstream pulled(local, std::ios::binary);
+        contents.assign(std::istreambuf_iterator<char>(pulled), std::istreambuf_iterator<char>());
+    }
+    std::filesystem::remove(local);
+    std::cout << "pulled /sdcard/file.txt (" << contents.size() << " bytes): " << contents;
+
+    // Show the LIS2 and RECV request headers that `list` and `pull` wrote, to make
+    // the wire format concrete. Each is an id and a path length, and sits in the byte
+    // stream after the ADB headers.
+    const auto &written = transport.written();
+    for (const char *id : {"LIS2", "RECV"})
+    {
+        std::array<std::byte, 4> id_bytes{};
+        write_u32_le(id_bytes.data(), sync_id(id));
+        const auto found = std::search(written.begin(), written.end(), id_bytes.begin(), id_bytes.end());
+        if (found != written.end())
+        {
+            const auto offset = static_cast<std::size_t>(std::distance(written.begin(), found));
+            print_bytes(std::string("the host wrote ") + id, std::span(written).subspan(offset, 8));
+        }
     }
 
     return 0;

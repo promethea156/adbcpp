@@ -1,4 +1,5 @@
 #include <cstddef>
+#include <filesystem>
 #include <iostream>
 #include <span>
 #include <string>
@@ -11,9 +12,9 @@
 #include "adbcpp/usb/usb_transport.hpp"
 
 // A session over USB: open the ADB interface, authenticate with the key shared
-// with adb, then either list a directory (`--list <path>`) or run a shell command
-// (the default). Both mirror what `adb` does, so the two are interchangeable on
-// the device.
+// with adb, then either list a directory (`--list <path>`), pull a file
+// (`--pull <remote> <local>`), or run a shell command (the default). All of them
+// mirror what `adb` does, so they are interchangeable on the device.
 int main(int argc, char **argv)
 {
     // The vendor/product id of the target device. Every Android device exposes its
@@ -64,6 +65,14 @@ int main(int argc, char **argv)
             {
                 std::cout << (entry.is_directory() ? 'd' : '-') << ' ' << entry.size << ' ' << entry.name << '\n';
             }
+            transport.close();
+            return 0;
+        }
+
+        if (argc > 3 && std::string_view(argv[1]) == "--pull")
+        {
+            adbcpp::pull(connection, argv[2], argv[3]);
+            std::cout << "pulled " << argv[2] << " to " << argv[3] << '\n';
             transport.close();
             return 0;
         }

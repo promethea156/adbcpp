@@ -4,6 +4,8 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -24,12 +26,15 @@ namespace
 //   https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/file_sync_protocol.h
 //
 // `kListV1` and `kListV2` are the two LIST requests, `kDentV1` and `kDentV2`
-// the matching directory entries, `kDone` ends a listing, `kFail` rejects the
-// request, and `kQuit` leaves sync mode.
+// the matching directory entries, `kRecvV1` retrieves a file, `kData` carries one
+// chunk of it, `kDone` ends a listing or a transfer, `kFail` rejects the request,
+// and `kQuit` leaves sync mode.
 constexpr std::uint32_t kListV1 = protocol::make_command('L', 'I', 'S', 'T');
 constexpr std::uint32_t kListV2 = protocol::make_command('L', 'I', 'S', '2');
 constexpr std::uint32_t kDentV1 = protocol::make_command('D', 'E', 'N', 'T');
 constexpr std::uint32_t kDentV2 = protocol::make_command('D', 'N', 'T', '2');
+constexpr std::uint32_t kRecvV1 = protocol::make_command('R', 'E', 'C', 'V');
+constexpr std::uint32_t kData = protocol::make_command('D', 'A', 'T', 'A');
 constexpr std::uint32_t kDone = protocol::make_command('D', 'O', 'N', 'E');
 constexpr std::uint32_t kFail = protocol::make_command('F', 'A', 'I', 'L');
 constexpr std::uint32_t kQuit = protocol::make_command('Q', 'U', 'I', 'T');
@@ -50,6 +55,11 @@ constexpr std::size_t kMaxNameLength = 255;
 
 // The `ls_v2` feature selects the v2 DENT form, exactly like adb.
 constexpr std::string_view kLsV2Feature = "ls_v2";
+
+// A RECV transfer arrives as `DATA` chunks of at most this many bytes, which is
+// `SYNC_DATA_MAX` in `file_sync_protocol.h`. The daemon never exceeds it, so a
+// larger size means the stream is not what it claims to be.
+constexpr std::uint32_t kMaxChunkSize = 64 * 1024;
 
 // Every binary integer in sync mode is little-endian, like the ADB header.
 void write_u32_le(std::byte *out, std::uint32_t value) noexcept
@@ -73,6 +83,42 @@ std::uint64_t read_u64_le(const std::byte *in) noexcept
     return static_cast<std::uint64_t>(read_u32_le(in)) | (static_cast<std::uint64_t>(read_u32_le(in + 4)) << 32);
 }
 
+// Writes a request that carries a path: the id, the path length, and the path
+// itself, which is not null-terminated. A sync request is not an ADB message, so it
+// has no 24-byte header.
+void write_path_request(Stream &stream, std::uint32_t id, std::string_view path)
+{
+    std::vector<std::byte> request(kRequestSize + path.size());
+    write_u32_le(request.data(), id);
+    write_u32_le(request.data() + 4, static_cast<std::uint32_t>(path.size()));
+    std::copy_n(reinterpret_cast<const std::byte *>(path.data()), static_cast<std::ptrdiff_t>(path.size()),
+                request.begin() + static_cast<std::ptrdiff_t>(kRequestSize));
+    stream.write(request);
+}
+
+// FAIL is `sync_status { id, msglen }` followed by the reason. The daemon sends it
+// when the request itself is rejected, for example when the path is too long or the
+// file cannot be opened.
+[[noreturn]] void throw_sync_fail(Stream &stream)
+{
+    std::array<std::byte, 4> length_bytes{};
+    stream.read(length_bytes);
+    const std::uint32_t length = read_u32_le(length_bytes.data());
+    std::vector<std::byte> reason(length);
+    stream.read(reason);
+    throw std::runtime_error("adbcpp: the sync request failed: " +
+                             std::string(reinterpret_cast<const char *>(reason.data()), reason.size()));
+}
+
+// Writes the `QUIT` request, which leaves sync mode; the daemon then closes the
+// stream.
+void write_quit(Stream &stream)
+{
+    std::array<std::byte, kRequestSize> quit{};
+    write_u32_le(quit.data(), kQuit);
+    stream.write(quit);
+}
+
 } // namespace
 
 std::vector<DirEntry> list(Connection &connection, std::string_view path)
@@ -89,14 +135,8 @@ std::vector<DirEntry> list(Connection &connection, std::string_view path)
     // Requesting the `sync:` service puts the stream in sync mode.
     Stream stream(connection, "sync:");
 
-    // LIST(id, path_length, "path"). A sync request is not an ADB message, so it
-    // has no 24-byte header, and the path is not null-terminated.
-    std::vector<std::byte> request(kRequestSize + path.size());
-    write_u32_le(request.data(), v2 ? kListV2 : kListV1);
-    write_u32_le(request.data() + 4, static_cast<std::uint32_t>(path.size()));
-    std::copy_n(reinterpret_cast<const std::byte *>(path.data()), static_cast<std::ptrdiff_t>(path.size()),
-                request.begin() + static_cast<std::ptrdiff_t>(kRequestSize));
-    stream.write(request);
+    // LIST(id, path_length, "path").
+    write_path_request(stream, v2 ? kListV2 : kListV1, path);
 
     const std::size_t body_size = v2 ? kDentV2BodySize : kDentV1BodySize;
     const std::size_t name_length_offset = v2 ? kDentV2NameLengthOffset : kDentV1NameLengthOffset;
@@ -109,18 +149,11 @@ std::vector<DirEntry> list(Connection &connection, std::string_view path)
         stream.read(id_bytes);
         const std::uint32_t id = read_u32_le(id_bytes.data());
 
-        // FAIL is `sync_data { id, size }` followed by the reason, which the
-        // daemon sends when the request itself is rejected, for example when the
-        // path is too long. Its body is a length, not a DENT body.
+        // The request itself was rejected, for example because the path is too
+        // long. Its body is a length and a reason, not a DENT body.
         if (id == kFail)
         {
-            std::array<std::byte, 4> length_bytes{};
-            stream.read(length_bytes);
-            const std::uint32_t length = read_u32_le(length_bytes.data());
-            std::vector<std::byte> reason(length);
-            stream.read(reason);
-            throw std::runtime_error("adbcpp: the sync request failed: " +
-                                     std::string(reinterpret_cast<const char *>(reason.data()), reason.size()));
+            throw_sync_fail(stream);
         }
 
         // DONE is a full DENT struct whose id is DONE, so its body is read too
@@ -171,12 +204,81 @@ std::vector<DirEntry> list(Connection &connection, std::string_view path)
         entries.push_back(std::move(entry));
     }
 
-    // QUIT leaves sync mode, after which the daemon closes the stream.
-    std::array<std::byte, kRequestSize> quit{};
-    write_u32_le(quit.data(), kQuit);
-    stream.write(quit);
+    write_quit(stream);
 
     return entries;
+}
+
+void pull(Connection &connection, std::string_view remote_path, const std::filesystem::path &local_path)
+{
+    if (remote_path.size() > kMaxPathLength)
+    {
+        throw std::runtime_error("adbcpp: the path is longer than the sync limit of 1024 bytes");
+    }
+
+    // Requesting the `sync:` service puts the stream in sync mode.
+    Stream stream(connection, "sync:");
+
+    // RECV(id, path_length, "path"), the same request layout as LIST. The v1 form
+    // is used because the v2 form only adds compression flags, which this does not
+    // need; both send the file as `DATA` chunks.
+    write_path_request(stream, kRecvV1, remote_path);
+
+    // Create or truncate the local file before the transfer starts, so a failure
+    // leaves a partial file rather than a missing one.
+    std::ofstream output(local_path, std::ios::binary | std::ios::trunc);
+    if (!output)
+    {
+        throw std::runtime_error("adbcpp: cannot open the local file for writing");
+    }
+
+    while (true)
+    {
+        // Every response starts with a four-byte id.
+        std::array<std::byte, 4> id_bytes{};
+        stream.read(id_bytes);
+        const std::uint32_t id = read_u32_le(id_bytes.data());
+
+        if (id == kFail)
+        {
+            throw_sync_fail(stream);
+        }
+
+        // DATA and DONE are both `sync_data { id, size }`: DATA is followed by
+        // `size` bytes, and DONE carries nothing and ends the transfer.
+        std::array<std::byte, 4> size_bytes{};
+        stream.read(size_bytes);
+        const std::uint32_t size = read_u32_le(size_bytes.data());
+
+        if (id == kDone)
+        {
+            break;
+        }
+
+        if (id != kData)
+        {
+            throw std::runtime_error("adbcpp: unexpected sync response");
+        }
+
+        // The daemon caps a chunk at SYNC_DATA_MAX, so a larger one is not a
+        // chunk of a file.
+        if (size > kMaxChunkSize)
+        {
+            throw std::runtime_error("adbcpp: the sync chunk is larger than 64 KiB");
+        }
+
+        // Each chunk is written as it arrives, so the file is never held in
+        // memory whole.
+        std::vector<std::byte> chunk(size);
+        stream.read(chunk);
+        output.write(reinterpret_cast<const char *>(chunk.data()), static_cast<std::streamsize>(chunk.size()));
+        if (!output)
+        {
+            throw std::runtime_error("adbcpp: failed to write the local file");
+        }
+    }
+
+    write_quit(stream);
 }
 
 } // namespace adbcpp
