@@ -4,6 +4,8 @@
 
 Never commit or push without the user's explicit approval. Do not run `git commit`, `git push`, `git tag`, or any other command that changes remote state unless the user has clearly asked for it in the current request. Preparing changes and then asking is fine.
 
+When asking for approval, show the proposed commit message and the list of files that would be included, so the user can review exactly what will be committed.
+
 ## Commit Messages
 
 All commits MUST follow the [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/#specification) specification.
