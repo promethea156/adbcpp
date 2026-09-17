@@ -1,5 +1,6 @@
 #include "adbcpp/connection.hpp"
 
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -7,6 +8,20 @@
 #include "adbcpp/protocol/commands.hpp"
 
 namespace adbcpp {
+namespace {
+
+protocol::Message make_auth(std::uint32_t type,
+                           std::span<const std::byte> payload) {
+  protocol::Message auth;
+  auth.command = protocol::kAuth;
+  auth.arg0 = type;
+  auth.data_length = payload.size();
+  auth.data_crc32 = protocol::Message::compute_crc32(payload);
+  auth.magic = protocol::Message::compute_magic(auth.command);
+  return auth;
+}
+
+} // namespace
 
 Connection::Connection(Transport &transport,
                         std::span<const std::byte> public_key,
@@ -29,30 +44,23 @@ Connection::Connection(Transport &transport,
   if (frame.header.command == protocol::kAuth) {
     if (signer) {
       const auto signature = signer(frame.payload);
-      protocol::Message auth;
-      auth.command = protocol::kAuth;
-      auth.arg0 = protocol::kAuthSignature;
-      auth.data_length = signature.size();
-      auth.data_crc32 = protocol::Message::compute_crc32(signature);
-      auth.magic = protocol::Message::compute_magic(auth.command);
-      session_.send(auth, signature);
-    } else {
+      session_.send(make_auth(protocol::kAuthSignature, signature), signature);
+      frame = session_.receive();
+    }
+
+    // The device did not recognize the signature; offer the public key so it can
+    // ask the user to authorize it, exactly like adb.
+    if (frame.header.command == protocol::kAuth) {
       if (public_key.empty()) {
         throw std::runtime_error(
-            "adbcpp: device requires authentication but no key was given");
+            "adbcpp: the device rejected the signature and no public key is "
+            "available to request authorization");
       }
       std::vector<std::byte> key(public_key.begin(), public_key.end());
       key.push_back(std::byte{0});
-
-      protocol::Message auth;
-      auth.command = protocol::kAuth;
-      auth.arg0 = protocol::kAuthPublicKey;
-      auth.data_length = key.size();
-      auth.data_crc32 = protocol::Message::compute_crc32(key);
-      auth.magic = protocol::Message::compute_magic(auth.command);
-      session_.send(auth, key);
+      session_.send(make_auth(protocol::kAuthPublicKey, key), key);
+      frame = session_.receive();
     }
-    frame = session_.receive();
   }
 
   if (frame.header.command != protocol::kCnxn) {
