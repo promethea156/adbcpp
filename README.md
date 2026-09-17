@@ -134,6 +134,7 @@ cmake/                  CMake package configuration
 - [`docs/04-blockers.md`](docs/04-blockers.md) — significant blockers and how they were solved
 - [`docs/05-usage.md`](docs/05-usage.md) — usage guide with copy-pasteable code examples
 - [`docs/06-sync-protocol.md`](docs/06-sync-protocol.md) — the `sync` service wire format and how `list` is built on it
+- [`docs/07-error-model.md`](docs/07-error-model.md) — why nothing throws, and what `Result<T>` carries instead
 
 ## References
 

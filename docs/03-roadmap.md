@@ -50,7 +50,7 @@ A proposal, not a commitment. Nothing below blocks the next slice, and any of it
 
 | Order | Work | Why here |
 | --- | --- | --- |
-| 1 | Decide the [error model](#cross-cutting-concerns) | Slice 6 adds three more public functions, and without a decision each picks its own shape. Cheaper now than after. |
+| 1 | Apply the [error model](07-error-model.md) | Decided; the whole library changes from throwing to returning `Result<T>`. Slice 6 then adds its three functions in the new shape rather than converting them later. |
 | 2 | [Slice 6 — app control](#slice-6--app-control) | Unblocked, and composition again: `am start` and `am force-stop` are shell commands. |
 | 3 | Validate the received header | Small, and it belongs with `Session::receive`, which [Slice 7](#slice-7--tcp-transport) reopens: a partial read becomes normal over TCP. |
 | 4 | State thread safety for `Connection`, `Stream`, and `Key` | Small, and the statements belong with the objects Slices 6 and 7 touch. |
@@ -147,7 +147,7 @@ This slice completes the initial scope. What remains after it is in [Future Impr
 
 Obligations that run through every slice, with the current state of each.
 
-- **Error handling**: a function either returns its outcome or throws, and which one is documented per function. A request the device rejects is a result rather than an error — `stat` returns `std::nullopt`, `install` and `uninstall` return `success == false` — while a transport or stream failure throws `std::runtime_error`. There is no single error type, and `CommandResult` and `PackageResult` overlap; unifying them is [future work](#future-improvements).
+- **Error handling**: every operation that can fail returns a `Result<T>`; nothing in the library throws, and third-party exceptions are caught at the boundary. The rule, the types, and the shape of each command's answer are in [`07-error-model.md`](07-error-model.md).
 - **Testing**: unit tests per module, driven by the mock transport, plus one integration test against a real device. Device-dependent tests live in `adbcpp_device_tests`; when no matching USB device is present they exit with code 77 so CTest reports them as skipped rather than failed, and the USB example prints a warning and exits successfully in the same case.
 - **Logging**: not implemented. When it is, it must be optional, configurable, and must never log keys or payloads.
 - **Thread safety**: only `Transport` states it, and only to say that implementations need not be thread-safe. `Connection`, `Stream`, and `Key` need the same statement.
