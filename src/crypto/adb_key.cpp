@@ -16,6 +16,7 @@
 #include <mbedtls/bignum.h>
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
+#include <mbedtls/md5.h>
 #include <mbedtls/pk.h>
 #include <mbedtls/rsa.h>
 #include <mbedtls/sha1.h>
@@ -143,6 +144,35 @@ Key &Key::operator=(Key &&) noexcept = default;
 
 const std::string &Key::public_key() const noexcept {
   return impl_->public_key;
+}
+
+std::string Key::fingerprint() const {
+  const std::string encoded =
+      impl_->public_key.substr(0, impl_->public_key.find(' '));
+
+  std::vector<unsigned char> blob(4 * ((kBlobSize + 2) / 3) + 1);
+  std::size_t blob_size = 0;
+  if (mbedtls_base64_decode(
+          blob.data(), blob.size(), &blob_size,
+          reinterpret_cast<const unsigned char *>(encoded.data()),
+          encoded.size()) != 0) {
+    throw std::runtime_error("adbcpp: failed to decode the ADB public key");
+  }
+
+  std::array<unsigned char, 16> digest{};
+  mbedtls_md5(blob.data(), blob_size, digest.data());
+
+  constexpr char kHex[] = "0123456789ABCDEF";
+  std::string result;
+  result.reserve(digest.size() * 3);
+  for (std::size_t i = 0; i < digest.size(); ++i) {
+    if (i != 0) {
+      result.push_back(':');
+    }
+    result.push_back(kHex[digest[i] >> 4]);
+    result.push_back(kHex[digest[i] & 0x0F]);
+  }
+  return result;
 }
 
 Key Key::generate() {

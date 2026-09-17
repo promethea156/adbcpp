@@ -36,6 +36,9 @@ public:
   /// The ADB public key string, as sent with AUTH type 3.
   const std::string &public_key() const noexcept;
 
+  /// The MD5 fingerprint of the public key, as shown on the device.
+  std::string fingerprint() const;
+
   /// Signs `token` with the private key (PKCS#1 v1.5, SHA-1).
   std::vector<std::byte> sign(std::span<const std::byte> token) const;
 
