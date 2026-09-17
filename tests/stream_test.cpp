@@ -163,3 +163,19 @@ TEST_CASE("stream sends OKAY for each WRTE", "[stream]")
                    written.begin() + static_cast<std::ptrdiff_t>(before) + static_cast<std::ptrdiff_t>(expected.size()),
                    expected.begin()));
 }
+
+TEST_CASE("stream rejects a write larger than the negotiated maximum payload", "[stream]")
+{
+    adbcpp::testing::MockTransport transport;
+
+    // The device advertises a 4096-byte maximum payload.
+    const auto device = make_message(adbcpp::protocol::kCnxn, 0x01000001u, 4096u);
+    feed_frame(transport, device);
+    feed_frame(transport, make_message(adbcpp::protocol::kOkay, kRemoteId, kLocalId));
+
+    adbcpp::Connection connection(transport);
+    adbcpp::Stream stream(connection, "shell:id");
+
+    const std::vector<std::byte> too_large(4097, std::byte{0});
+    REQUIRE_THROWS(stream.write(too_large));
+}

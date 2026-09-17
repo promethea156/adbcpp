@@ -73,8 +73,14 @@ Stream::~Stream()
 
 void Stream::write(std::span<const std::byte> data)
 {
-    // WRITE(local-id, remote-id, "data"). The payload must fit in one message,
-    // which is why it must not exceed the negotiated maximum payload size.
+    // WRITE(local-id, remote-id, "data"). A single WRTE must fit in one
+    // message. The device advertised the largest payload it accepts in its CNXN
+    // `arg1`, so a larger write is rejected here rather than framing a message
+    // the device cannot read.
+    if (data.size() > connection_->max_data())
+    {
+        throw std::runtime_error("adbcpp: the write is larger than the negotiated maximum payload");
+    }
     connection_->send(make_message(protocol::kWrte, local_id_, remote_id_, data), data);
 }
 
