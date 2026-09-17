@@ -29,6 +29,9 @@ struct ADBCPP_API DeviceId {
  */
 class ADBCPP_API UsbTransport : public Transport {
 public:
+  /// Returns whether a USB device matching `id` is currently present.
+  static bool is_present(DeviceId id);
+
   explicit UsbTransport(DeviceId id);
   ~UsbTransport() override;
 

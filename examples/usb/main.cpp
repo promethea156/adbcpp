@@ -9,11 +9,17 @@
 #include "adbcpp/usb/usb_transport.hpp"
 
 int main() {
-  try {
-    adbcpp::usb::DeviceId id;
-    id.vendor_id = 0x22D9;
-    id.product_id = 0x2769;
+  adbcpp::usb::DeviceId id;
+  id.vendor_id = 0x22D9;
+  id.product_id = 0x2769;
 
+  if (!adbcpp::usb::UsbTransport::is_present(id)) {
+    std::cerr << "warning: no USB device " << std::hex << id.vendor_id << ':'
+              << id.product_id << std::dec << " found; skipping\n";
+    return 0;
+  }
+
+  try {
     adbcpp::usb::UsbTransport transport(id);
 
     const auto key = adbcpp::crypto::Key::load_or_generate();
@@ -22,6 +28,8 @@ int main() {
         reinterpret_cast<const std::byte *>(public_key_string.data()),
         public_key_string.size());
 
+    std::cerr << "connecting; approve the USB debugging prompt on the device "
+                 "if it appears\n";
     adbcpp::Connection connection(
         transport, public_key,
         [&key](std::span<const std::byte> token) { return key.sign(token); });

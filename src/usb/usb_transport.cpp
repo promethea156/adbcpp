@@ -18,7 +18,8 @@ namespace {
 constexpr std::uint8_t kAdbInterfaceClass = 0xFF;
 constexpr std::uint8_t kAdbInterfaceSubClass = 0x42;
 constexpr std::uint8_t kAdbInterfaceProtocol = 0x01;
-constexpr unsigned int kTransferTimeoutMs = 30000;
+// Long enough to wait for the user to approve the on-device debugging prompt.
+constexpr unsigned int kTransferTimeoutMs = 120000;
 constexpr std::size_t kReadBufferSize = 256 * 1024;
 
 [[noreturn]] void fail(const std::string &what, int code) {
@@ -26,7 +27,39 @@ constexpr std::size_t kReadBufferSize = 256 * 1024;
                           libusb_strerror(static_cast<enum libusb_error>(code)));
 }
 
+libusb_device *find_device(libusb_device **devices, ssize_t count,
+                           DeviceId id) {
+  for (ssize_t i = 0; i < count; ++i) {
+    libusb_device_descriptor descriptor{};
+    if (libusb_get_device_descriptor(devices[i], &descriptor) != 0) {
+      continue;
+    }
+    if (descriptor.idVendor == id.vendor_id &&
+        descriptor.idProduct == id.product_id) {
+      return devices[i];
+    }
+  }
+  return nullptr;
+}
+
 } // namespace
+
+bool UsbTransport::is_present(DeviceId id) {
+  libusb_context *context = nullptr;
+  if (libusb_init(&context) != 0) {
+    return false;
+  }
+
+  libusb_device **devices = nullptr;
+  const ssize_t count = libusb_get_device_list(context, &devices);
+  const bool found =
+      count >= 0 && find_device(devices, count, id) != nullptr;
+  if (count >= 0) {
+    libusb_free_device_list(devices, 1);
+  }
+  libusb_exit(context);
+  return found;
+}
 
 struct UsbTransport::Impl {
   libusb_context *context = nullptr;
@@ -63,17 +96,7 @@ UsbTransport::UsbTransport(DeviceId id) : impl_(std::make_unique<Impl>()) {
     fail("libusb_get_device_list", static_cast<int>(count));
   }
 
-  libusb_device *match = nullptr;
-  for (ssize_t i = 0; i < count && match == nullptr; ++i) {
-    libusb_device_descriptor descriptor{};
-    if (libusb_get_device_descriptor(devices[i], &descriptor) != 0) {
-      continue;
-    }
-    if (descriptor.idVendor == id.vendor_id &&
-        descriptor.idProduct == id.product_id) {
-      match = devices[i];
-    }
-  }
+  libusb_device *match = find_device(devices, count, id);
 
   if (match == nullptr) {
     libusb_free_device_list(devices, 1);
