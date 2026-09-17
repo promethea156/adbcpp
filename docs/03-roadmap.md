@@ -111,7 +111,7 @@ Add the `sync` service and directory enumeration.
 Apply throughout every slice.
 
 - **Error handling**: consistent error type/result model; no exceptions leaking across the API boundary unless documented.
-- **Testing**: unit tests per module plus integration tests against a real device/emulator where possible.
+- **Testing**: unit tests per module plus integration tests against a real device/emulator where possible. Device-dependent tests live in `adbcpp_device_tests`; when no matching USB device is present they exit with code 77 so CTest reports them as skipped rather than failed. The USB example prints a warning and exits successfully in the same case.
 - **Logging**: optional, configurable, never leaks sensitive data (keys, payloads).
 - **Thread safety**: document which objects are safe to share.
 - **Documentation**: Doxygen comments kept current as the API grows.
