@@ -161,20 +161,35 @@ std::string encode_public_key(const mbedtls_pk_context &pk)
     return key;
 }
 
+// Returns the user's home directory, or throws if it is not set. On Windows this
+// uses the secure `_dupenv_s`, which allocates the value and must be freed.
+std::filesystem::path home_directory()
+{
+#if defined(_WIN32)
+    char *value = nullptr;
+    std::size_t size = 0;
+    if (_dupenv_s(&value, &size, "USERPROFILE") != 0 || value == nullptr)
+    {
+        throw std::runtime_error("adbcpp: cannot locate the home directory");
+    }
+    const std::filesystem::path home(value);
+    std::free(value);
+    return home;
+#else
+    const char *value = std::getenv("HOME");
+    if (value == nullptr || *value == '\0')
+    {
+        throw std::runtime_error("adbcpp: cannot locate the home directory");
+    }
+    return std::filesystem::path(value);
+#endif
+}
+
 // ADB keeps its keys in `~/.android`, so adb and this library share the same
 // key pair. Sharing the key is what avoids a new authorization prompt.
 std::filesystem::path key_directory()
 {
-#if defined(_WIN32)
-    const char *home = std::getenv("USERPROFILE");
-#else
-    const char *home = std::getenv("HOME");
-#endif
-    if (home == nullptr || *home == '\0')
-    {
-        throw std::runtime_error("adbcpp: cannot locate the home directory");
-    }
-    return std::filesystem::path(home) / ".android";
+    return home_directory() / ".android";
 }
 
 } // namespace

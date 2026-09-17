@@ -21,7 +21,7 @@ protocol::Message make_auth(std::uint32_t type, std::span<const std::byte> paylo
     protocol::Message auth;
     auth.command = protocol::kAuth;
     auth.arg0 = type;
-    auth.data_length = payload.size();
+    auth.data_length = protocol::Message::data_length_of(payload);
     auth.data_crc32 = protocol::Message::compute_crc32(payload);
     auth.magic = protocol::Message::compute_magic(auth.command);
     return auth;
@@ -50,7 +50,7 @@ Connection::Connection(Transport &transport, std::span<const std::byte> public_k
     connect.command = protocol::kCnxn;
     connect.arg0 = protocol::kVersion;
     connect.arg1 = protocol::kMaxData;
-    connect.data_length = identity_bytes.size();
+    connect.data_length = protocol::Message::data_length_of(identity_bytes);
     connect.data_crc32 = protocol::Message::compute_crc32(identity_bytes);
     connect.magic = protocol::Message::compute_magic(connect.command);
     session_.send(connect, identity_bytes);

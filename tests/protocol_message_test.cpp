@@ -66,3 +66,11 @@ TEST_CASE("crc32 matches the standard test vector", "[protocol]")
 
     REQUIRE(Message::compute_crc32(data) == 0xCBF43926u);
 }
+
+TEST_CASE("data_length_of reports the payload size as a 32-bit length", "[protocol]")
+{
+    const std::array<std::byte, 3> payload{std::byte{'a'}, std::byte{'b'}, std::byte{'c'}};
+
+    REQUIRE(Message::data_length_of(payload) == 3u);
+    REQUIRE(Message::data_length_of({}) == 0u);
+}

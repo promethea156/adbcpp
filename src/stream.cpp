@@ -16,7 +16,7 @@ protocol::Message make_message(std::uint32_t command, std::uint32_t arg0, std::u
     message.command = command;
     message.arg0 = arg0;
     message.arg1 = arg1;
-    message.data_length = payload.size();
+    message.data_length = protocol::Message::data_length_of(payload);
     message.data_crc32 = protocol::Message::compute_crc32(payload);
     message.magic = protocol::Message::compute_magic(command);
     return message;

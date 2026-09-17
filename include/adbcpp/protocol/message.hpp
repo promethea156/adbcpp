@@ -54,6 +54,13 @@ struct ADBCPP_API Message
     /// integrity checks (see `docs/dev/delayed_ack.md`).
     static std::uint32_t compute_crc32(std::span<const std::byte> data) noexcept;
 
+    /// Returns `payload.size()` as the 32-bit `data_length` field.
+    ///
+    /// The header stores the length in a single 32-bit word, so a payload that
+    /// does not fit cannot be framed. This throws rather than truncating the length
+    /// and silently desynchronizing the stream.
+    static std::uint32_t data_length_of(std::span<const std::byte> payload);
+
     /// Serializes the header into 24 little-endian bytes.
     std::array<std::byte, kMessageHeaderSize> encode() const noexcept;
 
