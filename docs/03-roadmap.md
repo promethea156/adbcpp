@@ -44,6 +44,19 @@ Every slice so far hid at least one non-obvious problem. The record of each — 
 
 **Next:** Slice 6 — app control.
 
+## Proposed Order for What Remains
+
+A proposal, not a commitment. Nothing below blocks the next slice, and any of it can move.
+
+| Order | Work | Why here |
+| --- | --- | --- |
+| 1 | Decide the [error model](#cross-cutting-concerns) | Slice 6 adds three more public functions, and without a decision each picks its own shape. Cheaper now than after. |
+| 2 | [Slice 6 — app control](#slice-6--app-control) | Unblocked, and composition again: `am start` and `am force-stop` are shell commands. |
+| 3 | Validate the received header | Small, and it belongs with `Session::receive`, which [Slice 7](#slice-7--tcp-transport) reopens: a partial read becomes normal over TCP. |
+| 4 | State thread safety for `Connection`, `Stream`, and `Key` | Small, and the statements belong with the objects Slices 6 and 7 touch. |
+| 5 | [Slice 7 — TCP transport](#slice-7--tcp-transport) | Completes the initial scope. |
+| 6 | The rest of [Future Improvements](#future-improvements) | Logging, device selection, the `shell_v2` fallback, and `sendrecv_v2` each matter only once a device or a caller needs them. |
+
 ## Slice 0 — Walking Skeleton
 
 Prove the pipeline end-to-end without a real device.
