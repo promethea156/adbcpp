@@ -45,9 +45,10 @@ The following external resources serve as references for understanding the ADB p
 
 ## Related AOSP Sources
 
-For completeness, the upstream protocol documents referenced by the resources above:
+For completeness, the upstream protocol documents referenced by the resources above. The old `protocol.txt` / `OVERVIEW.TXT` / `SYNC.TXT` / `SERVICES.TXT` files were moved into `docs/dev/` and renamed:
 
-- Protocol: https://android.googlesource.com/platform/packages/modules/adb/+/master/protocol.txt
-- Overview: https://android.googlesource.com/platform/packages/modules/adb/+/master/OVERVIEW.TXT
-- Sync: https://android.googlesource.com/platform/packages/modules/adb/+/master/SYNC.TXT
-- Services: https://android.googlesource.com/platform/packages/modules/adb/+/master/SERVICES.TXT
+- Protocol: https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/docs/dev/protocol.md
+- Overview: https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/docs/dev/overview.md
+- Sync: https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/docs/dev/sync.md
+- Services: https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/docs/dev/services.md
+- Delayed acknowledgements: https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/docs/dev/delayed_ack.md
