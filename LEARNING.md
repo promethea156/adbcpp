@@ -460,7 +460,9 @@ package's data survives only when the caller keeps it.
 **Goal.** Choose the next slice and apply everything you have learned.
 
 **Read.** [`docs/03-roadmap.md`](docs/03-roadmap.md) — the remaining slices:
-app control, and finally TCP plus silent authentication.
+app control, and then TCP, which completes the initial scope. Silent
+authentication is not among them: it shipped with Slice 1, which is why this
+library never shows the on-device approval prompt once the key is authorized.
 
 **Run.** Everything, with a device attached:
 
