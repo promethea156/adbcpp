@@ -8,26 +8,25 @@ This is deliberate: rather than completing an entire layer before anything is ru
 
 **Slice 0 — complete.** CMake project, Catch2 tests, sample, Doxygen, CI.
 
-**Slice 1 — in progress.** The USB transport and the CNXN/AUTH handshake work against a real device:
+**Slice 1 — complete.** `echo hello` runs over USB against a real device and its output is captured:
 
 - USB transport: ADB interface + bulk endpoints, `clear_halt` on open, header/payload as separate transfers.
 - Handshake: `CNXN` (advertising `host::features=<list>`) → `AUTH` token → signed reply → device `CNXN` (protocol `0x01000001`).
 - Keys are persisted at `~/.android/adbkey` (PKCS#8 PEM) and `~/.android/adbkey.pub` (ADB format).
-- The token is signed with the private key (`AUTH` type 2, PKCS#1 v1.5/SHA-1), so the device accepts the connection silently using a key it already authorized.
+- The token is signed with the private key (`AUTH` type 2, PKCS#1 v1.5/SHA-1). If the device rejects the signature, the public key is offered (`AUTH` type 3) so the user can authorize it, exactly like adb.
+- Stream lifecycle: `OPEN` / `OKAY` / `WRTE` / `CLSE`, with `shell_v2` stdout/stderr/exit parsing.
 
-**Blocker:** the device never answers `OPEN`, so `shell,v2,raw:<command>` does not run yet. Comparing against a real adb connection (`ADB_TRACE=all`, and the adb server log at `%TEMP%\adb.log`) shows the remaining differences in the `OPEN` message:
+Two bugs found while getting `OPEN` working:
 
-| Field | adb | ours |
+| Field | adb | ours (before) |
 | --- | --- | --- |
 | `arg0` (local id) | `2` | `1` |
-| `arg1` (send buffer) | `0` (no `delayed_ack` advertised) | `0x40000` (we advertise `delayed_ack`) |
+| `arg1` (send buffer) | `0` (no `delayed_ack` advertised) | `0x40000` (we advertised `delayed_ack`) |
 | payload | `shell,v2,raw:echo hello\0` | same |
 
-**Next steps:**
+Matching adb's values (local id `2`, `delayed_ack` removed from the feature list, `arg1` `0`) did **not** fix it. Instrumenting the session showed the real cause: the `OPEN` header advertised `data_length=24`, but `Stream`'s constructor passed the payload only to `make_message` and not to `Connection::send`, so the 24 payload bytes were never written. The payload is now passed to `send` as well.
 
-1. Try the exact adb values: local id `2`, and stop advertising `delayed_ack` so `arg1` is `0`.
-2. If it still fails, capture the USB traffic (USBPcap/Wireshark) and diff our `OPEN` byte-for-byte against adb's.
-3. Note: a failed run stalls the device's bulk endpoint until the device is replugged, so each attempt needs a replug.
+**Next:** Slice 2 — list files over the `sync` service.
 
 ## Slice 0 — Walking Skeleton
 
