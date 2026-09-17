@@ -57,9 +57,19 @@ CommandResult run(Connection &connection, std::string_view command)
         }
         else if (id == kExit)
         {
-            // For the exit packet the "length" field carries the exit status itself,
-            // not the size of any data.
-            result.exit_code = static_cast<std::uint8_t>(length);
+            // The exit packet's data is a single byte holding the exit status, and
+            // its length is always 1. adbd writes it with
+            //
+            //   output_->data()[0] = exit_code;
+            //   output_->Write(ShellProtocol::kIdExit, 1);
+            //
+            // in `daemon/shell_service.cpp`, so the length is the size of the
+            // status, not the status itself. Reading the length here was blocker 19
+            // and reported every command as exiting with 1.
+            if (length >= 1)
+            {
+                result.exit_code = static_cast<std::uint8_t>(raw[offset]);
+            }
         }
         offset += length;
     }

@@ -28,6 +28,8 @@ Matching adb's values (local id `2`, `delayed_ack` removed from the feature list
 
 A third bug blocked silent authentication: `Key::sign` hashed the token with SHA-1 and then signed that hash as the digest, double-hashing it, so adbd rejected every signature and showed the authorization prompt on every run. `Key::sign` now signs the token directly as the digest, matching adb's `RSA_sign(NID_sha1, token, ...)`. This was confirmed with a USBPcap capture of one adb session and one `adbcpp` session; see blockers 10 and 16 in `04-blockers.md`.
 
+A fourth bug was found later, while testing Slice 2: `run` read the shell_v2 exit code from the exit packet's length instead of its data, so every command reported exit code `1`. The length is always `1` and the status is the single data byte, matching adbd's `data()[0] = exit_code; Write(kIdExit, 1)`. `run` now reads the status from the data; see blocker 19 in `04-blockers.md`.
+
 **Slice 2 — complete.** A directory is listed over the `sync` service and its entries are returned as structured data:
 
 - `sync:` stream setup, which puts the stream in a binary mode that differs from the ADB protocol.

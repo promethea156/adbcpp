@@ -115,6 +115,13 @@ Each entry has the same shape:
 - **Resolution**: Open `shell,v2,raw:<command>` and reassemble the shell_v2 packets: stdout (id 1), stderr (id 2), and exit (id 3). `CommandResult` carries the combined output and the exit code.
 - **Note**: stdout and stderr are currently merged. If they need to be separate, `CommandResult` can be extended.
 
+### 19. The shell_v2 exit code is in the packet's data, not its length
+
+- **Symptom**: Every command reported exit code `1`, including `echo hello` and `true`, which exit with `0`.
+- **Cause**: The exit packet was parsed as `id`, a four-byte length, and then data, with the length taken as the status. That is wrong: adbd writes the exit packet as `output_->data()[0] = exit_code; output_->Write(ShellProtocol::kIdExit, 1);` in `daemon/shell_service.cpp`, so the **length is always 1** and the single data byte is the status. A capture of `shell,v2,raw:echo hello` shows the exit packet as `03 01 00 00 00 00`: id `kIdExit`, length `1`, data `00`.
+- **Resolution**: Read the exit code from the packet's data instead of its length (`src/shell.cpp`). The `DONE`-style layouts of the other packets are unchanged.
+- **Note**: This went unnoticed because `run` had no unit test and the device test checked only the output, never the exit code. Both now cover it. AOSP has no document for the shell protocol (`docs/dev/` covers only the ADB protocol and `sync`), so the packet layout has to be read from `shell_protocol.h` and the daemon that writes it; our own comment had claimed the length carried the status.
+
 ## Testing and Device Interaction
 
 ### 15. The first connection after idle can time out

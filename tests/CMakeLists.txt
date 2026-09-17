@@ -12,6 +12,7 @@ add_executable(adbcpp_tests
   connection_test.cpp
   protocol_message_test.cpp
   session_test.cpp
+  shell_test.cpp
   stream_test.cpp
   sync_test.cpp
 )

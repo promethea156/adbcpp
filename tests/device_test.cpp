@@ -57,6 +57,11 @@ int main()
             std::cerr << "unexpected output: " << result.output << '\n';
             return 1;
         }
+        if (result.exit_code != 0)
+        {
+            std::cerr << "unexpected exit code: " << static_cast<int>(result.exit_code) << '\n';
+            return 1;
+        }
 
         // `/` is always present and always holds at least `sdcard`.
         const auto entries = adbcpp::list(connection, "/");

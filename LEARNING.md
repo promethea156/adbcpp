@@ -299,11 +299,14 @@ fields go missing and why.
    [`src/shell.cpp`](src/shell.cpp) — the packet framing.
 2. AOSP's `shell_protocol.h`:
    <https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/shell_protocol.h>
-3. Blocker 14 in [`docs/04-blockers.md`](docs/04-blockers.md).
+3. Blockers 14 and 19 in [`docs/04-blockers.md`](docs/04-blockers.md).
 
 `shell_v2` packets are **not** ADB commands. They are the payload of `WRTE`
 messages, and each is a 1-byte id followed by a 4-byte little-endian length. For
-the exit packet the length field carries the exit status itself.
+the exit packet the length is always 1 and the single data byte is the exit status:
+adbd writes it with `data()[0] = exit_code; Write(kIdExit, 1)` in
+`daemon/shell_service.cpp`. Reading the length as the status was blocker 19 and made
+every command look like it exited with 1.
 
 **Exercise.** Extend `CommandResult` to keep stdout and stderr separate, and update
 [`tests/device_test.cpp`](tests/device_test.cpp) to check both. Note that the
