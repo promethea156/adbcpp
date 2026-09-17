@@ -118,6 +118,7 @@ cmake/             CMake package configuration
 ## Learning
 
 - [`LEARNING.md`](LEARNING.md) — a guided curriculum that uses this repository as a worked example, from byte channels to a full shell session
+- [`docs/05-usage.md`](docs/05-usage.md) — copy-pasteable code examples for everything the library can do today
 
 ## Design Documents
 
@@ -125,6 +126,7 @@ cmake/             CMake package configuration
 - [`docs/02-references.md`](docs/02-references.md) — reference material on the ADB protocol
 - [`docs/03-roadmap.md`](docs/03-roadmap.md) — vertical-slice implementation roadmap
 - [`docs/04-blockers.md`](docs/04-blockers.md) — significant blockers and how they were solved
+- [`docs/05-usage.md`](docs/05-usage.md) — usage guide with copy-pasteable code examples
 
 ## References
 
