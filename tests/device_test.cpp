@@ -9,6 +9,9 @@
 #include "adbcpp/shell.hpp"
 #include "adbcpp/usb/usb_transport.hpp"
 
+// The end-to-end integration test: the same flow as `examples/usb`, run against a
+// real device. It is a plain executable rather than a Catch2 test so it can exit
+// with `kSkip` when no matching USB device is attached.
 namespace {
 
 // CTest reports this exit code as a skipped test.

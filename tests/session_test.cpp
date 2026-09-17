@@ -10,6 +10,10 @@
 #include "adbcpp/session.hpp"
 #include "adbcpp/testing/mock_transport.hpp"
 
+// The `Session` layer is the "transport layer" from `docs/dev/protocol.md`: it
+// turns a byte channel into complete messages. These tests pin down that a header
+// and its payload are written and read as separate transport operations, even when
+// the bytes arrive split across reads.
 using adbcpp::protocol::Message;
 
 TEST_CASE("session receives a framed message from the transport", "[session]") {
@@ -83,6 +87,8 @@ TEST_CASE("session reassembles a message split across reads", "[session]") {
   inbound.arg1 = 2u;
   inbound.magic = Message::compute_magic(inbound.command);
 
+  // Split the header itself in two to prove `read_exact` loops until all 24
+  // bytes have arrived, as a USB transfer or TCP read may return only part.
   const auto encoded = inbound.encode();
   transport.feed(std::span(encoded).first(5));
   transport.feed(std::span(encoded).subspan(5));

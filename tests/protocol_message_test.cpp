@@ -8,6 +8,9 @@
 #include "adbcpp/protocol/commands.hpp"
 #include "adbcpp/protocol/message.hpp"
 
+// These tests pin down the wire format of the 24-byte ADB header described in
+// `docs/dev/protocol.md`: six little-endian 32-bit words, `magic` as the inverse
+// of `command`, and a standard CRC-32 over the payload.
 using adbcpp::protocol::Message;
 
 TEST_CASE("message header round-trips through encode/decode", "[protocol]") {
@@ -37,6 +40,8 @@ TEST_CASE("message header is serialized little-endian", "[protocol]") {
 
   const auto bytes = message.encode();
 
+  // A little-endian `CNXN` is the ASCII bytes in reading order, which is why
+  // the command constants are built with `make_command`.
   REQUIRE(bytes.size() == adbcpp::protocol::kMessageHeaderSize);
   REQUIRE(bytes[0] == std::byte{'C'});
   REQUIRE(bytes[1] == std::byte{'N'});
@@ -52,6 +57,8 @@ TEST_CASE("magic is the bitwise inverse of command", "[protocol]") {
 }
 
 TEST_CASE("crc32 matches the standard test vector", "[protocol]") {
+  // "123456789" has the well-known CRC-32 check value 0xCBF43926, which is how
+  // this implementation is confirmed to be the same CRC-32 adb uses.
   const char *text = "123456789";
   const auto data =
       std::span(reinterpret_cast<const std::byte *>(text), 9);

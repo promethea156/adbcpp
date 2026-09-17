@@ -12,6 +12,9 @@
 #include "adbcpp/stream.hpp"
 #include "adbcpp/testing/mock_transport.hpp"
 
+// These tests pin down the OPEN/OKAY/WRTE/CLSE stream lifecycle from
+// `docs/dev/protocol.md`, including the delayed-acknowledgement window in OPEN's
+// `arg1` (see `docs/dev/delayed_ack.md` and blocker 12 in `04-blockers.md`).
 using adbcpp::protocol::Message;
 
 namespace {
@@ -58,6 +61,8 @@ TEST_CASE("stream opens with a zero send buffer when delayed ack is off",
   feed_frame(transport, make_message(adbcpp::protocol::kOkay, kRemoteId,
                                     kLocalId));
 
+  // Without a negotiated delayed ack the OPEN window (`arg1`) must be zero,
+  // otherwise a peer that does not implement the feature closes the stream.
   const std::string service = "shell,v2,raw:echo hello";
   std::string destination(service);
   destination.push_back('\0');

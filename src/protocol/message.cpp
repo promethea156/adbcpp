@@ -3,6 +3,8 @@
 namespace adbcpp::protocol {
 namespace {
 
+// Every header field is a 32-bit little-endian word on the wire. These helpers
+// keep the byte order explicit instead of relying on the host's endianness.
 void write_u32_le(std::byte *out, std::uint32_t value) noexcept {
   out[0] = static_cast<std::byte>(value & 0xFFu);
   out[1] = static_cast<std::byte>((value >> 8) & 0xFFu);
@@ -25,6 +27,10 @@ std::uint32_t Message::compute_magic(std::uint32_t command) noexcept {
 
 std::uint32_t
 Message::compute_crc32(std::span<const std::byte> data) noexcept {
+  // Reflected CRC-32 with the zlib polynomial 0xEDB88320 (the reverse of the
+  // 0x04C11DB7 polynomial), seeded and finalized with 0xFFFFFFFF. The `~` at the
+  // end is the final XOR, which is what makes this the "standard" CRC32 that
+  // `adb` and `zlib` produce.
   std::uint32_t crc = 0xFFFFFFFFu;
   for (const std::byte value : data) {
     crc ^= std::to_integer<std::uint8_t>(value);

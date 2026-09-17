@@ -8,11 +8,18 @@
 #include "adbcpp/shell.hpp"
 #include "adbcpp/usb/usb_transport.hpp"
 
+// A complete Slice 1 session over USB: open the ADB interface, authenticate
+// with the key shared with adb, then run a shell command. The flow mirrors what
+// `adb shell <command>` does, so the two are interchangeable on the device.
 int main(int argc, char **argv) {
+  // The vendor/product id of the target device. Every Android device exposes its
+  // ADB function with these particular ids.
   adbcpp::usb::DeviceId id;
   id.vendor_id = 0x22D9;
   id.product_id = 0x2769;
 
+  // Opening a device that is not attached throws, and the ADB interface may be
+  // claimed by a running adb server, so check for it first (blocker 5).
   if (!adbcpp::usb::UsbTransport::is_present(id)) {
     std::cerr << "warning: no USB device " << std::hex << id.vendor_id << ':'
               << id.product_id << std::dec << " found; skipping\n";
@@ -22,6 +29,8 @@ int main(int argc, char **argv) {
   try {
     adbcpp::usb::UsbTransport transport(id);
 
+    // Load the key adb already authorized, so the device does not prompt. The
+    // public key is only needed for the AUTH type 3 fallback (blocker 11).
     const auto key = adbcpp::crypto::Key::load_or_generate();
     const std::string &public_key_string = key.public_key();
     const auto public_key = std::span(

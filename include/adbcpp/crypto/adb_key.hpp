@@ -13,11 +13,17 @@ namespace adbcpp::crypto {
 /**
  * @brief An ADB RSA-2048 key pair.
  *
- * The key pair is stored in ADB's own format: the private key at
- * `~/.android/adbkey` and the public key at `~/.android/adbkey.pub`. Reusing
- * the same key means the device only asks the user to approve it once, and the
- * private key lets us answer an AUTH token by signing it (AUTH type 2) exactly
- * like adb does.
+ * ADB reuses adb's own key files: the private key at `~/.android/adbkey` and the
+ * public key at `~/.android/adbkey.pub`. Sharing them means the device treats
+ * this library as the same computer adb already authorized, so it does not show the
+ * approval prompt. The private key lets us answer an AUTH token by signing it
+ * (AUTH type 2) exactly like adb does.
+ *
+ * The private key is a PKCS#8 PEM (`adb`'s format; the older raw
+ * `RSAPrivateKey` is not used). The public key is **not** a standard DER
+ * `SubjectPublicKeyInfo`: it is AOSP's custom `RSAPublicKey` structure, which is
+ * also what adbd expects in an AUTH type 3 payload. Both formats are described
+ * in `adb_key.cpp` and in blockers 8 and 9 of `04-blockers.md`.
  */
 class ADBCPP_API Key {
 public:
@@ -37,6 +43,12 @@ public:
   const std::string &public_key() const noexcept;
 
   /// The MD5 fingerprint of the public key, as shown on the device.
+  ///
+  /// This is the MD5 of the decoded 524-byte blob, formatted as uppercase
+  /// colon-separated hex. It is what the device's "USB debugging authorized
+  /// computers" list shows, so it is useful for checking that this library and adb
+  /// use the same key. adb's own log prints a SHA-256 of the DER
+  /// `SubjectPublicKeyInfo` instead, so the two fingerprints do not match.
   std::string fingerprint() const;
 
   /**

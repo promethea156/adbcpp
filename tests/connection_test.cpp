@@ -11,6 +11,9 @@
 #include "adbcpp/protocol/message.hpp"
 #include "adbcpp/testing/mock_transport.hpp"
 
+// These tests drive the CNXN/AUTH handshake from `docs/dev/protocol.md` over a
+// mock transport: the CNXN banner, the AUTH type 2 signature, and the AUTH type 3
+// public-key fallback (blockers 10, 11, and 16 in `04-blockers.md`).
 using adbcpp::protocol::Message;
 
 namespace {

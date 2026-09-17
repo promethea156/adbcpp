@@ -10,6 +10,12 @@
 #include <mbedtls/bignum.h>
 #include <mbedtls/rsa.h>
 
+// These tests pin down ADB's key formats: the 524-byte custom `RSAPublicKey`
+// blob that is base64-encoded into the AUTH type 3 public key string, and the
+// PKCS#1 v1.5 SHA-1 signature over the AUTH token (blockers 9 and 10 in
+// `04-blockers.md`). AOSP's reference encoding is `android_pubkey.cpp`:
+//
+//   https://android.googlesource.com/platform/system/core/+/refs/heads/main/libcrypto_utils/android_pubkey.cpp
 #include "adbcpp/crypto/adb_key.hpp"
 
 TEST_CASE("generated public key has the ADB format", "[crypto]") {

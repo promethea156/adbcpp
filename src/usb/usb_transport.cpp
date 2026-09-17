@@ -15,11 +15,16 @@
 namespace adbcpp::usb {
 namespace {
 
+// The ADB function is a vendor-specific USB interface. The class/subclass/
+// protocol triple is fixed by Android and is how both adb and adbd locate it
+// (see AOSP's `usb_libusb.cpp`). Bulk transfers carry the ADB messages.
 constexpr std::uint8_t kAdbInterfaceClass = 0xFF;
 constexpr std::uint8_t kAdbInterfaceSubClass = 0x42;
 constexpr std::uint8_t kAdbInterfaceProtocol = 0x01;
 // Long enough to wait for the user to approve the on-device debugging prompt.
 constexpr unsigned int kTransferTimeoutMs = 120000;
+// One bulk transfer holds at most one message header or payload. This must be at
+// least as large as the maximum payload the peer may send.
 constexpr std::size_t kReadBufferSize = 256 * 1024;
 
 [[noreturn]] void fail(const std::string &what, int code) {
@@ -159,12 +164,18 @@ UsbTransport::UsbTransport(DeviceId id) : impl_(std::make_unique<Impl>()) {
   libusb_set_auto_detach_kernel_driver(impl_->handle, 1);
 #endif
 
+  // The ADB interface must be claimed before any bulk transfer, and released
+  // again on close, so adb and this library do not use it at the same time.
   rc = libusb_claim_interface(impl_->handle, impl_->interface_number);
   if (rc != 0) {
     fail("libusb_claim_interface", rc);
   }
   impl_->claimed = true;
 
+  // A failed transfer can leave a bulk endpoint halted, which makes every later
+  // transfer on it fail. Clearing the halt on open recovers from that state
+  // (blocker 4 in `04-blockers.md`). The device's own endpoint may also stay
+  // halted until the device is replugged, which the host cannot fix.
   libusb_clear_halt(impl_->handle, impl_->endpoint_in);
   libusb_clear_halt(impl_->handle, impl_->endpoint_out);
 }
@@ -172,6 +183,10 @@ UsbTransport::UsbTransport(DeviceId id) : impl_(std::make_unique<Impl>()) {
 UsbTransport::~UsbTransport() = default;
 
 std::size_t UsbTransport::read(std::span<std::byte> buffer) {
+  // One bulk transfer is read at a time, but the caller may ask for fewer bytes
+  // than the transfer carries, so the remainder is buffered and handed out by
+  // later reads. `Session` relies on this to read a header and then a payload
+  // from two separate transfers.
   if (impl_->incoming_offset >= impl_->incoming.size()) {
     impl_->incoming.resize(kReadBufferSize);
     int transferred = 0;
@@ -201,6 +216,8 @@ std::size_t UsbTransport::read(std::span<std::byte> buffer) {
 }
 
 void UsbTransport::write(std::span<const std::byte> data) {
+  // A zero-length transfer would be a zero-length packet, which some USB stacks
+  // reject, so an empty write is simply a no-op.
   if (data.empty()) {
     return;
   }
@@ -214,6 +231,8 @@ void UsbTransport::write(std::span<const std::byte> data) {
   if (rc != 0) {
     fail("libusb_bulk_transfer", rc);
   }
+  // A short write means the device received only part of a message, which would
+  // desynchronize the stream, so it is treated as an error.
   if (static_cast<std::size_t>(transferred) != data.size()) {
     throw std::runtime_error("adbcpp: short USB write");
   }

@@ -14,9 +14,20 @@ namespace adbcpp {
 /**
  * @brief A logical stream to a service on the device.
  *
- * Opening a stream sends an OPEN message for the given service and waits for the
- * device's OKAY. Reads collect WRTE payloads (acknowledging each with OKAY)
- * until the device closes the stream.
+ * A stream multiplexes a named service (for example `shell,v2,raw:echo hello`)
+ * over the one connection. This is the OPEN/READY/WRITE/CLOSE part of
+ * `docs/dev/protocol.md`:
+ *
+ *   https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/docs/dev/protocol.md
+ *
+ * Opening a stream sends OPEN(local-id, window, "destination") and waits for the
+ * device's OKAY(local-id, remote-id). The ids are relative to the sender, so the
+ * `remote_id` here is the device's own id for this stream, and every later
+ * WRTE/OKAY/CLSE carries both ids.
+ *
+ * Reads collect WRTE payloads, acknowledging each with OKAY, until the device
+ * closes the stream. The window in OPEN's `arg1` is the delayed-acknowledgement
+ * "available send bytes"; see `commands.hpp` and blocker 12 in `04-blockers.md`.
  */
 class ADBCPP_API Stream {
 public:

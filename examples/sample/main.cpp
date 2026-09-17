@@ -5,9 +5,14 @@
 #include "adbcpp/adbcpp.hpp"
 #include "adbcpp/testing/mock_transport.hpp"
 
+// A minimal protocol round-trip without a device: queue a device CNXN header on
+// the mock transport and read it back through the `Session` framing layer. This is
+// the Slice 0 walking skeleton, kept as a small example.
 int main() {
   adbcpp::testing::MockTransport transport;
 
+  // Build CNXN(version, maxdata, ""). The magic is always the inverse of the
+  // command; the device would set the same fields on a real connection.
   adbcpp::protocol::Message device_message;
   device_message.command = adbcpp::protocol::kCnxn;
   device_message.arg0 = 0x01000001u;
@@ -16,6 +21,8 @@ int main() {
       adbcpp::protocol::Message::compute_magic(device_message.command);
   transport.feed(device_message.encode());
 
+  // `Session` reads the 24-byte header queued above. There is no payload
+  // because CNXN's data_length defaults to zero.
   adbcpp::Session session(transport);
   const auto frame = session.receive();
 
