@@ -17,10 +17,15 @@ if(ADBCPP_BUILD_USB)
     PRIVATE adbcpp::usb adbcpp::crypto
   )
 
-  add_custom_command(TARGET adbcpp_usb_example POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_RUNTIME_DLLS:adbcpp_usb_example>
-            $<TARGET_FILE_DIR:adbcpp_usb_example>
-    COMMAND_EXPAND_LISTS
-  )
+  # `$<TARGET_RUNTIME_DLLS:...>` is always empty on non-DLL platforms, and
+  # `cmake -E copy_if_different` then fails because it is left with a single
+  # argument, so the copy is Windows-only (blocker 21).
+  if(WIN32)
+    add_custom_command(TARGET adbcpp_usb_example POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              $<TARGET_RUNTIME_DLLS:adbcpp_usb_example>
+              $<TARGET_FILE_DIR:adbcpp_usb_example>
+      COMMAND_EXPAND_LISTS
+    )
+  endif()
 endif()

@@ -2,6 +2,10 @@ include(FetchContent)
 
 set(LIBUSB_INSTALL_TARGETS OFF)
 set(LIBUSB_BUILD_SHARED_LIBS ON)
+# libusb's udev backend includes <libudev.h>, which is not part of a default Linux
+# toolchain, so it is turned off: the netlink backend enumerates and watches devices
+# without any system package, which keeps the build dependency-free (blocker 20).
+set(LIBUSB_ENABLE_UDEV OFF)
 FetchContent_Declare(
   libusb_cmake
   GIT_REPOSITORY https://github.com/libusb/libusb-cmake.git

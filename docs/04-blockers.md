@@ -153,3 +153,26 @@ Each entry has the same shape:
 - **Cause**: The device may send a second `CLOSE` for the previous stream, with the previous stream's ids in `arg0`/`arg1`, while the next stream's `OPEN` is in flight. The `OPEN` response read that frame and treated it as a refusal. A USBPcap capture showed the stray `CLOSE` arriving between the `sync:` `OPEN` and its `OKAY`.
 - **Resolution**: Frames carry the recipient's local id in `arg1`, so `Stream` skips any frame whose `arg1` is not its own local id, both while opening and while reading (`src/stream.cpp`).
 - **Note**: The same applies to `WRTE` and `OKAY`: a frame for another stream must never be mistaken for this stream's data. The protocol multiplexes streams over the one connection, so a stream must always check the ids.
+
+## Cross-Platform Build
+
+### 20. libusb's udev backend needs `libudev.h` on Linux
+
+- **Symptom**: The Linux CI build failed while compiling libusb: `linux_udev.c:28:10: fatal error: libudev.h: No such file or directory`. Windows was unaffected.
+- **Cause**: libusb's CMake option `LIBUSB_ENABLE_UDEV` defaults to `ON` on Linux, which compiles `os/linux_udev.c` and links `libudev`. The `libudev` headers are a system package and are not present on a default Ubuntu runner, or on a default Linux toolchain.
+- **Resolution**: Set `LIBUSB_ENABLE_UDEV OFF` before fetching libusb (`src/usb/CMakeLists.txt`). libusb then uses its netlink backend (`os/linux_netlink.c`), which enumerates devices through sysfs and watches hotplug through a netlink socket, so no system package is needed at build time.
+- **Note**: This matches the project's "self-contained, no external dependency" goal (blocker 1). It only affects how libusb builds; device access still depends on the usual runtime udev rules, which is a separate concern.
+
+### 21. `$<TARGET_RUNTIME_DLLS>` is empty on non-DLL platforms
+
+- **Symptom**: The macOS build failed after linking the USB example, with a `cmake -E copy_if_different` error.
+- **Cause**: The POST_BUILD step copies `$<TARGET_RUNTIME_DLLS:...>` next to the executable so the libusb DLL is found at runtime. CMake documents that this generator expression "always evaluates to an empty string" on non-DLL platforms, and the empty argument is then dropped, leaving `cmake -E copy_if_different <dir>` with a single argument, which is an error.
+- **Resolution**: Guard the copy with `if(WIN32)` in `examples/CMakeLists.txt` and `tests/CMakeLists.txt`. On Linux and macOS the shared library is found through the build-tree RPATH, so no copy is needed.
+- **Note**: The same trap applies to any POST_BUILD step built from `TARGET_RUNTIME_DLLS`; on a non-DLL platform the command has to be skipped, not just have its arguments ignored.
+
+### 22. mbedTLS compiles with `-Werror` and a newer Clang warns
+
+- **Symptom**: The macOS build failed inside mbedTLS: `ssl_tls13_keys.c:44:5: error: initializer-string for character array is too long ... [-Werror,-Wunterminated-string-initialization]`, twenty times over, for the `MBEDTLS_SSL_TLS1_3_LABEL_LIST` entries.
+- **Cause**: mbedTLS's `MBEDTLS_FATAL_WARNINGS` option defaults to `ON` and adds `-Werror`. A newer AppleClang enables `-Wunterminated-string-initialization` by default, and mbedTLS's TLS 1.3 labels are deliberately not NUL-terminated (the array is sized to `sizeof(label) - 1`), so the warning fires and becomes an error.
+- **Resolution**: Set `MBEDTLS_FATAL_WARNINGS OFF` before fetching mbedTLS (`src/crypto/CMakeLists.txt`). The warning is a false positive in mbedTLS, and a dependency's warnings should not be able to fail this project's build.
+- **Note**: This is a compiler-version effect, not a code bug: the same mbedTLS version builds on Windows and on the older Clang that ships with the older macOS runner images. Disabling fatal warnings for third-party code is the conventional fix.

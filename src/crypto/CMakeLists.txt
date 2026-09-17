@@ -2,6 +2,11 @@ include(FetchContent)
 
 set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
 set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+# mbedTLS turns on -Werror by default, and a newer AppleClang warns about the
+# non-NUL-terminated TLS 1.3 labels in ssl_tls13_keys.c, which would fail the
+# build. The warning is a false positive in mbedTLS, so its warnings are not made
+# fatal (blocker 22).
+set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
   mbedtls
   GIT_REPOSITORY https://github.com/Mbed-TLS/mbedtls.git

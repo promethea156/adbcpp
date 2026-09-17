@@ -31,12 +31,16 @@ if(ADBCPP_BUILD_USB)
     PRIVATE adbcpp::usb adbcpp::crypto
   )
 
-  add_custom_command(TARGET adbcpp_device_tests POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_RUNTIME_DLLS:adbcpp_device_tests>
-            $<TARGET_FILE_DIR:adbcpp_device_tests>
-    COMMAND_EXPAND_LISTS
-  )
+  # See examples/CMakeLists.txt: the copy is Windows-only because
+  # `$<TARGET_RUNTIME_DLLS:...>` is empty elsewhere (blocker 21).
+  if(WIN32)
+    add_custom_command(TARGET adbcpp_device_tests POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              $<TARGET_RUNTIME_DLLS:adbcpp_device_tests>
+              $<TARGET_FILE_DIR:adbcpp_device_tests>
+      COMMAND_EXPAND_LISTS
+    )
+  endif()
 
   add_test(NAME device COMMAND adbcpp_device_tests)
   set_tests_properties(device PROPERTIES SKIP_RETURN_CODE 77)
