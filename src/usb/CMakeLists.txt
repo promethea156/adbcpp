@@ -12,6 +12,9 @@ FetchContent_MakeAvailable(libusb_cmake)
 add_library(adbcpp-usb usb_transport.cpp)
 add_library(adbcpp::usb ALIAS adbcpp-usb)
 
+# Export the target as `adbcpp::usb`, matching the in-tree alias.
+set_target_properties(adbcpp-usb PROPERTIES EXPORT_NAME usb)
+
 target_compile_features(adbcpp-usb PUBLIC cxx_std_20)
 target_compile_definitions(adbcpp-usb PRIVATE ADBCPP_EXPORTS)
 target_link_libraries(adbcpp-usb

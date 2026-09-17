@@ -12,6 +12,9 @@ FetchContent_MakeAvailable(mbedtls)
 add_library(adbcpp-crypto adb_key.cpp)
 add_library(adbcpp::crypto ALIAS adbcpp-crypto)
 
+# Export the target as `adbcpp::crypto`, matching the in-tree alias.
+set_target_properties(adbcpp-crypto PROPERTIES EXPORT_NAME crypto)
+
 target_compile_features(adbcpp-crypto PUBLIC cxx_std_20)
 target_compile_definitions(adbcpp-crypto PRIVATE ADBCPP_EXPORTS)
 target_link_libraries(adbcpp-crypto

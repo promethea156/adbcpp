@@ -102,6 +102,30 @@ if(ADBCPP_INSTALL)
 
   install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
+  # The crypto and USB backends are exported as `adbcpp::crypto` and
+  # `adbcpp::usb`, so a `find_package(adbcpp)` consumer gets the same three
+  # targets as a FetchContent consumer. They are static libraries with private
+  # third-party dependencies (mbedTLS, libusb), and a static library propagates
+  # its private dependencies to the final link, so those dependencies have to be in
+  # the export set too. They are installed next to `adbcpp` and are only used
+  # internally; `adbcpp`'s own public headers do not include them.
+  install(TARGETS adbcpp-crypto mbedcrypto everest p256m
+    EXPORT adbcppTargets
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+  )
+  if(ADBCPP_BUILD_USB)
+    install(TARGETS adbcpp-usb usb-1.0
+      EXPORT adbcppTargets
+      RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+      LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+      ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+      INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
+  endif()
+
   install(EXPORT adbcppTargets
     FILE adbcppTargets.cmake
     NAMESPACE adbcpp::

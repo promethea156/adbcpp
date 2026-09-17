@@ -35,9 +35,20 @@ There are three targets:
 linking the USB backend pulls in the rest. `adbcpp::usb` is only defined when the
 project is built with `ADBCPP_BUILD_USB=ON` (the default at the top level).
 
-> **Installing:** the install rules currently export only `adbcpp::adbcpp`, so a
-> `find_package(adbcpp)` consumer does not get the `crypto` and `usb` targets.
-> Use `FetchContent` (or `add_subdirectory`) until that is fixed.
+Alternatively, install `adbcpp` and use `find_package`:
+
+```
+cmake --install build --config Release --prefix /some/prefix
+```
+
+```cmake
+find_package(adbcpp REQUIRED)
+target_link_libraries(my_app PRIVATE adbcpp::crypto adbcpp::usb)
+```
+
+All three targets are exported, and the install includes the mbedTLS and libusb
+libraries they need. On Windows the libusb DLL lands in `<prefix>/bin`, so add that
+directory to `PATH` (or copy it next to your executable) at runtime.
 
 Include what you use:
 
