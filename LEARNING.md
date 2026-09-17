@@ -19,7 +19,7 @@ Every module has the same shape:
 - **Exercise** — a small change to make yourself to prove you understood it.
 - **Checkpoint** — questions you should be able to answer without looking.
 
-Do the modules in order. Modules 1–4 build the mental model; modules 5–8
+Do the modules in order. Modules 1–4 build the mental model; modules 5–9
 apply it. If you get stuck, [`docs/04-blockers.md`](docs/04-blockers.md) is the
 "answer key": it records the non-obvious problems and how they were solved.
 
@@ -241,17 +241,55 @@ A stream is a small state machine keyed by two ids, and the ids are **relative t
 the sender**, so each side's `local-id` is the other's `remote-id`. The `OPEN`
 payload is a null-terminated service name, unlike the CNXN banner.
 
-**Exercise.** Read [`src/sync.cpp`](src/sync.cpp) and follow how `list` builds the
-`LIST` request and parses the `DENT` entries. Then run
-`build/examples/Release/adbcpp_usb_example --list /` against a device and compare
-its output with `adb shell ls -l /`.
+**Exercise.** Add a `read_line` helper to `Stream` that reads one byte at a time
+until `'\n'`, then use it to read a shell command's output line by line. Notice
+that it has to keep reading across `WRTE` boundaries.
 
 **Checkpoint.**
 
 - Which id must never be zero, and which may be zero only for a failed `OPEN`?
 - Why is the `OPEN` payload null-terminated when the CNXN banner is not?
 
-## Module 7 — shell_v2
+## Module 7 — The sync Service
+
+**Goal.** Understand how a service with its own binary protocol is built on top of
+`Stream`, and why a second framing layer is needed.
+
+**Read.**
+
+1. [`docs/06-sync-protocol.md`](docs/06-sync-protocol.md) — the wire format,
+   field by field.
+2. [`include/adbcpp/sync.hpp`](include/adbcpp/sync.hpp) and
+   [`src/sync.cpp`](src/sync.cpp) — `list` and `DirEntry`.
+3. AOSP's `docs/dev/sync.md`:
+   <https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/docs/dev/sync.md>
+4. Blockers 17 and 18 in [`docs/04-blockers.md`](docs/04-blockers.md).
+
+`sync` is not a new transport: it is a second binary protocol inside the payload
+of a `WRTE`. Its requests are an id and a length, and the path is **not**
+null-terminated, unlike an `OPEN` payload. The v2 form (`LIS2`/`DNT2`) is chosen
+when the device advertises `ls_v2`, and it carries a 64-bit size and a per-entry
+error.
+
+**Run.**
+
+```
+build/examples/Release/adbcpp_sync_example
+ctest --test-dir build -C Release -R "sync|example_sync" --output-on-failure
+```
+
+**Exercise.** Extend `DirEntry` with `uid` and `gid` from the v2 body and print
+them in the example. Then make `list` always use the v1 form and observe which
+fields go missing and why.
+
+**Checkpoint.**
+
+- Why is the path not null-terminated when an `OPEN` payload is?
+- Why must `DONE`'s body still be read even though it carries no data?
+- Why does the device answer a sync request with an `OKAY`, and why did the shell
+  service never reveal that?
+
+## Module 8 — shell_v2
 
 **Goal.** Understand how a shell command becomes structured output.
 
@@ -276,7 +314,7 @@ device interleaves them, so order is not guaranteed.
 - Why does `shell:` give you no exit code, while `shell,v2` does?
 - What does the `raw` in `shell,v2,raw:` change?
 
-## Module 8 — Flow Control and Robustness
+## Module 9 — Flow Control and Robustness
 
 **Goal.** Understand the failure modes that are invisible on a healthy device.
 
@@ -301,7 +339,7 @@ real device, and observe the failure. Then explain why the default is off.
 - Why must a `WRTE` not be sent before the stream is ready?
 - What does a stalled bulk endpoint look like from the host, and how is it cleared?
 
-## Module 9 — Where to Go Next
+## Module 10 — Where to Go Next
 
 **Goal.** Choose the next slice and apply everything you have learned.
 

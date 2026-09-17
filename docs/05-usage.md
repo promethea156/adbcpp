@@ -1,9 +1,10 @@
 # Usage
 
 Practical, copy-pasteable examples for everything `adbcpp` can do today: connect
-over USB, run a shell command, work with the ADB key, and use the lower-level
-protocol layers directly. Every example compiles against the library as it stands
-now. For the theory behind them, read [`LEARNING.md`](../LEARNING.md).
+over USB, run a shell command, list a directory, work with the ADB key, and use the
+lower-level protocol layers directly. Every example compiles against the library as it
+stands now. For the theory behind them, read [`LEARNING.md`](../LEARNING.md); for how
+the `sync` service works, read [`06-sync-protocol.md`](06-sync-protocol.md).
 
 ## Linking the Library
 
@@ -54,6 +55,7 @@ Include what you use:
 
 ```cpp
 #include "adbcpp/adbcpp.hpp"                 // core: Connection, Stream, run, protocol
+#include "adbcpp/sync.hpp"                    // adbcpp::list, adbcpp::DirEntry
 #include "adbcpp/crypto/adb_key.hpp"          // adbcpp::crypto::Key
 #include "adbcpp/usb/usb_transport.hpp"       // adbcpp::usb::UsbTransport
 #include "adbcpp/testing/mock_transport.hpp"   // adbcpp::testing::MockTransport
@@ -155,6 +157,20 @@ int main()
 }
 ```
 
+`DirEntry` carries the POSIX metadata the device reports, the same values
+`lstat` would give: `name`, `mode`, `size`, and `mtime`, plus `is_directory()`
+and `is_regular()`. A file larger than 4 GiB is reported correctly, because the
+v2 entry form uses a 64-bit size.
+
+### List a Directory Without a Device
+
+To run `list` with no device attached, see
+[`examples/sync/main.cpp`](../examples/sync/main.cpp). It queues a device's CNXN and
+its `DNT2` responses on the mock transport, calls the real `list`, prints the
+entries, and then prints the `LIS2` request bytes that `list` wrote. It is registered
+with CTest as `example_sync` and runs in CI. The wire format itself is explained in
+[`06-sync-protocol.md`](06-sync-protocol.md).
+
 ## Inspect the ADB Key
 
 The key lives in `~/.android/adbkey` (PKCS#8 PEM) and `~/.android/adbkey.pub`
@@ -219,8 +235,7 @@ int main()
 ## Open a Service Manually
 
 `Stream` is the layer below `run`: it opens a named service and lets you write
-to it and read its output. This is how a future `sync`-based file listing will be
-built.
+to it and read its output. `run` and `list` are both built on it.
 
 ```cpp
 #include <cstddef>
@@ -250,14 +265,16 @@ int main()
     okay.magic = adbcpp::protocol::Message::compute_magic(okay.command);
     transport.feed(okay.encode());
 
-    // The device writes "hello\n" and then closes its side.
+    // The device writes "hello\n" and then closes its side. The ids are relative
+    // to the sender, so `arg0` is the device's id for the stream (7) and `arg1`
+    // is ours (2). Our own frames are the other way round.
     const std::string text = "hello\n";
     const auto payload = std::span(reinterpret_cast<const std::byte *>(text.data()), text.size());
 
     adbcpp::protocol::Message wrte;
     wrte.command = adbcpp::protocol::kWrte;
-    wrte.arg0 = 2;
-    wrte.arg1 = 7;
+    wrte.arg0 = 7;
+    wrte.arg1 = 2;
     wrte.data_length = adbcpp::protocol::Message::data_length_of(payload);
     wrte.data_crc32 = adbcpp::protocol::Message::compute_crc32(payload);
     wrte.magic = adbcpp::protocol::Message::compute_magic(wrte.command);
@@ -266,8 +283,8 @@ int main()
 
     adbcpp::protocol::Message clse;
     clse.command = adbcpp::protocol::kClse;
-    clse.arg0 = 2;
-    clse.arg1 = 7;
+    clse.arg0 = 7;
+    clse.arg1 = 2;
     clse.magic = adbcpp::protocol::Message::compute_magic(clse.command);
     transport.feed(clse.encode());
 
@@ -466,10 +483,12 @@ int main()
 | Check if an entry is a regular file       | `entry.is_regular()`                                     |
 | Open a service manually                | `adbcpp::Stream stream(connection, "shell:echo hello")`   |
 | Read a stream until the device closes    | `stream.read_all()`                                     |
+| Read an exact number of bytes            | `stream.read(buffer)`                                    |
 | Write to a stream                      | `stream.write(bytes)`                                   |
 | Test without a device                  | `adbcpp::testing::MockTransport` + `feed()`              |
 | Send/receive raw messages              | `adbcpp::Session`                                        |
 | Inspect the negotiated features         | `connection.device_version()`, `connection.max_data()`     |
+| Check a device feature                  | `connection.supports_feature("ls_v2")`                     |
 | Check delayed acknowledgements           | `connection.supports_delayed_ack()`                       |
 | Detect the authorization prompt          | `connection.requested_authorization()`                    |
 
@@ -488,6 +507,11 @@ int main()
   requested, and `Session` handles that; do not assume one read is one message.
 - **`run` merges stdout and stderr.** They arrive interleaved, so the order is not
   guaranteed. `CommandResult` does not separate them.
-- **This is not a full `adb` replacement yet.** Only the shell service is exposed;
-  file transfer, install, and app control are still on the roadmap
-  ([`03-roadmap.md`](03-roadmap.md)).
+- **This is not a full `adb` replacement yet.** The shell service and `sync`-based
+  directory listing are exposed; file transfer, install, and app control are still on
+  the roadmap ([`03-roadmap.md`](03-roadmap.md)).
+- **A stream ignores frames for other streams.** Frames carry the recipient's local id
+  in `arg1`, and the device can send a `CLOSE` for a previous stream while the next
+  one opens, so `Stream` skips any frame whose `arg1` is not its own local id. Do not
+  assume every frame on the connection belongs to the stream you just opened
+  ([`06-sync-protocol.md`](06-sync-protocol.md), blocker 18).

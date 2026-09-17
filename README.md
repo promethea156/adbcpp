@@ -117,8 +117,9 @@ cmake/             CMake package configuration
 
 ## Learning
 
-- [`LEARNING.md`](LEARNING.md) — a guided curriculum that uses this repository as a worked example, from byte channels to a full shell session
+- [`LEARNING.md`](LEARNING.md) — a guided curriculum that uses this repository as a worked example, from byte channels to a full shell session and file listing
 - [`docs/05-usage.md`](docs/05-usage.md) — copy-pasteable code examples for everything the library can do today
+- [`docs/06-sync-protocol.md`](docs/06-sync-protocol.md) — how the `sync` service and `list` work, byte by byte
 
 ## Design Documents
 
@@ -127,6 +128,7 @@ cmake/             CMake package configuration
 - [`docs/03-roadmap.md`](docs/03-roadmap.md) — vertical-slice implementation roadmap
 - [`docs/04-blockers.md`](docs/04-blockers.md) — significant blockers and how they were solved
 - [`docs/05-usage.md`](docs/05-usage.md) — usage guide with copy-pasteable code examples
+- [`docs/06-sync-protocol.md`](docs/06-sync-protocol.md) — the `sync` service wire format and how `list` is built on it
 
 ## References
 

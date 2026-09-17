@@ -40,6 +40,8 @@ Two more protocol details were found while getting `list` working:
 - The device acknowledges the `LIST` `WRTE` with an `OKAY`, so `Stream` must skip the `OKAY` frames that carry no data.
 - The device may send a second `CLOSE` for a previous stream while a new one opens, so `Stream` must ignore frames whose `arg1` is not its own local id.
 
+The wire format is documented in [`06-sync-protocol.md`](06-sync-protocol.md), and `examples/sync/main.cpp` runs the whole exchange against the mock transport, so `list` is exercised with no device attached.
+
 **Next:** Slice 3 — pull a file over the `sync` service.
 
 ## Slice 0 — Walking Skeleton

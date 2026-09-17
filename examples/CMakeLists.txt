@@ -1,6 +1,16 @@
 add_executable(adbcpp_sample sample/main.cpp)
 target_link_libraries(adbcpp_sample PRIVATE adbcpp::adbcpp)
 
+add_executable(adbcpp_sync_example sync/main.cpp)
+target_link_libraries(adbcpp_sync_example PRIVATE adbcpp::adbcpp)
+
+# The sample and the sync example are device-free, so CTest runs them as part of
+# the normal test suite. The USB example needs a device and is not registered.
+if(ADBCPP_BUILD_TESTS)
+  add_test(NAME example_sample COMMAND adbcpp_sample)
+  add_test(NAME example_sync COMMAND adbcpp_sync_example)
+endif()
+
 if(ADBCPP_BUILD_USB)
   add_executable(adbcpp_usb_example usb/main.cpp)
   target_link_libraries(adbcpp_usb_example
