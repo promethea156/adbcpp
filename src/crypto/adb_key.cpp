@@ -19,7 +19,6 @@
 #include <mbedtls/md5.h>
 #include <mbedtls/pk.h>
 #include <mbedtls/rsa.h>
-#include <mbedtls/sha1.h>
 
 namespace adbcpp::crypto {
 namespace {
@@ -254,10 +253,6 @@ Key Key::load_or_generate() {
 }
 
 std::vector<std::byte> Key::sign(std::span<const std::byte> token) const {
-  std::array<unsigned char, 20> hash{};
-  mbedtls_sha1(reinterpret_cast<const unsigned char *>(token.data()),
-                token.size(), hash.data());
-
   mbedtls_entropy_context entropy;
   mbedtls_ctr_drbg_context drbg;
   mbedtls_entropy_init(&entropy);
@@ -265,13 +260,17 @@ std::vector<std::byte> Key::sign(std::span<const std::byte> token) const {
   const int seed =
       mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy, nullptr, 0);
 
+  // The device's AUTH token is signed directly as the SHA-1 digest, exactly like
+  // adb's RSA_sign(NID_sha1, token, token_size, ...); it is not re-hashed.
   std::vector<unsigned char> signature(mbedtls_pk_get_len(&impl_->pk));
   std::size_t length = 0;
   int rc = seed;
   if (rc == 0) {
-    rc = mbedtls_pk_sign(&impl_->pk, MBEDTLS_MD_SHA1, hash.data(), hash.size(),
-                          signature.data(), signature.size(), &length,
-                          mbedtls_ctr_drbg_random, &drbg);
+    rc = mbedtls_pk_sign(
+        &impl_->pk, MBEDTLS_MD_SHA1,
+        reinterpret_cast<const unsigned char *>(token.data()), token.size(),
+        signature.data(), signature.size(), &length, mbedtls_ctr_drbg_random,
+        &drbg);
   }
   mbedtls_ctr_drbg_free(&drbg);
   mbedtls_entropy_free(&entropy);

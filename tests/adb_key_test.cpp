@@ -9,7 +9,6 @@
 #include <mbedtls/base64.h>
 #include <mbedtls/bignum.h>
 #include <mbedtls/rsa.h>
-#include <mbedtls/sha1.h>
 
 #include "adbcpp/crypto/adb_key.hpp"
 
@@ -75,12 +74,11 @@ TEST_CASE("a token signature verifies against the ADB public key",
   REQUIRE(mbedtls_rsa_import(&rsa, &n, nullptr, nullptr, nullptr, &e) == 0);
   REQUIRE(mbedtls_rsa_complete(&rsa) == 0);
 
-  std::array<unsigned char, 20> hash{};
-  mbedtls_sha1(reinterpret_cast<const unsigned char *>(token.data()),
-               token.size(), hash.data());
-
+  // The token is signed directly as the SHA-1 digest, exactly like adb's
+  // RSA_sign(NID_sha1, token, token_size, ...); it is not re-hashed.
   REQUIRE(mbedtls_rsa_pkcs1_verify(
-              &rsa, MBEDTLS_MD_SHA1, hash.size(), hash.data(),
+              &rsa, MBEDTLS_MD_SHA1, token.size(),
+              reinterpret_cast<const unsigned char *>(token.data()),
               reinterpret_cast<const unsigned char *>(signature.data())) == 0);
 
   mbedtls_rsa_free(&rsa);

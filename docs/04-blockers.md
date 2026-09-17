@@ -81,9 +81,9 @@ Each entry has the same shape:
 ### 10. AUTH type 2 signs the token with SHA-1 PKCS#1 v1.5
 
 - **Symptom**: The device did not accept the signed AUTH response.
-- **Cause**: adbd verifies with `RSA_verify(NID_sha1, token, token_size, sig, sig.size(), key)` and adb signs with `RSA_sign(NID_sha1, token, token_size, ...)`. The signature is therefore a standard PKCS#1 v1.5 SHA-1 signature over the 20-byte token, 256 bytes long.
-- **Resolution**: Sign with mbedTLS's `mbedtls_pk_sign` using `MBEDTLS_MD_SHA1` over `SHA1(token)`. Unit tests verify the signature against both the private key and the modulus/exponent decoded from the public key blob. It was also manually cross-checked byte-for-byte against an independent RSA implementation (the .NET `RSA` class) over the same token.
-- **Note**: The device sends a fresh random token per connection, so signatures cannot be compared directly between two runs; compare against the same token.
+- **Cause**: adbd verifies with `RSA_verify(NID_sha1, token, token_size, sig, sig.size(), key)` and adb signs with `RSA_sign(NID_sha1, token, token_size, ...)`. `RSA_sign` treats the token itself as the SHA-1 **digest** and prepends the SHA-1 `DigestInfo`; it does **not** re-hash it. The signature is therefore a standard PKCS#1 v1.5 SHA-1 signature whose digest is the 20-byte token, 256 bytes long.
+- **Resolution**: Sign with mbedTLS's `mbedtls_pk_sign` using `MBEDTLS_MD_SHA1` **over the token directly** (the token is the digest). Unit tests verify the signature against the modulus/exponent decoded from the public key blob.
+- **Note**: The device sends a fresh random token per connection, so signatures cannot be compared directly between two runs; compare against the same token. See entry 16 for how this was finally confirmed with a capture.
 
 ### 11. Fall back to the public key when the signature is rejected
 
@@ -127,10 +127,6 @@ Each entry has the same shape:
 ### 16. The device prompts for authorization on every run
 
 - **Symptom**: The device shows the USB debugging authorization prompt on every run, even when "Always allow from this computer" is checked, and the device's authorized-computers list does not contain our key.
-- **Cause**: **Unresolved.** The host side has been verified correct:
-  - The key matches `~/.android/adbkey.pub` (the fingerprint is identical), so we are not regenerating keys.
-  - The signature is byte-for-byte identical to an independent RSA implementation's signature over the device's token.
-  - The public key blob's modulus and exponent verify that signature.
-  - `adb_allowed_connection_time` is `0` on the device, so "always allow" grants should never expire.
-- **Resolution**: None yet. The remaining difference must be in bytes that are not visible at the protocol layer. The next step is a raw USB capture (USBPcap + Wireshark) of one adb session and one `adbcpp` session, diffing the `CNXN` and `AUTH` messages byte-for-byte.
-- **Note**: A `key fingerprint` and a `requested_authorization` diagnostic were added to the USB example to help. The MD5 fingerprint shown on the device's authorized-computers list is computed from the decoded public key blob, while adb's log fingerprint is a SHA-256 of the DER `SubjectPublicKeyInfo`; the two formats are not interchangeable.
+- **Cause**: `Key::sign` hashed the token with SHA-1 and then signed that hash as the digest, i.e. it **double-hashed** the token. adb signs the token **directly as the digest** (`RSA_sign(NID_sha1, token, ...)`, see entry 10). adbd therefore rejected every signature and sent a fresh `AUTH` token, which the host answered with the public key and which triggered the prompt. This was invisible at the protocol layer because both sides sent well-formed `AUTH` type 2 messages; only the signature bytes differed.
+- **Resolution**: Remove the SHA-1 pre-hash in `Key::sign` and pass the token straight to `mbedtls_pk_sign` with `MBEDTLS_MD_SHA1` (`src/crypto/adb_key.cpp`). This was confirmed with a USBPcap capture: adb's signature verifies as `VerifyHash(token)` (and fails as `VerifyHash(SHA1(token))`), while ours did the opposite; after the fix ours also verifies as `VerifyHash(token)` and the device accepts it without a prompt.
+- **Note**: The earlier "byte-for-byte identical to an independent RSA implementation" check (entry 10) compared against `SignHash(SHA1(token))`, which matched the buggy double-hash and gave false confidence. The correct comparison is `SignHash(token)`. A `key fingerprint` and a `requested_authorization` diagnostic were added to the USB example to help; the MD5 fingerprint shown on the device's authorized-computers list is computed from the decoded public key blob, while adb's log fingerprint is a SHA-256 of the DER `SubjectPublicKeyInfo`, so the two formats are not interchangeable.
