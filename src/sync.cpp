@@ -473,15 +473,15 @@ void push(Connection &connection, const std::filesystem::path &local_path, std::
             break;
         }
 
-        std::vector<std::byte> chunk(static_cast<std::size_t>(count));
+        // The DATA header and its chunk go in one write, like adb's `WriteOrDie`.
+        // They would otherwise be two `WRTE` messages, and the device acknowledges
+        // each one, so this halves the traffic for a large file.
+        std::vector<std::byte> block(8 + static_cast<std::size_t>(count));
+        write_u32_le(block.data(), kData);
+        write_u32_le(block.data() + 4, static_cast<std::uint32_t>(count));
         std::copy_n(reinterpret_cast<const std::byte *>(buffer.data()), static_cast<std::ptrdiff_t>(count),
-                    chunk.begin());
-
-        std::array<std::byte, 8> header{};
-        write_u32_le(header.data(), kData);
-        write_u32_le(header.data() + 4, static_cast<std::uint32_t>(chunk.size()));
-        stream.write(header);
-        stream.write(chunk);
+                    block.begin() + 8);
+        stream.write(block);
     }
 
     if (!input.eof())
