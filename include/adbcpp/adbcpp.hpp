@@ -1,5 +1,6 @@
 #pragma once
 
+#include "adbcpp/app.hpp"
 #include "adbcpp/connection.hpp"
 #include "adbcpp/protocol/commands.hpp"
 #include "adbcpp/protocol/message.hpp"

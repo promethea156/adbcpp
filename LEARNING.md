@@ -360,19 +360,49 @@ real device, and observe the failure. Then explain why the default is off.
 - Why must a `WRTE` not be sent before the stream is ready?
 - What does a stalled bulk endpoint look like from the host, and how is it cleared?
 
-## Module 10 — Where to Go Next
+## Module 10 — Installing Applications
+
+**Goal.** Understand what a slice that adds no protocol at all looks like.
+
+**Read.**
+
+1. [`include/adbcpp/app.hpp`](include/adbcpp/app.hpp) and
+   [`src/app.cpp`](src/app.cpp) — the whole slice.
+2. Blocker 25 in [`docs/04-blockers.md`](docs/04-blockers.md).
+
+`install` pushes an APK with `push`, runs `pm install` over the shell service,
+and removes the pushed copy. Every layer below it already existed, which is why the
+whole slice is composition: `push` is the `sync` `SEND` request and `pm install` is
+a shell command. Nothing in `protocol`, `session`, or `stream` changed.
+
+Two details are worth studying. The path is single-quoted, because the device runs
+the command through `sh -c` and a name with a space would otherwise be split into
+several words. And `pm` reports its outcome in its output, not only in its exit
+code: `Success` means it worked and `Failure [REASON]` means it did not, so a
+rejection is a normal answer and `install` returns it rather than throwing.
+
+**Exercise.** Add `reinstall(connection, package, apk)`, which pulls a package's
+APK, uninstalls the package, and installs the pulled copy, so that the same APK
+comes back. Note that the pull has to happen before the uninstall, and that the
+package's data survives only when the caller keeps it.
+
+**Checkpoint.**
+
+- Why does `install` need no new line in the protocol layers?
+- Why is `failure_reason()` empty for a file that is not an APK?
+- What would break if `install` removed the pushed APK before `pm install` ran?
+
+## Module 11 — Where to Go Next
 
 **Goal.** Choose the next slice and apply everything you have learned.
 
 **Read.** [`docs/03-roadmap.md`](docs/03-roadmap.md) — the remaining slices:
-install/uninstall, app control, and finally TCP plus silent authentication.
+app control, and finally TCP plus silent authentication.
 
-**Exercise.** Implement Slice 5 (install an APK by pushing it to
-`/data/local/tmp` with the `push` you already have, then running
-`pm install` over the shell service and reading its exit code). Note how little is
-new: the whole slice is composition, not protocol. `push` and `run` are both
-already there, and `pm install` reports success through the exit code that
-blocker 19 fixed.
+**Exercise.** Implement Slice 6. Launching and stopping an app are shell commands
+(`am start` and `am force-stop`), so the slice is composition again, and its work
+is in deciding what the device's output means: `pidof` prints nothing when the app
+is not running, and `dumpsys` prints a paragraph to be searched.
 
 **Checkpoint.**
 
@@ -430,4 +460,6 @@ When you have finished, you should be able to:
   from a listing's.
 - Push a file and explain what the `<path>,<mode>` spec and the acknowledging
   `OKAY` are for.
+- Install and uninstall an application by composing `push` and `run`, and explain why
+  a package manager's rejection is a result rather than an error.
 - Capture a real `adb` session and use it as a baseline to debug your own.

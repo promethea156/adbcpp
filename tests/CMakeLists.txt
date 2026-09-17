@@ -9,6 +9,7 @@ FetchContent_MakeAvailable(Catch2)
 
 add_executable(adbcpp_tests
   adb_key_test.cpp
+  app_test.cpp
   connection_test.cpp
   protocol_message_test.cpp
   session_test.cpp

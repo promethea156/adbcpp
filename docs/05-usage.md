@@ -2,7 +2,8 @@
 
 Practical, copy-pasteable examples for everything `adbcpp` can do today: connect
 over USB, run a shell command, list a directory, pull and push files, stat a path,
-work with the ADB key, and use the lower-level protocol layers directly. Every
+install and uninstall an application, work with the ADB key, and use the lower-level
+protocol layers directly. Every
 example compiles against the library as it stands now. For the theory behind them, read
 [`LEARNING.md`](../LEARNING.md); for how the `sync` service works, read
 [`06-sync-protocol.md`](06-sync-protocol.md).
@@ -55,7 +56,8 @@ directory to `PATH` (or copy it next to your executable) at runtime.
 Include what you use:
 
 ```cpp
-#include "adbcpp/adbcpp.hpp"                 // core: Connection, Stream, run, protocol
+#include "adbcpp/adbcpp.hpp"                 // core: Connection, Stream, run, install, protocol
+#include "adbcpp/app.hpp"                     // adbcpp::install, adbcpp::PackageResult
 #include "adbcpp/sync.hpp"                    // adbcpp::list, adbcpp::DirEntry
 #include "adbcpp/crypto/adb_key.hpp"          // adbcpp::crypto::Key
 #include "adbcpp/usb/usb_transport.hpp"       // adbcpp::usb::UsbTransport
@@ -302,6 +304,67 @@ int main()
     return 0;
 }
 ```
+
+## Install and Uninstall an Application
+
+`install` pushes an APK into the device's `/data/local/tmp`, installs it from there
+with `pm install`, and removes the pushed copy. Both of the services it needs are
+already in the library, so this is composition rather than a new protocol: `push` is
+the `sync` `SEND` request, and `pm install` runs over the shell service.
+
+```cpp
+#include <iostream>
+#include <span>
+#include <string>
+
+#include "adbcpp/adbcpp.hpp"
+#include "adbcpp/crypto/adb_key.hpp"
+#include "adbcpp/usb/usb_transport.hpp"
+
+int main()
+{
+    adbcpp::usb::DeviceId id;
+    id.vendor_id = 0x22D9;
+    id.product_id = 0x2769;
+
+    adbcpp::usb::UsbTransport transport(id);
+    const auto key = adbcpp::crypto::Key::load_or_generate();
+    const std::string &public_key_string = key.public_key();
+    const auto public_key = std::span(reinterpret_cast<const std::byte *>(public_key_string.data()),
+                                     public_key_string.size());
+
+    adbcpp::Connection connection(transport, public_key,
+                                  [&key](std::span<const std::byte> token) { return key.sign(token); });
+
+    // `-r` replaces an existing package and keeps its data.
+    const adbcpp::PackageResult installed = adbcpp::install(connection, "app.apk", "-r");
+    if (!installed.success)
+    {
+        std::cerr << "install failed: " << installed.failure_reason() << '\n';
+    }
+
+    const adbcpp::PackageResult removed = adbcpp::uninstall(connection, "com.example.app");
+    if (!removed.success)
+    {
+        std::cerr << "uninstall failed: " << removed.failure_reason() << '\n';
+    }
+
+    transport.close();
+    return 0;
+}
+```
+
+`options` are passed to `pm install` verbatim, so `-r` replaces an existing
+package and keeps its data, `-d` allows a version downgrade, and `-g` grants all
+runtime permissions. `uninstall(connection, "com.example.app", true)` adds `-k` to
+`pm uninstall`, which keeps the package's data and cache directories.
+
+A package manager that rejects the request is a normal answer rather than an error, so
+both return `success == false` with the device's output instead of throwing. An
+exception means the transfer or the stream failed, not the install.
+`PackageResult::failure_reason()` extracts the reason from `Failure [REASON]`; the
+device does not always answer in that form, so `output` always holds its answer
+verbatim (blocker 25).
 
 ## Inspect the ADB Key
 
@@ -616,6 +679,9 @@ int main()
 | Pull a file from the device              | `adbcpp::pull(connection, "/sdcard/a", "a")`              |
 | Push a file to the device                | `adbcpp::push(connection, "a", "/sdcard/a")`              |
 | Stat a path on the device                | `adbcpp::stat(connection, "/sdcard/a")`                   |
+| Install an APK                          | `adbcpp::install(connection, "app.apk", "-r")`            |
+| Uninstall a package                     | `adbcpp::uninstall(connection, "com.example.app")`         |
+| Read a package manager's failure reason    | `result.failure_reason()`                                  |
 | Open a service manually                | `adbcpp::Stream stream(connection, "shell:echo hello")`   |
 | Read a stream until the device closes    | `stream.read_all()`                                     |
 | Read an exact number of bytes            | `stream.read(buffer)`                                    |
@@ -643,8 +709,19 @@ int main()
 - **`run` merges stdout and stderr.** They arrive interleaved, so the order is not
   guaranteed. `CommandResult` does not separate them.
 - **This is not a full `adb` replacement yet.** The shell service, `sync`-based
-  directory listing, and file transfer in both directions are exposed; install and app
-  control are still on the roadmap ([`03-roadmap.md`](03-roadmap.md)).
+  directory listing, file transfer in both directions, and install and uninstall are
+  exposed; app control is still on the roadmap ([`03-roadmap.md`](03-roadmap.md)).
+- **A package manager rejection is not an error.** `install` and `uninstall` return
+  `success == false` with the device's output rather than throwing, because a rejected
+  APK and a package that cannot be removed are normal answers. An exception means the
+  transfer or the stream failed instead.
+- **A pushed APK is left in `/data/local/tmp` if the process dies.** `install`
+  removes it after the install, and it also removes it when the install is rejected,
+  but a process that is killed part way through leaves it behind.
+- **An APK name or package name is single-quoted.** The device runs the command
+  through `sh -c`, so a name with a space or a quote would otherwise be split into
+  several words. `install` and `uninstall` quote it, but `options` are passed through
+  as they are and so must not come from untrusted input.
 - **A pulled file may be partial.** `pull` creates or truncates the local file before
   the transfer starts, so a transfer that fails leaves the chunks received so far
   behind. The caller decides whether to retry or remove it.

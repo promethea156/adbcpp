@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 
+#include "adbcpp/app.hpp"
 #include "adbcpp/connection.hpp"
 #include "adbcpp/crypto/adb_key.hpp"
 #include "adbcpp/shell.hpp"
@@ -14,10 +15,12 @@
 
 // A session over USB: open the ADB interface, authenticate with the key shared
 // with adb, then either list a directory (`--list <path>`), pull a file
-// (`--pull <remote> <local>`), push a file (`--push <local> <remote>`), or run a
-// shell command (the default). All of them mirror what `adb` does, so they are
-// interchangeable on the device. `--timeout <ms>` and `--budget <ms>` tune the
-// transfer timing anywhere on the command line.
+// (`--pull <remote> <local>`), push a file (`--push <local> <remote>`), install
+// an APK (`--install <apk> [options]`), uninstall a package
+// (`--uninstall <package>`), or run a shell command (the default). All of them
+// mirror what `adb` does, so they are interchangeable on the device.
+// `--timeout <ms>` and `--budget <ms>` tune the transfer timing anywhere on the
+// command line.
 int main(int argc, char **argv)
 {
     // `--timeout <ms>` is the timeout for each bulk transfer and `--budget <ms>`
@@ -110,6 +113,25 @@ int main(int argc, char **argv)
             std::cout << "pushed " << args[1] << " to " << args[2] << '\n';
             transport.close();
             return 0;
+        }
+
+        if (args.size() > 1 && args[0] == "--install")
+        {
+            // The flags after the APK go to `pm install` as they are, so
+            // `--install app.apk -r` reinstalls an existing package.
+            const std::string_view options = args.size() > 2 ? std::string_view(args[2]) : std::string_view{};
+            const auto result = adbcpp::install(connection, args[1], options);
+            std::cout << result.output;
+            transport.close();
+            return result.success ? 0 : 1;
+        }
+
+        if (args.size() > 1 && args[0] == "--uninstall")
+        {
+            const auto result = adbcpp::uninstall(connection, args[1]);
+            std::cout << result.output;
+            transport.close();
+            return result.success ? 0 : 1;
         }
 
         const std::string command = args.empty() ? "echo hello" : args[0];

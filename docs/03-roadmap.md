@@ -61,7 +61,18 @@ A transfer's `DONE` is a `sync_data` record, not the DENT struct that ends a lis
 
 `stat` follows symbolic links, so a symlink to a directory is correctly reported as a directory. It returns a missing path as an empty result rather than an error, because the device reports it inside the response.
 
-**Next:** Slice 5 — install and uninstall an APK.
+**Slice 5 — complete.** An APK is installed and a package is uninstalled:
+
+- `install` pushes the APK into the device's `/data/local/tmp` with `push`, runs `pm install` over the shell service, and removes the pushed APK whether the install worked or not.
+- `uninstall` runs `pm uninstall`; `keep_data` adds `-k`, which keeps the package's data.
+- Public API: `install(connection, apk, options)` and `uninstall(connection, package, keep_data)`, both returning a `PackageResult`.
+- `options` are passed to `pm install` verbatim, so `-r` reinstalls a package in place and keeps its data.
+
+Nothing was needed at the protocol layer: the slice is composition, as the roadmap predicted. `push` is the `sync` `SEND` request and `pm install` is a shell command, so both already existed, and `pm` reports its outcome through the exit code that blocker 19 fixed.
+
+Two details were found while getting it working. The APK path and the package name are single-quoted, because the device runs the command through `sh -c`, exactly as adb's `escape_arg` does. And a package manager that rejects a request is a normal answer rather than an error, so it is returned as `success == false` with the device's output; the two commands report a rejection differently (blocker 25).
+
+**Next:** Slice 6 — app control.
 
 ## Slice 0 — Walking Skeleton
 
@@ -122,7 +133,11 @@ Add the `sync` service and directory enumeration.
 - Run `pm install` / `pm uninstall` over the shell service.
 - Public API: `install(apk)`, `uninstall(package)`.
 
-**Acceptance:** install and uninstall an APK on a real device.
+**Acceptance:** install and uninstall an APK on a real device. Met with a stock APK
+pulled from the device, uninstalled, and installed again from the pulled copy. The
+device test runs that round trip when `ADBCPP_TEST_APK` and `ADBCPP_TEST_PACKAGE`
+name a disposable APK, and always checks the two failure paths, which touch no
+package.
 
 ## Slice 6 — App Control
 

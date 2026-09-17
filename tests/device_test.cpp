@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -7,6 +8,7 @@
 #include <span>
 #include <string>
 
+#include "adbcpp/app.hpp"
 #include "adbcpp/connection.hpp"
 #include "adbcpp/crypto/adb_key.hpp"
 #include "adbcpp/shell.hpp"
@@ -21,6 +23,104 @@ namespace
 
 // CTest reports this exit code as a skipped test.
 constexpr int kSkip = 77;
+
+// Slice 5: install and uninstall. The failure paths run always, because they
+// touch no package: a file that is not an APK is rejected, and a package that is
+// not installed cannot be removed. Both are normal answers from the package
+// manager rather than errors, so they arrive as a result and not as an exception.
+//
+// The two report their failure differently: `pm install` throws a Java exception
+// with the reason on its stack trace, so there is no `Failure [...]` to extract,
+// while `pm uninstall` prints the usual `Failure [REASON]`.
+//
+// The success path replaces a package, so it only runs when the caller names a
+// disposable APK and its package with `ADBCPP_TEST_APK` and
+// `ADBCPP_TEST_PACKAGE`. The APK is pulled first, so it can be put back even if
+// the round trip fails part of the way through.
+int check_install(adbcpp::Connection &connection)
+{
+    const auto bogus = std::filesystem::temp_directory_path() / "adbcpp_device_bogus.apk";
+    {
+        std::ofstream output(bogus, std::ios::binary | std::ios::trunc);
+        output << "this is not an APK\n";
+    }
+    const auto rejected = adbcpp::install(connection, bogus);
+    std::filesystem::remove(bogus);
+
+    if (rejected.success)
+    {
+        std::cerr << "a file that is not an APK was installed\n";
+        return 1;
+    }
+    if (rejected.output.empty())
+    {
+        std::cerr << "a rejected APK reported nothing\n";
+        return 1;
+    }
+
+    const auto missing = adbcpp::uninstall(connection, "com.adbcpp.not.installed");
+    if (missing.success)
+    {
+        std::cerr << "a package that is not installed was uninstalled\n";
+        return 1;
+    }
+    if (missing.failure_reason().empty())
+    {
+        std::cerr << "a rejected package reported no reason: " << missing.output << '\n';
+        return 1;
+    }
+
+    const char *apk = std::getenv("ADBCPP_TEST_APK");
+    const char *package = std::getenv("ADBCPP_TEST_PACKAGE");
+    if (apk == nullptr || package == nullptr)
+    {
+        std::cerr << "ADBCPP_TEST_APK and ADBCPP_TEST_PACKAGE are not set; "
+                     "skipping the install and uninstall success path\n";
+        return 0;
+    }
+
+    const auto saved = std::filesystem::temp_directory_path() / "adbcpp_device_test.apk";
+    adbcpp::pull(connection, apk, saved);
+
+    // `-r` replaces the package in place and keeps its data.
+    const auto replaced = adbcpp::install(connection, saved, "-r");
+    if (!replaced.success)
+    {
+        std::cerr << "replacing " << package << " failed: " << replaced.output << '\n';
+        return 1;
+    }
+
+    const auto removed = adbcpp::uninstall(connection, package);
+    if (!removed.success)
+    {
+        std::cerr << "uninstalling " << package << " failed: " << removed.output << '\n';
+        return 1;
+    }
+
+    const auto gone = adbcpp::run(connection, "pm list packages " + std::string(package));
+    if (gone.output.find(package) != std::string::npos)
+    {
+        std::cerr << package << " is still installed after uninstall\n";
+        return 1;
+    }
+
+    const auto installed = adbcpp::install(connection, saved);
+    if (!installed.success)
+    {
+        std::cerr << "installing " << package << " failed: " << installed.output << '\n';
+        return 1;
+    }
+
+    const auto back = adbcpp::run(connection, "pm path " + std::string(package));
+    if (back.output.find(package) == std::string::npos)
+    {
+        std::cerr << package << " is not installed after install\n";
+        return 1;
+    }
+
+    std::filesystem::remove(saved);
+    return 0;
+}
 
 } // namespace
 
@@ -116,7 +216,13 @@ int main()
         std::filesystem::remove(pushed_local);
         std::filesystem::remove(pushed_back);
 
+        const int install_result = check_install(connection);
+
         transport.close();
+        if (install_result != 0)
+        {
+            return install_result;
+        }
         if (pushed_contents != "adbcpp-push-test\n")
         {
             std::cerr << "unexpected pushed contents: " << pushed_contents << '\n';
