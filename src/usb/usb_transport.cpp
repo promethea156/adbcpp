@@ -7,6 +7,7 @@
 #include <libusb.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
@@ -81,6 +82,34 @@ struct UsbTransport::Impl
     std::vector<std::byte> incoming;
     std::size_t incoming_offset = 0;
     unsigned int transfer_timeout_ms = kDefaultTransferTimeoutMs;
+    unsigned int transfer_budget_ms = kDefaultTransferBudgetMs;
+
+    // Runs one bulk transfer, retrying while it times out having moved nothing.
+    //
+    // libusb gives up when the peer sends nothing at all for `transfer_timeout_ms`.
+    // That silence can be transient, or, during the handshake, the user taking their
+    // time to approve the on-device debugging prompt, so the attempt is repeated
+    // until the budget runs out. libusb is careful not to lose data it did transfer,
+    // and warns not to treat a timeout as proof that nothing moved, so `transferred`
+    // decides: nothing moved is retried, and a partial transfer is returned to the
+    // caller, which treats a partial read as a short read and a partial write as a
+    // desync.
+    int bulk_transfer(unsigned char endpoint, unsigned char *data, int length, int *transferred)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(transfer_budget_ms);
+        while (true)
+        {
+            const int rc = libusb_bulk_transfer(handle, endpoint, data, length, transferred, transfer_timeout_ms);
+            if (rc != LIBUSB_ERROR_TIMEOUT || *transferred > 0)
+            {
+                return rc;
+            }
+            if (std::chrono::steady_clock::now() >= deadline)
+            {
+                return rc;
+            }
+        }
+    }
 
     ~Impl()
     {
@@ -218,6 +247,16 @@ unsigned int UsbTransport::transfer_timeout() const noexcept
     return impl_->transfer_timeout_ms;
 }
 
+void UsbTransport::set_transfer_budget(unsigned int milliseconds) noexcept
+{
+    impl_->transfer_budget_ms = milliseconds;
+}
+
+unsigned int UsbTransport::transfer_budget() const noexcept
+{
+    return impl_->transfer_budget_ms;
+}
+
 std::size_t UsbTransport::read(std::span<std::byte> buffer)
 {
     // One bulk transfer is read at a time, but the caller may ask for fewer bytes
@@ -228,10 +267,12 @@ std::size_t UsbTransport::read(std::span<std::byte> buffer)
     {
         impl_->incoming.resize(kReadBufferSize);
         int transferred = 0;
-        const int rc = libusb_bulk_transfer(
-            impl_->handle, impl_->endpoint_in, reinterpret_cast<unsigned char *>(impl_->incoming.data()),
-            static_cast<int>(impl_->incoming.size()), &transferred, impl_->transfer_timeout_ms);
-        if (rc != 0)
+        const int rc =
+            impl_->bulk_transfer(impl_->endpoint_in, reinterpret_cast<unsigned char *>(impl_->incoming.data()),
+                                 static_cast<int>(impl_->incoming.size()), &transferred);
+        // A timeout that still delivered bytes is a short read, not a failure: the
+        // bytes are used and the caller reads on.
+        if (rc != 0 && !(rc == LIBUSB_ERROR_TIMEOUT && transferred > 0))
         {
             fail("libusb_bulk_transfer", rc);
         }
@@ -261,12 +302,17 @@ void UsbTransport::write(std::span<const std::byte> data)
     }
 
     int transferred = 0;
-    const int rc =
-        libusb_bulk_transfer(impl_->handle, impl_->endpoint_out,
-                             const_cast<unsigned char *>(reinterpret_cast<const unsigned char *>(data.data())),
-                             static_cast<int>(data.size()), &transferred, impl_->transfer_timeout_ms);
+    const int rc = impl_->bulk_transfer(
+        impl_->endpoint_out, const_cast<unsigned char *>(reinterpret_cast<const unsigned char *>(data.data())),
+        static_cast<int>(data.size()), &transferred);
     if (rc != 0)
     {
+        // A write is never retried once it has moved bytes: the device received a
+        // prefix of a message, and sending the rest would desynchronize the stream.
+        if (rc == LIBUSB_ERROR_TIMEOUT && transferred > 0)
+        {
+            throw std::runtime_error("adbcpp: short USB write: the stream is desynchronized");
+        }
         fail("libusb_bulk_transfer", rc);
     }
     // A short write means the device received only part of a message, which would

@@ -16,19 +16,26 @@
 // with adb, then either list a directory (`--list <path>`), pull a file
 // (`--pull <remote> <local>`), push a file (`--push <local> <remote>`), or run a
 // shell command (the default). All of them mirror what `adb` does, so they are
-// interchangeable on the device. `--timeout <ms>` raises the per-transfer timeout
-// anywhere on the command line, which a slow device may need for a large file.
+// interchangeable on the device. `--timeout <ms>` and `--budget <ms>` tune the
+// transfer timing anywhere on the command line.
 int main(int argc, char **argv)
 {
-    // `--timeout <ms>` sets the timeout for each bulk transfer, not for a whole
-    // file, so a large file does not get one deadline for all of it.
+    // `--timeout <ms>` is the timeout for each bulk transfer and `--budget <ms>`
+    // the total a transfer waits before giving up. The timeout is short so that a
+    // silent device is noticed quickly; the budget is what lets a slow device, or a
+    // user approving the debugging prompt, take its time.
     unsigned int transfer_timeout_ms = adbcpp::usb::UsbTransport::kDefaultTransferTimeoutMs;
+    unsigned int transfer_budget_ms = adbcpp::usb::UsbTransport::kDefaultTransferBudgetMs;
     std::vector<std::string> args;
     for (int i = 1; i < argc; ++i)
     {
         if (std::string_view(argv[i]) == "--timeout" && i + 1 < argc)
         {
             transfer_timeout_ms = static_cast<unsigned int>(std::stoul(argv[++i]));
+        }
+        else if (std::string_view(argv[i]) == "--budget" && i + 1 < argc)
+        {
+            transfer_budget_ms = static_cast<unsigned int>(std::stoul(argv[++i]));
         }
         else
         {
@@ -54,6 +61,7 @@ int main(int argc, char **argv)
     try
     {
         adbcpp::usb::UsbTransport transport(id, transfer_timeout_ms);
+        transport.set_transfer_budget(transfer_budget_ms);
 
         // Load the key adb already authorized, so the device does not prompt. The
         // public key is only needed for the AUTH type 3 fallback (blocker 11).

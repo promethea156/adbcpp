@@ -44,13 +44,20 @@ public:
     /// The default timeout for each bulk transfer, in milliseconds.
     ///
     /// The timeout applies to **one bulk transfer**, which carries at most one
-    /// message header or payload, and not to a whole file transfer. A large file
-    /// is a long sequence of small transfers, and each one gets the full timeout
-    /// again, so a slow device never accumulates a single deadline over a whole
-    /// file. The default is long enough to wait for the user to approve the
-    /// on-device debugging prompt; raise it for a device or host that is slow to
-    /// move a single chunk, for example when pulling a very large file.
-    static constexpr unsigned int kDefaultTransferTimeoutMs = 120000;
+    /// message header or payload, and not to a whole file transfer. libusb gives up
+    /// when the peer sends nothing at all for this long, so the value bounds how long
+    /// a stall is tolerated, not how long a chunk takes on the wire. It is deliberately
+    /// short, so that a device that has gone quiet is noticed quickly, and a timeout is
+    /// retried rather than failing the transfer outright.
+    static constexpr unsigned int kDefaultTransferTimeoutMs = 5000;
+
+    /// The default total a single transfer waits before it gives up, in milliseconds.
+    ///
+    /// A transfer is retried while it times out with nothing transferred, because
+    /// silence can be transient, or, during the handshake, the user taking their time
+    /// to approve the on-device debugging prompt. This budget bounds that retrying, so
+    /// the wait is bounded even though the per-transfer timeout is short.
+    static constexpr unsigned int kDefaultTransferBudgetMs = 120000;
 
     /// Returns whether a USB device matching `id` is currently present.
     static bool is_present(DeviceId id);
@@ -68,6 +75,12 @@ public:
 
     /// The timeout applied to each bulk transfer, in milliseconds.
     unsigned int transfer_timeout() const noexcept;
+
+    /// Sets the total a single transfer waits before giving up, in milliseconds.
+    void set_transfer_budget(unsigned int milliseconds) noexcept;
+
+    /// The total a single transfer waits before giving up, in milliseconds.
+    unsigned int transfer_budget() const noexcept;
 
     std::size_t read(std::span<std::byte> buffer) override;
     void write(std::span<const std::byte> data) override;

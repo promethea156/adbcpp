@@ -651,11 +651,12 @@ int main()
 - **A pushed file may have wider permissions.** The device copies the user permission
   bits to the group and other bits, so a `0644` local file becomes `0666` on the
   device. That is the daemon's behaviour, not the library's.
-- **A very large file on a slow device may need a longer timeout.** `UsbTransport`
-  bounds each bulk transfer, not the whole file, so a large file is never given one
-  deadline. A device that stalls on a single chunk past the default can still fail,
-  though: raise it with `UsbTransport(id, transfer_timeout_ms)` or
-  `set_transfer_timeout`, or `--timeout <ms>` on the example.
+- **A very large file on a slow device may need a longer budget.** `UsbTransport`
+  bounds each bulk transfer with a short timeout and retries it while nothing was
+  transferred, so a device that has gone quiet is noticed quickly. The total wait is the
+  budget, which defaults to two minutes and covers the human-paced approval of the
+  on-device debugging prompt. Raise it with `set_transfer_budget`, or `--budget <ms>` on
+  the example, when a device is slower than that.
 - **A stream ignores frames for other streams.** Frames carry the recipient's local id
   in `arg1`, and the device can send a `CLOSE` for a previous stream while the next
   one opens, so `Stream` skips any frame whose `arg1` is not its own local id. Do not
