@@ -23,8 +23,8 @@ inline constexpr std::uint32_t kSync = make_command('S', 'Y', 'N', 'C');
 /// ADB protocol version advertised in the CNXN message.
 inline constexpr std::uint32_t kVersion = 0x01000001u;
 
-/// Maximum payload size advertised in the CNXN message.
-inline constexpr std::uint32_t kMaxData = 256 * 1024;
+/// Maximum payload size advertised in the CNXN message. Matches adb's `MAX_PAYLOAD`.
+inline constexpr std::uint32_t kMaxData = 1024 * 1024;
 
 /// AUTH payload type values (the `arg0` field of an AUTH message).
 inline constexpr std::uint32_t kAuthToken = 1;

@@ -55,14 +55,14 @@ Each entry has the same shape:
 - **Symptom**: The device did not accept `shell_v2` and the handshake did not progress.
 - **Cause**: AOSP's host sends `host::features=<list>` and adbd **resets its feature set from that banner**. Without a feature list the device treats the host as supporting nothing.
 - **Resolution**: Send the standard host feature set in the CNXN banner. See `kSystemIdentity` in `include/adbcpp/connection.hpp`.
-- **Note**: The exact feature list matters for `shell_v2` and for delayed acknowledgements. The current list is hand-maintained; deriving it from AOSP's `supported_features()` would be more robust.
+- **Note**: The exact feature list matters for `shell_v2` and for delayed acknowledgements. The current list is hand-maintained; deriving it from AOSP's `supported_features()` would be more robust. A USBPcap capture of adb 37.0.1 showed that the adb host advertises `...sendrecv_v2_dry_run_send,devicetracker_proto_format,devraw,app_info,server_status,track_mdns` with **no** `openscreen_mdns` (that is an adbd feature, not a host one), so it was removed from `kSystemIdentity` to match.
 
-### 7. The CNXN/OPEN/AUTH payloads are null-terminated
+### 7. The OPEN/AUTH payloads are null-terminated
 
-- **Symptom**: The device did not parse the banner, service string, or public key reliably.
-- **Cause**: AOSP null-terminates the connection banner, the stream destination, and the RSA public key payloads.
-- **Resolution**: Append a trailing `\0` to each payload and include it in `data_length`.
-- **Note**: This was later revisited. The current AOSP `send_connect` does **not** append a null to the CNXN banner (it assigns the string directly and uses its length), while it does for `OPEN` and the AUTH public key. Commit `6fd54c8` added the CNXN null, a later refactor dropped it, and it was restored in `be5bd08`. If this is revisited, compare against the AOSP revision that matches the target device rather than assuming.
+- **Symptom**: The device did not parse the service string or public key reliably.
+- **Cause**: AOSP null-terminates the stream destination (`OPEN`) and the RSA public key (`AUTH` type 3) payloads and includes the null in `data_length`.
+- **Resolution**: Append a trailing `\0` to the `OPEN` and `AUTH` public-key payloads.
+- **Note**: The CNXN banner was initially null-terminated too. A USBPcap capture showed that adb's host CNXN banner is exactly 286 bytes with **no** trailing null (it passes the string length), so the CNXN null was removed in favour of the `OPEN`/`AUTH` payloads, which do need one.
 
 ### 8. The ADB private key is PKCS#8 PEM
 

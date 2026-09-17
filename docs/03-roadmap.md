@@ -11,9 +11,9 @@ This is deliberate: rather than completing an entire layer before anything is ru
 **Slice 1 — complete.** `echo hello` runs over USB against a real device and its output is captured:
 
 - USB transport: ADB interface + bulk endpoints, `clear_halt` on open, header/payload as separate transfers.
-- Handshake: `CNXN` (advertising `host::features=<list>`) → `AUTH` token → signed reply → device `CNXN` (protocol `0x01000001`).
+- Handshake: `CNXN` (advertising `host::features=<list>` and a 1 MiB maximum payload) → `AUTH` token → signed reply → device `CNXN` (protocol `0x01000001`).
 - Keys are persisted at `~/.android/adbkey` (PKCS#8 PEM) and `~/.android/adbkey.pub` (ADB format).
-- The token is signed with the private key (`AUTH` type 2, PKCS#1 v1.5/SHA-1). If the device rejects the signature, the public key is offered (`AUTH` type 3) so the user can authorize it, exactly like adb.
+- The token is signed with the private key (`AUTH` type 2, PKCS#1 v1.5/SHA-1). adbd verifies with `RSA_verify(NID_sha1, token, ...)`, so the token is signed directly as the SHA-1 digest and is not re-hashed. If the device rejects the signature, the public key is offered (`AUTH` type 3) so the user can authorize it, exactly like adb.
 - Stream lifecycle: `OPEN` / `OKAY` / `WRTE` / `CLSE`, with `shell_v2` stdout/stderr/exit parsing.
 
 Two bugs found while getting `OPEN` working:
@@ -25,6 +25,8 @@ Two bugs found while getting `OPEN` working:
 | payload | `shell,v2,raw:echo hello\0` | same |
 
 Matching adb's values (local id `2`, `delayed_ack` removed from the feature list, `arg1` `0`) did **not** fix it. Instrumenting the session showed the real cause: the `OPEN` header advertised `data_length=24`, but `Stream`'s constructor passed the payload only to `make_message` and not to `Connection::send`, so the 24 payload bytes were never written. The payload is now passed to `send` as well.
+
+A third bug blocked silent authentication: `Key::sign` hashed the token with SHA-1 and then signed that hash as the digest, double-hashing it, so adbd rejected every signature and showed the authorization prompt on every run. `Key::sign` now signs the token directly as the digest, matching adb's `RSA_sign(NID_sha1, token, ...)`. This was confirmed with a USBPcap capture of one adb session and one `adbcpp` session; see blockers 10 and 16 in `04-blockers.md`.
 
 **Next:** Slice 2 — list files over the `sync` service.
 
