@@ -15,7 +15,8 @@ add_executable(adbcpp_tests
   stream_test.cpp
 )
 target_link_libraries(adbcpp_tests
-  PRIVATE adbcpp::adbcpp adbcpp::crypto Catch2::Catch2WithMain
+  PRIVATE adbcpp::adbcpp adbcpp::crypto MbedTLS::mbedcrypto
+    Catch2::Catch2WithMain
 )
 
 list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
