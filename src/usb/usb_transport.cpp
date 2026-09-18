@@ -7,8 +7,10 @@
 #include <libusb.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -37,6 +39,49 @@ Error fail(std::string_view what, int code)
                  std::string(what) + ": " + libusb_strerror(static_cast<enum libusb_error>(code))};
 }
 
+// Reads the device's USB `iSerial` descriptor string, which is the serial adb
+// prints and selects on. An empty result means the device has no serial descriptor,
+// or that it could not be read; the two are not distinguished because the caller
+// treats both as "select by model instead".
+std::string device_serial(libusb_device *device, const libusb_device_descriptor &descriptor)
+{
+    if (descriptor.iSerialNumber == 0)
+    {
+        return {};
+    }
+
+    libusb_device_handle *handle = nullptr;
+    if (libusb_open(device, &handle) != 0)
+    {
+        return {};
+    }
+
+    std::array<unsigned char, 256> buffer{};
+    const int length = libusb_get_string_descriptor_ascii(handle, descriptor.iSerialNumber, buffer.data(),
+                                                          static_cast<int>(buffer.size()));
+    libusb_close(handle);
+    if (length <= 0)
+    {
+        return {};
+    }
+    return std::string(reinterpret_cast<const char *>(buffer.data()), static_cast<std::size_t>(length));
+}
+
+// Whether `descriptor` can satisfy `id`. A zero vendor or product id matches any,
+// so a selector with only a serial finds its device whatever the model.
+bool matches(const libusb_device_descriptor &descriptor, DeviceId id)
+{
+    if (id.vendor_id != 0 && descriptor.idVendor != id.vendor_id)
+    {
+        return false;
+    }
+    if (id.product_id != 0 && descriptor.idProduct != id.product_id)
+    {
+        return false;
+    }
+    return true;
+}
+
 libusb_device *find_device(libusb_device **devices, ssize_t count, DeviceId id)
 {
     for (ssize_t i = 0; i < count; ++i)
@@ -46,7 +91,13 @@ libusb_device *find_device(libusb_device **devices, ssize_t count, DeviceId id)
         {
             continue;
         }
-        if (descriptor.idVendor == id.vendor_id && descriptor.idProduct == id.product_id)
+        if (!matches(descriptor, id))
+        {
+            continue;
+        }
+        // Reading the serial opens the device, so it is only done when a serial was
+        // asked for; without one the first model match is taken, as before.
+        if (id.serial.empty() || device_serial(devices[i], descriptor) == id.serial)
         {
             return devices[i];
         }
@@ -54,7 +105,105 @@ libusb_device *find_device(libusb_device **devices, ssize_t count, DeviceId id)
     return nullptr;
 }
 
+// The ADB interface and the bulk endpoints it exposes.
+struct AdbInterface
+{
+    int number = -1;
+    std::uint8_t endpoint_in = 0;
+    std::uint8_t endpoint_out = 0;
+};
+
+// Locates the ADB interface (class 0xFF, subclass 0x42, protocol 0x01) and its
+// bulk endpoints. An empty optional means the device has no ADB interface, and an
+// error means the descriptors could not be read at all.
+Result<std::optional<AdbInterface>> find_adb_interface(libusb_device *device)
+{
+    libusb_config_descriptor *config = nullptr;
+    int rc = libusb_get_active_config_descriptor(device, &config);
+    if (rc != 0)
+    {
+        rc = libusb_get_config_descriptor(device, 0, &config);
+    }
+    if (rc != 0)
+    {
+        return tl::unexpected(fail("libusb_get_config_descriptor", rc));
+    }
+
+    AdbInterface found;
+    for (std::uint8_t i = 0; i < config->bNumInterfaces && found.number < 0; ++i)
+    {
+        const libusb_interface &interface = config->interface[i];
+        for (int j = 0; j < interface.num_altsetting; ++j)
+        {
+            const libusb_interface_descriptor &altsetting = interface.altsetting[j];
+            if (altsetting.bInterfaceClass != kAdbInterfaceClass ||
+                altsetting.bInterfaceSubClass != kAdbInterfaceSubClass ||
+                altsetting.bInterfaceProtocol != kAdbInterfaceProtocol)
+            {
+                continue;
+            }
+            found.number = altsetting.bInterfaceNumber;
+            for (std::uint8_t k = 0; k < altsetting.bNumEndpoints; ++k)
+            {
+                const libusb_endpoint_descriptor &endpoint = altsetting.endpoint[k];
+                if ((endpoint.bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) != LIBUSB_TRANSFER_TYPE_BULK)
+                {
+                    continue;
+                }
+                if ((endpoint.bEndpointAddress & LIBUSB_ENDPOINT_DIR_MASK) == LIBUSB_ENDPOINT_IN)
+                {
+                    found.endpoint_in = endpoint.bEndpointAddress;
+                }
+                else
+                {
+                    found.endpoint_out = endpoint.bEndpointAddress;
+                }
+            }
+            break;
+        }
+    }
+    libusb_free_config_descriptor(config);
+
+    if (found.number < 0 || found.endpoint_in == 0 || found.endpoint_out == 0)
+    {
+        return std::optional<AdbInterface>{};
+    }
+    return found;
+}
+
 } // namespace
+
+Result<DeviceId> DeviceId::parse(std::string_view text)
+{
+    constexpr std::string_view kSerialPrefix = "serial:";
+    if (text.starts_with(kSerialPrefix))
+    {
+        if (text.size() == kSerialPrefix.size())
+        {
+            return tl::unexpected(Error{ErrorCode::InvalidArgument, "serial: needs a serial number"});
+        }
+        DeviceId id;
+        id.serial = std::string(text.substr(kSerialPrefix.size()));
+        return id;
+    }
+
+    const std::size_t colon = text.find(':');
+    if (colon == std::string_view::npos || colon == 0 || colon + 1 == text.size())
+    {
+        return tl::unexpected(Error{ErrorCode::InvalidArgument, "expected VID:PID or serial:<serial>"});
+    }
+    try
+    {
+        DeviceId id;
+        id.vendor_id = static_cast<std::uint16_t>(std::stoul(std::string(text.substr(0, colon)), nullptr, 16));
+        id.product_id = static_cast<std::uint16_t>(std::stoul(std::string(text.substr(colon + 1)), nullptr, 16));
+        return id;
+    }
+    catch (const std::exception &)
+    {
+        return tl::unexpected(Error{ErrorCode::InvalidArgument, "VID:PID must be hexadecimal"});
+    }
+}
 
 Result<bool> UsbTransport::is_present(DeviceId id)
 {
@@ -72,6 +221,49 @@ Result<bool> UsbTransport::is_present(DeviceId id)
     {
         libusb_free_device_list(devices, 1);
     }
+    libusb_exit(context);
+    return found;
+}
+
+Result<std::vector<DeviceId>> UsbTransport::list()
+{
+    libusb_context *context = nullptr;
+    const int initialized = libusb_init(&context);
+    if (initialized != 0)
+    {
+        return tl::unexpected(fail("libusb_init", initialized));
+    }
+
+    libusb_device **devices = nullptr;
+    const ssize_t count = libusb_get_device_list(context, &devices);
+    if (count < 0)
+    {
+        libusb_exit(context);
+        return tl::unexpected(fail("libusb_get_device_list", static_cast<int>(count)));
+    }
+
+    std::vector<DeviceId> found;
+    for (ssize_t i = 0; i < count; ++i)
+    {
+        libusb_device_descriptor descriptor{};
+        if (libusb_get_device_descriptor(devices[i], &descriptor) != 0)
+        {
+            continue;
+        }
+        // A device without an ADB interface is not one of ours, so it is skipped
+        // rather than reported and then failing to open.
+        const auto adb = find_adb_interface(devices[i]);
+        if (!adb || !*adb)
+        {
+            continue;
+        }
+        DeviceId id;
+        id.vendor_id = descriptor.idVendor;
+        id.product_id = descriptor.idProduct;
+        id.serial = device_serial(devices[i], descriptor);
+        found.push_back(std::move(id));
+    }
+    libusb_free_device_list(devices, 1);
     libusb_exit(context);
     return found;
 }
@@ -168,59 +360,20 @@ Result<UsbTransport> UsbTransport::open(DeviceId id, unsigned int transfer_timeo
         return tl::unexpected(Error{ErrorCode::Transport, "no USB device matching the given id"});
     }
 
-    libusb_config_descriptor *config = nullptr;
-    rc = libusb_get_active_config_descriptor(match, &config);
-    if (rc != 0)
-    {
-        rc = libusb_get_config_descriptor(match, 0, &config);
-    }
-    if (rc != 0)
+    const auto adb = find_adb_interface(match);
+    if (!adb)
     {
         libusb_free_device_list(devices, 1);
-        return tl::unexpected(fail("libusb_get_config_descriptor", rc));
+        return tl::unexpected(adb.error());
     }
-
-    for (std::uint8_t i = 0; i < config->bNumInterfaces && transport.impl_->interface_number < 0; ++i)
-    {
-        const libusb_interface &interface = config->interface[i];
-        for (int j = 0; j < interface.num_altsetting; ++j)
-        {
-            const libusb_interface_descriptor &altsetting = interface.altsetting[j];
-            if (altsetting.bInterfaceClass != kAdbInterfaceClass ||
-                altsetting.bInterfaceSubClass != kAdbInterfaceSubClass ||
-                altsetting.bInterfaceProtocol != kAdbInterfaceProtocol)
-            {
-                continue;
-            }
-            transport.impl_->interface_number = altsetting.bInterfaceNumber;
-            for (std::uint8_t k = 0; k < altsetting.bNumEndpoints; ++k)
-            {
-                const libusb_endpoint_descriptor &endpoint = altsetting.endpoint[k];
-                if ((endpoint.bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) != LIBUSB_TRANSFER_TYPE_BULK)
-                {
-                    continue;
-                }
-                if ((endpoint.bEndpointAddress & LIBUSB_ENDPOINT_DIR_MASK) == LIBUSB_ENDPOINT_IN)
-                {
-                    transport.impl_->endpoint_in = endpoint.bEndpointAddress;
-                }
-                else
-                {
-                    transport.impl_->endpoint_out = endpoint.bEndpointAddress;
-                }
-            }
-            break;
-        }
-    }
-
-    libusb_free_config_descriptor(config);
-
-    if (transport.impl_->interface_number < 0 || transport.impl_->endpoint_in == 0 ||
-        transport.impl_->endpoint_out == 0)
+    if (!*adb)
     {
         libusb_free_device_list(devices, 1);
         return tl::unexpected(Error{ErrorCode::Transport, "ADB USB interface not found"});
     }
+    transport.impl_->interface_number = (*adb)->number;
+    transport.impl_->endpoint_in = (*adb)->endpoint_in;
+    transport.impl_->endpoint_out = (*adb)->endpoint_out;
 
     rc = libusb_open(match, &transport.impl_->handle);
     libusb_free_device_list(devices, 1);

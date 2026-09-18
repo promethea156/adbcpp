@@ -57,6 +57,38 @@ TEST_CASE("connection completes the handshake without authentication", "[connect
     REQUIRE(connection.max_data() == 4096u);
 }
 
+TEST_CASE("connection reports the device serial from its banner", "[connection]")
+{
+    adbcpp::testing::MockTransport transport;
+
+    const std::string banner = "device::ABC123::ro.product.name=test;features=shell_v2,cmd";
+    const auto payload = std::span(reinterpret_cast<const std::byte *>(banner.data()), banner.size());
+    const auto device = make_message(adbcpp::protocol::kCnxn, 0x01000001u, 4096u, payload);
+    transport.feed(device.encode());
+    transport.feed(payload);
+
+    const auto connection = unwrap(adbcpp::Connection::connect(transport));
+
+    REQUIRE(connection.device_serial() == "ABC123");
+    REQUIRE(connection.supports_feature("shell_v2"));
+}
+
+TEST_CASE("connection reports an empty serial when the banner has none", "[connection]")
+{
+    adbcpp::testing::MockTransport transport;
+
+    const std::string banner = "device::ro.product.name=test;features=shell_v2";
+    const auto payload = std::span(reinterpret_cast<const std::byte *>(banner.data()), banner.size());
+    const auto device = make_message(adbcpp::protocol::kCnxn, 0x01000001u, 4096u, payload);
+    transport.feed(device.encode());
+    transport.feed(payload);
+
+    const auto connection = unwrap(adbcpp::Connection::connect(transport));
+
+    REQUIRE(connection.device_serial().empty());
+    REQUIRE(connection.supports_feature("shell_v2"));
+}
+
 TEST_CASE("connection answers an AUTH request with the public key", "[connection]")
 {
     adbcpp::testing::MockTransport transport;

@@ -212,6 +212,43 @@ int main()
 `CommandResult::output` is stdout and stderr combined, in the order the device
 produced them, and `exit_code` is the command's status.
 
+Two devices of the same model share the vendor and product id, so they are told
+apart by their USB serial. `UsbTransport::list` returns every attached ADB device
+with its serial, and `DeviceId::parse` accepts either a `VID:PID` model or a
+`serial:<serial>` selector:
+
+```cpp
+const auto devices = adbcpp::usb::UsbTransport::list();
+if (!devices)
+{
+    std::cerr << "error: " << devices.error().message << '\n';
+    return 1;
+}
+for (const auto &device : *devices)
+{
+    std::cout << std::hex << device.vendor_id << ':' << device.product_id << std::dec << ' ' << device.serial << '\n';
+}
+
+const auto id = adbcpp::usb::DeviceId::parse("serial:3B15AD001NS00000");
+if (!id)
+{
+    std::cerr << "error: " << id.error().message << '\n';
+    return 1;
+}
+auto transport = adbcpp::usb::UsbTransport::open(*id);
+```
+
+`Connection::device_serial` returns the `serialno` from the device's banner, which
+is the fallback for a device whose USB descriptor has no serial. It is empty on most
+current devices, whose serial is the descriptor:
+
+```cpp
+if (!connection->device_serial().empty())
+{
+    std::cout << "serial: " << connection->device_serial() << '\n';
+}
+```
+
 ## Connect over TCP
 
 An emulator, or a device put into `tcpip` mode, is reached over TCP instead of
@@ -1097,6 +1134,8 @@ int main()
 | I want to...                        | Use                                                     |
 | ------------------------------------ | ------------------------------------------------------- |
 | Check that a device is attached        | `adbcpp::usb::UsbTransport::is_present(id)` → `Result<bool>` |
+| List attached devices with serials       | `adbcpp::usb::UsbTransport::list()` → `Result<std::vector<DeviceId>>` |
+| Parse a `VID:PID` or `serial:` selector | `adbcpp::usb::DeviceId::parse(text)` → `Result<DeviceId>` |
 | Open a USB transport                  | `adbcpp::usb::UsbTransport::open(id)` → `Result<UsbTransport>` |
 | Open a TCP transport                  | `adbcpp::tcp::TcpTransport::open("localhost:5555")` → `Result<TcpTransport>` |
 | Load or create the ADB key              | `adbcpp::crypto::Key::load_or_generate()` → `Result<Key>` |
@@ -1126,13 +1165,14 @@ int main()
 | Test without a device                  | `adbcpp::testing::MockTransport` + `feed()`              |
 | Send/receive raw messages              | `adbcpp::Session`                                        |
 | Inspect the negotiated features         | `connection->device_version()`, `connection->max_data()`     |
+| Read the device's banner serial           | `connection->device_serial()`                              |
 | Check a device feature                  | `connection->supports_feature("ls_v2")`                     |
 | Check delayed acknowledgements           | `connection->supports_delayed_ack()`                       |
 | Detect the authorization prompt          | `connection->requested_authorization()`                    |
 
 ## Pitfalls
 
-- **Nothing is thread-safe.** `Transport`, `Connection`, `Stream`, and `Key` each say so: they share mutable state, so concurrent use of one object must be serialized by the caller. One thread per device is the supported way to work with several devices at once, because every connection is independent. Two devices are needed rather than two connections to one, because the WinUSB driver admits a single handle per device, so the same device cannot be opened twice even from two processes (blocker 28); `UsbTransport::open` also cannot yet tell two identical devices apart, so each needs a unique USB serial ([`03-roadmap.md`](03-roadmap.md#working-with-several-devices-in-parallel)).
+- **Nothing is thread-safe.** `Transport`, `Connection`, `Stream`, and `Key` each say so: they share mutable state, so concurrent use of one object must be serialized by the caller. One thread per device is the supported way to work with several devices at once, because every connection is independent. Two devices are needed rather than two connections to one, because the WinUSB driver admits a single handle per device, so the same device cannot be opened twice even from two processes (blocker 28). Two devices of the same model are told apart by `DeviceId::serial`, which `UsbTransport::list` fills in ([`03-roadmap.md`](03-roadmap.md#slice-8--select-a-device-by-serial)).
 - **Keep the key alive.** The signer callback is stored by the `Connection`, so the
   `Key` it captures must outlive the connection. A dangling reference crashes on
   the first AUTH.

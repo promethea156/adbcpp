@@ -57,7 +57,13 @@ Nothing was needed at the protocol layer: the slice is composition again, as the
 
 This completes the initial scope.
 
-**Next:** Select devices by serial, the last gap for the intended use case.
+**Slice 8 — complete.** Two devices of the same model are told apart by their USB serial:
+
+- `DeviceId` carries an optional serial, matched against the device's USB `iSerial` string descriptor, and a selector with no ids matches by serial alone.
+- `UsbTransport::list()` enumerates the attached ADB devices with their serials, and `Connection::device_serial()` reports the banner's `serialno` for a device whose descriptor has none.
+- Public API: `DeviceId::parse("VID:PID")`, `DeviceId::parse("serial:<serial>")`, and `UsbTransport::list()`.
+
+**Next:** The rest of [Future Improvements](#future-improvements).
 
 ## Proposed Order for What Remains
 
@@ -71,7 +77,7 @@ A proposal, not a commitment. Nothing below blocks the next slice, and any of it
 | 4 | State thread safety for `Connection`, `Stream`, and `Key` | **Done.** Each states that it is not thread-safe and must be serialized by the caller, matching `Transport`. |
 | 5 | Settle the [threading model for several devices](#working-with-several-devices-in-parallel) | **Done.** One thread per device; `Transport` stays blocking and `examples/multi` drives two devices on two threads. |
 | 6 | [Slice 7 — TCP transport](#slice-7--tcp-transport) | **Done.** Native sockets, so the core stays free of any third-party dependency. |
-| 7 | [Select devices by serial](#working-with-several-devices-in-parallel) | The last gap for the intended use case, once TCP is in. |
+| 7 | [Select devices by serial](#working-with-several-devices-in-parallel) | **Done.** `DeviceId` matches the USB `iSerial`, and `list()` discovers the serials. |
 | 8 | The rest of [Future Improvements](#other-improvements) | Logging, the `shell_v2` fallback, and `sendrecv_v2` each matter only once a caller needs them. |
 
 ## Slice 0 — Walking Skeleton
@@ -162,6 +168,19 @@ Two things this slice deliberately does **not** add. The adb *server* protocol's
 
 This slice completes the initial scope. What remains after it is in [Future Improvements](#future-improvements).
 
+## Slice 8 — Select a Device by Serial
+
+The last gap for the intended use case, [working with several devices](#working-with-several-devices-in-parallel): telling two devices apart when they are the same model.
+
+- `DeviceId` gains an optional `serial`, matched against the device's USB `iSerial` string descriptor, which is the serial `adb` prints in `adb devices`. A selector with no ids matches by serial alone, so the model need not be known.
+- `UsbTransport::list()` enumerates the attached ADB devices, each with its serial, so a caller can discover one.
+- `Connection::device_serial()` exposes the banner's `serialno` field for a device whose descriptor has none.
+- Public API: `DeviceId::parse("VID:PID")` and `DeviceId::parse("serial:<serial>")`, and `UsbTransport::list()`.
+
+**Acceptance:** `examples/multi` lists two attached devices and opens each by its own serial; the same serial also works as a selector on `examples/usb`.
+
+The `serialno` field of the system identity string, `<systemtype>::<serialno>::<banner>`, is empty on the two test devices, whose serial is the descriptor; `parse_serial` reads it for the devices that do fill it in. Reading a descriptor serial needs the device opened, which is why `find_device` only does it when a serial was asked for, and why the WinUSB single-handle rule (blocker 28) makes the two device opens sequential rather than nested.
+
 ## Cross-Cutting Concerns
 
 Obligations that run through every slice, with the current state of each.
@@ -197,14 +216,13 @@ A USB 3 device also resets its link around the open and stalls the first write
 (blocker 29), so both examples retry the whole open and handshake; `adb` does the
 same at a lower level by sending the CNXN twice.
 
-One gap remains: `UsbTransport::open(DeviceId)` matches on vendor and product id
-alone, and `find_device` returns the first match, so two identical devices cannot be
-told apart. Add selection by serial: enumerate, read each device's USB `iSerial`
-string, and let the caller open by serial, as adb does. The device banner's
-`serialno` is the fallback where the descriptor has none.
+Selection by serial was the last gap, and [Slice 8](#slice-8--select-a-device-by-serial)
+closes it: `DeviceId` matches the device's USB `iSerial` string descriptor, and
+`UsbTransport::list` enumerates the serials, so two identical devices no longer
+both resolve to the first match.
 
-`examples/multi` is the acceptance: it opens two devices, each on its own thread,
-and both run `echo hello` and a file round trip.
+`examples/multi` is the acceptance: it lists the attached devices, opens two by their
+own serial, each on its own thread, and both run `echo hello` and a file round trip.
 
 ### Other Improvements
 

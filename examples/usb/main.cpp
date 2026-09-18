@@ -39,8 +39,8 @@ namespace
 // (`--close <package>`), check whether an app runs (`--running <package>`), or run
 // a shell command (the default). All of them mirror what `adb` does, so they are
 // interchangeable on the device. `--timeout <ms>` and `--budget <ms>` tune the
-// transfer timing, and `--device <VID:PID>` (hex) picks the target device;
-// both may appear anywhere on the command line.
+// transfer timing, and `--device <VID:PID>` (hex) or `--serial <serial>` picks the
+// target device; both may appear anywhere on the command line, and the last one wins.
 int main(int argc, char **argv)
 {
     // `--timeout <ms>` is the timeout for each bulk transfer and `--budget <ms>`
@@ -67,15 +67,20 @@ int main(int argc, char **argv)
         }
         else if (std::string_view(argv[i]) == "--device" && i + 1 < argc)
         {
-            const std::string_view text = argv[++i];
-            const auto colon = text.find(':');
-            if (colon == std::string_view::npos)
+            const auto parsed = adbcpp::usb::DeviceId::parse(argv[++i]);
+            if (!parsed)
             {
-                std::cerr << "error: --device expects VID:PID in hex\n";
+                std::cerr << "error: " << parsed.error().message << '\n';
                 return 1;
             }
-            id.vendor_id = static_cast<std::uint16_t>(std::stoul(std::string(text.substr(0, colon)), nullptr, 16));
-            id.product_id = static_cast<std::uint16_t>(std::stoul(std::string(text.substr(colon + 1)), nullptr, 16));
+            id = *parsed;
+        }
+        else if (std::string_view(argv[i]) == "--serial" && i + 1 < argc)
+        {
+            // A serial alone selects the device whatever its model, so the ids are
+            // cleared; `--device` after it would set them again.
+            id = adbcpp::usb::DeviceId{};
+            id.serial = argv[++i];
         }
         else
         {
@@ -92,8 +97,16 @@ int main(int argc, char **argv)
     }
     if (!*present)
     {
-        std::cerr << "warning: no USB device " << std::hex << id.vendor_id << ':' << id.product_id << std::dec
-                  << " found; skipping\n";
+        std::cerr << "warning: no USB device ";
+        if (!id.serial.empty())
+        {
+            std::cerr << "with serial " << id.serial;
+        }
+        else
+        {
+            std::cerr << std::hex << id.vendor_id << ':' << id.product_id << std::dec;
+        }
+        std::cerr << " found; skipping\n";
         return 0;
     }
 
@@ -163,8 +176,15 @@ int main(int argc, char **argv)
             std::cerr << "the device rejected the signature and requested "
                          "authorization\n";
         }
-        std::cout << "connected to a device running protocol 0x" << std::hex << connection->device_version() << std::dec
-                  << '\n';
+        std::cout << "connected to a device running protocol 0x" << std::hex << connection->device_version()
+                  << std::dec;
+        // The banner serial is the fallback when the USB descriptor has none, so
+        // it is printed even when it was not used to select the device.
+        if (!connection->device_serial().empty())
+        {
+            std::cout << " with serial " << connection->device_serial();
+        }
+        std::cout << '\n';
 
         if (args.size() > 1 && args[0] == "--list")
         {

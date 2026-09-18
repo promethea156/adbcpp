@@ -139,6 +139,17 @@ public:
         return requested_authorization_;
     }
 
+    /// The device's serial number from its CNXN banner, or empty when it has none.
+    ///
+    /// A USB device's serial is its `iSerial` descriptor, which
+    /// `UsbTransport::list` exposes and `DeviceId::serial` selects on. This banner
+    /// field is the fallback for a device whose descriptor has none, and it is only
+    /// available after the handshake.
+    std::string_view device_serial() const noexcept
+    {
+        return device_serial_;
+    }
+
 private:
     // Connecting is done by `connect`, which owns the handshake, so the
     // constructor only holds the session.
@@ -151,6 +162,8 @@ private:
     std::uint32_t next_local_id_ = 2;
     // The device's `features=` list, parsed from its CNXN banner.
     std::vector<std::string> features_;
+    // The device's banner `serialno`, parsed from its CNXN banner.
+    std::string device_serial_;
     bool delayed_ack_ = false;
     bool requested_authorization_ = false;
 };

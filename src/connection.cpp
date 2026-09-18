@@ -36,42 +36,69 @@ Result<protocol::Message> make_auth(std::uint32_t type, std::span<const std::byt
     return auth;
 }
 
-// Parses the `features=<a,b,c>` list from a CNXN banner. The banner may hold
-// other `key=value` properties separated by `;`, so the list ends at the next `;`
-// or at the end of the banner.
-std::vector<std::string> parse_features(std::string_view banner)
+// Parses a `key=<value>` property from a CNXN banner. The banner holds several
+// such properties separated by `;`, so the value ends at the next `;` or at the end
+// of the banner.
+std::string parse_property(std::string_view banner, std::string_view key)
 {
-    constexpr std::string_view kPrefix = "features=";
-    const std::size_t position = banner.find(kPrefix);
+    const std::size_t position = banner.find(key);
     if (position == std::string_view::npos)
     {
         return {};
     }
 
-    std::string_view list = banner.substr(position + kPrefix.size());
-    const std::size_t end = list.find(';');
+    std::string_view value = banner.substr(position + key.size());
+    const std::size_t end = value.find(';');
     if (end != std::string_view::npos)
     {
-        list = list.substr(0, end);
+        value = value.substr(0, end);
     }
+    return std::string(value);
+}
+
+// Parses the `features=<a,b,c>` list from a CNXN banner.
+std::vector<std::string> parse_features(std::string_view banner)
+{
+    const std::string list = parse_property(banner, "features=");
 
     std::vector<std::string> features;
     std::size_t start = 0;
     while (start <= list.size())
     {
         const std::size_t comma = list.find(',', start);
-        const std::size_t stop = comma == std::string_view::npos ? list.size() : comma;
+        const std::size_t stop = comma == std::string::npos ? list.size() : comma;
         if (stop > start)
         {
             features.emplace_back(list.substr(start, stop - start));
         }
-        if (comma == std::string_view::npos)
+        if (comma == std::string::npos)
         {
             break;
         }
         start = comma + 1;
     }
     return features;
+}
+
+// Parses the `serialno` field from the system identity string, which
+// `docs/dev/protocol.md` documents as `<systemtype>::<serialno>::<banner>`.
+//
+// The field is empty on current devices, whose serial is the USB `iSerial`
+// descriptor instead, and it is then this banner field that is the fallback for a
+// device whose descriptor has none.
+std::string parse_serial(std::string_view banner)
+{
+    const std::size_t first = banner.find("::");
+    if (first == std::string_view::npos)
+    {
+        return {};
+    }
+    const std::size_t second = banner.find("::", first + 2);
+    if (second == std::string_view::npos)
+    {
+        return {};
+    }
+    return std::string(banner.substr(first + 2, second - first - 2));
 }
 
 } // namespace
@@ -201,6 +228,7 @@ Result<Connection> Connection::connect(Transport &transport, std::span<const std
     // variants, for example `ls_v2` for the v2 LIST/DENT form.
     const std::string banner(reinterpret_cast<const char *>(frame->payload.data()), frame->payload.size());
     connection.features_ = parse_features(banner);
+    connection.device_serial_ = parse_serial(banner);
 
     // `delayed_ack` is only enabled if both sides advertised it, so a device
     // that does not support it keeps the OPEN window at zero (blocker 12).

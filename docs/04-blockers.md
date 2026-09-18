@@ -237,3 +237,12 @@ Each entry has the same shape:
 - **Cause**: The device resets its USB 3 link just after `libusb_open`/`libusb_claim_interface` and before the host's first write. The CNXN is written while the link is down and is discarded, so the device never answers and the read finds a stalled endpoint. A USBPcap capture shows USB 3 link-management frames on the device's address immediately before the host's CNXN, and no reply.
 - **Resolution**: Re-opening the transport and re-running `Connection::connect` recovers, so `examples/usb` and `examples/multi` retry the whole open and handshake a few times with a short delay. Clearing the endpoint's halt inside the one transport was not enough, because the CNXN itself had already been lost.
 - **Note**: `adb` sends the CNXN twice, which is the same retry at a lower level. The retry belongs at the open rather than in `Session`, because a device that re-enumerates invalidates the handle, and because `Session::receive` closes the transport on a framing error.
+
+## Device Selection
+
+### 30. The device banner does not carry the serial on current devices
+
+- **Symptom**: `Connection::device_serial()`, which reads the `serialno` field of the system identity string `<systemtype>::<serialno>::<banner>`, is empty for both test devices, while `adb devices` shows their serials.
+- **Cause**: Current adbd sends `device::<props>`, with the serialno field left empty and the props (`ro.product.*`, `features=`) directly after the one `::`. `adb` takes a USB device's serial from its `iSerial` descriptor instead, not from the banner. A device that fills the field in would have it read as the props string by AOSP's `parse_banner`, losing `features=`, so current devices leave it empty.
+- **Resolution**: The USB `iSerial` descriptor is the real source, and `DeviceId::serial` matches on it. `Connection::device_serial()` still parses the banner field, for the devices that do fill it in.
+- **Note**: A device with neither an `iSerial` descriptor nor a banner serialno can only be selected as part of its model. `adb`'s `serial_name()` has the same two sources and the same gap.

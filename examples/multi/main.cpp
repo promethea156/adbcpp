@@ -21,41 +21,13 @@
 
 // Drives two devices at once, one thread each. The objects share no state, so
 // this is the supported model for several devices: one thread per device. Each
-// `VID:PID` argument (hex) names a device, and two are needed, because the
-// WinUSB driver admits a single handle per device, so one device cannot be opened
-// twice (blocker 28). With no argument both default to the test device, which a
-// single attached device cannot satisfy. Two identical devices both match the first
-// until selection by serial is added.
+// argument names a device as `VID:PID` (hex) or `serial:<serial>`, and two are
+// needed, because the WinUSB driver admits a single handle per device, so one device
+// cannot be opened twice (blocker 28). With no argument the attached ADB devices
+// are listed and the first two are used, which is how two identical devices are told
+// apart: each is selected by its own USB serial.
 namespace
 {
-
-adbcpp::usb::DeviceId default_device()
-{
-    adbcpp::usb::DeviceId id;
-    id.vendor_id = 0x22D9;
-    id.product_id = 0x2769;
-    return id;
-}
-
-adbcpp::Result<adbcpp::usb::DeviceId> parse_device(std::string_view text)
-{
-    const auto colon = text.find(':');
-    if (colon == std::string_view::npos)
-    {
-        return tl::unexpected(adbcpp::Error{adbcpp::ErrorCode::InvalidArgument, "expected VID:PID"});
-    }
-    try
-    {
-        adbcpp::usb::DeviceId id;
-        id.vendor_id = static_cast<std::uint16_t>(std::stoul(std::string(text.substr(0, colon)), nullptr, 16));
-        id.product_id = static_cast<std::uint16_t>(std::stoul(std::string(text.substr(colon + 1)), nullptr, 16));
-        return id;
-    }
-    catch (const std::exception &)
-    {
-        return tl::unexpected(adbcpp::Error{adbcpp::ErrorCode::InvalidArgument, "VID:PID must be hexadecimal"});
-    }
-}
 
 // Runs the whole exchange on one device and returns what it printed, so the two
 // threads never write to `std::cout` at the same time. The open and the handshake
@@ -115,6 +87,11 @@ adbcpp::Result<std::string> drive(adbcpp::usb::DeviceId id, int index)
 
     std::string log = "device " + tag + " connected to protocol 0x";
     log += std::to_string(connection->device_version());
+    if (!connection->device_serial().empty())
+    {
+        log += " with serial ";
+        log += connection->device_serial();
+    }
     log += '\n';
 
     const auto hello = adbcpp::run(*connection, "echo hello");
@@ -168,7 +145,7 @@ int main(int argc, char **argv)
     std::vector<adbcpp::usb::DeviceId> devices;
     for (int i = 1; i < argc; ++i)
     {
-        const auto parsed = parse_device(argv[i]);
+        const auto parsed = adbcpp::usb::DeviceId::parse(argv[i]);
         if (!parsed)
         {
             std::cerr << "error: " << parsed.error().message << '\n';
@@ -176,11 +153,28 @@ int main(int argc, char **argv)
         }
         devices.push_back(*parsed);
     }
-    // Both selectors name the test device when no argument is given, so a single
-    // attached device opens the same one twice and its driver refuses.
+
+    // With no selector, the attached devices are listed and the first two used.
+    // Each is then opened by its own serial, so two identical devices do not both
+    // resolve to the first (blocker 28).
+    if (devices.empty())
+    {
+        const auto attached = adbcpp::usb::UsbTransport::list();
+        if (!attached)
+        {
+            std::cerr << "error: " << attached.error().message << '\n';
+            return 1;
+        }
+        if (attached->size() < 2)
+        {
+            std::cerr << "warning: two ADB devices are needed, but " << attached->size() << " is attached; skipping\n";
+            return 0;
+        }
+        devices.assign(attached->begin(), attached->begin() + 2);
+    }
     while (devices.size() < 2)
     {
-        devices.push_back(default_device());
+        devices.push_back(devices.front());
     }
 
     std::vector<std::string> logs(2);

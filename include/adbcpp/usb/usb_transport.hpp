@@ -4,6 +4,9 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string>
+#include <string_view>
+#include <vector>
 
 #include "adbcpp/error.hpp"
 #include "adbcpp/export.hpp"
@@ -12,23 +15,47 @@
 namespace adbcpp::usb
 {
 
-/// Identifies an ADB USB device by vendor and product id.
+/// Identifies an ADB USB device, by model and optionally by USB serial number.
 ///
 /// Every device exposes the same USB ids for its ADB interface regardless of
-/// manufacturer, so a USB vendor/product pair selects one particular model.
+/// manufacturer, so a vendor/product pair selects one particular model. Two devices
+/// of that model are then told apart by `serial`, which is the USB `iSerial`
+/// descriptor string, the same value adb prints in `adb devices`.
+///
+/// A default-constructed id matches the first ADB device, and one with only
+/// `serial` set matches by serial alone, so a caller does not need to know the ids
+/// of a device whose serial they have.
 struct ADBCPP_API DeviceId
 {
+    /// The USB vendor id, or zero to match any vendor.
     std::uint16_t vendor_id = 0;
+    /// The USB product id, or zero to match any product.
     std::uint16_t product_id = 0;
+    /// The USB serial number, or empty to match the first matching device.
+    ///
+    /// A device with no `iSerial` descriptor has an empty serial, so it can only be
+    /// selected as part of a model, or through its banner `serialno`
+    /// (`Connection::device_serial`) when the model is ambiguous.
+    std::string serial;
+
+    /**
+     * @brief Parses a selector: `VID:PID` (hex) or `serial:<serial>`.
+     *
+     * `VID:PID` selects a model and leaves @ref serial empty; `serial:<serial>`
+     * selects a serial and leaves the ids zero, so it matches the device whatever
+     * its model. Anything else is an `InvalidArgument`.
+     */
+    static Result<DeviceId> parse(std::string_view text);
 };
 
 /**
  * @brief A Transport over ADB's USB interface, backed by libusb.
  *
- * Opens the device matching the given vendor/product id, locates the ADB
- * interface (class `0xFF`, subclass `0x42`, protocol `0x01`), and uses its
- * bulk endpoints. That interface class/subclass/protocol triple is how both adb
- * and adbd find the ADB function; AOSP matches it in `usb_libusb.cpp`:
+ * Opens the device matching the given @ref DeviceId, by its serial when one is
+ * set, locates the ADB interface (class `0xFF`, subclass `0x42`, protocol
+ * `0x01`), and uses its bulk endpoints. That interface class/subclass/protocol
+ * triple is how both adb and adbd find the ADB function; AOSP matches it in
+ * `usb_libusb.cpp`:
  *
  *   https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/client/usb_libusb.cpp
  *
@@ -69,11 +96,29 @@ public:
     static Result<bool> is_present(DeviceId id);
 
     /**
+     * @brief Returns every attached ADB device, each with its USB serial filled in.
+     *
+     * This is how a caller discovers the serial of a device to pass to @ref open,
+     * since a USB serial cannot be known in advance. The list is in libusb's
+     * enumeration order, which is stable for one attached set. A device whose USB
+     * descriptor has no serial is still listed, with an empty @ref DeviceId::serial.
+     *
+     * @note A device that is claimed by a running adb server is still listed,
+     * because enumeration does not claim it, but @ref open then fails.
+     */
+    static Result<std::vector<DeviceId>> list();
+
+    /**
      * @brief Opens the USB device matching `id`.
      *
      * Opening can fail, and a constructor cannot report that, so this is a named
      * factory and the constructor is private. Both timings are taken here rather
      * than set afterwards, so the transport is fully configured before it exists.
+     *
+     * When @ref DeviceId::serial is empty the first device matching the ids is
+     * opened; otherwise the device's USB serial must match it too, which is how two
+     * identical devices are told apart. A device with no serial descriptor cannot
+     * be selected by serial here, and its banner `serialno` is the fallback.
      *
      * @param transfer_timeout_ms The timeout for each bulk transfer, in
      *        milliseconds. See @ref kDefaultTransferTimeoutMs.
