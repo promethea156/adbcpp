@@ -1,6 +1,10 @@
 <!--
 Thanks for the pull request. Please fill in the sections below and delete any
 that do not apply. Target the `development` branch, not `main`.
+
+A short-lived branch is squash-merged, so the branch is deleted and its commits
+collapse into one. A long-lived branch is merged with a merge commit instead, so its
+history stays in the target (see docs/01-objective.md#merging).
 -->
 
 ## What does this change?
