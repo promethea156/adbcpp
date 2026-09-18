@@ -6,6 +6,13 @@ Never commit or push without the user's explicit approval. Do not run `git commi
 
 When asking for approval, show the proposed commit message and the list of files that would be included, so the user can review exactly what will be committed.
 
+## Branching
+
+`main` is stable, `development` integrates feature work, `release_candidate` stabilizes a
+release, and `hotfix` carries an urgent fix from `main` back to `main` and `development`. A
+short-lived branch is `<type>/<slug>`. See `docs/01-objective.md` for the full model. Do not
+switch the current branch or create a branch without saying so.
+
 ## Local Tooling
 
 ### `adb` can hang the terminal
