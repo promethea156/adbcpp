@@ -1,0 +1,74 @@
+name: Bug report
+description: Something built, ran, or behaved incorrectly.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening, please search the existing issues and
+        [`docs/04-blockers.md`](../blob/development/docs/04-blockers.md) — the sharp edge
+        may already be documented.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: The behaviour you saw, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: A minimal sequence, ideally including the command or code that triggered it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Output and exit code
+      description: The full error, and any `Result<T>` error code the library returned.
+      render: shell
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - Linux
+        - macOS
+        - Other (say which below)
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: adbcpp version or commit, compiler, and CMake version.
+      placeholder: adbcpp 1.0.0, MSVC 19.4x, cmake 3.29
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Device
+      description: Model, Android version, and whether it was USB or TCP. Say "none" for a device-free bug.
+      placeholder: Pixel 6, Android 14, USB
+    validations:
+      required: false
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: A capture, a workaround, or the part of the code you suspect.
+    validations:
+      required: false
