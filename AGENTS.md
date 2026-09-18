@@ -20,7 +20,7 @@ $result = Invoke-Adb -Arguments @("devices") -Adb "C:\path\to\adb.exe" -TimeoutS
 $result.Output
 ```
 
-Give a command that moves a large file a correspondingly larger `-TimeoutSeconds`. `adb` also holds the device's USB interface while it runs, so stop it (`adb kill-server`) before opening the same device with `adbcpp` (blocker 5).
+Give a command that moves a large file a correspondingly larger `-TimeoutSeconds`. `adb` also holds the device's USB interface while it runs, so stop it (`adb kill-server`) before opening the same device with `adbcpp` (blocker 5). `adb devices -l` prints each attached device's serial, which is the USB `iSerial` descriptor and the value `--serial` and `DeviceId::serial` take (blocker 30).
 
 ## Testing
 

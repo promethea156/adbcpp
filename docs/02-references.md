@@ -52,3 +52,4 @@ For completeness, the upstream protocol documents referenced by the resources ab
 - Sync: https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/docs/dev/sync.md
 - Services: https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/docs/dev/services.md
 - Delayed acknowledgements: https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/docs/dev/delayed_ack.md
+- USB serial selection (`LibUsbDevice::RetrieveSerial`): https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/client/usb_libusb_device.cpp

@@ -180,6 +180,12 @@ host's `features=` list, so an empty list makes the device treat the host as
 supporting nothing (blocker 6). This is the first place where "looks fine" is not
 enough.
 
+The identity string is `<systemtype>::<serialno>::<banner>`. The `serialno` field is
+empty on current devices, whose serial is their USB `iSerial` descriptor instead, so
+`Connection::device_serial` reads the field only for the devices that do fill it in;
+blocker 30 records the difference. The descriptor is also what `adb devices` prints,
+which is why a later module reads it rather than the banner.
+
 **Run.** With a device attached:
 
 ```
@@ -242,11 +248,20 @@ show that verifying over `SHA1(token)` fails.
 2. [`src/usb/usb_transport.cpp`](src/usb/usb_transport.cpp) — enumeration,
    claiming, and the bulk transfers.
 3. Blockers 3, 4, and 5 in [`docs/04-blockers.md`](docs/04-blockers.md).
+4. Blockers 28 and 30 in [`docs/04-blockers.md`](docs/04-blockers.md) — the
+   single handle per device, and the serial the `iSerial` descriptor carries.
 
 The ADB function is a vendor-specific USB interface (`0xFF`/`0x42`/`0x01`) with
 two bulk endpoints. The crucial difference from TCP is that a bulk transfer is a
 **discrete message**: a header and its payload arrive as two separate transfers,
 which is why `Session` writes them separately (blocker 3).
+
+A device's identity is its USB `iSerial` string descriptor, which
+`DeviceId::serial` matches and `UsbTransport::list` enumerates; it is the same
+string `adb devices` prints. `UsbTransport::open` reads it by opening the device,
+so the WinUSB single-handle rule (blocker 28) makes that read and the real open
+sequential rather than nested. The banner `serialno` field is the fallback, and it is
+empty on current devices (blocker 30).
 
 **Run.** With a device attached:
 
@@ -256,12 +271,15 @@ build/examples/Release/adbcpp_usb_example "echo hello"
 
 **Exercise.** In [`examples/usb/main.cpp`](examples/usb/main.cpp), print the
 interface number and both endpoint addresses after opening the transport, and compare
-them with what a capture shows for `adb`.
+them with what a capture shows for `adb`. Then run it with `--serial <serial>` and
+confirm the serial matches the one `adb devices -l` prints for that device.
 
 **Checkpoint.**
 
 - Why does `UsbTransport::read` return at most one transfer's worth of bytes?
 - What does `libusb_clear_halt` fix, and what can it not fix?
+- Why must the serial be read by opening the device, and how does the WinUSB
+  single-handle rule shape that?
 
 ## Module 6 — Streams and Services
 
@@ -484,8 +502,11 @@ shell commands (`am start` and `am force-stop`), so Slice 6 was composition agai
 and its work was in deciding what the device's output means: `am start` exits nonzero
 and prints `Error:` when the launcher cannot start, while `pidof` prints nothing and
 exits nonzero when the app is not running, so `is_running` reads the exit code as a
-definite answer. Slice 7 added a second `Transport`, over a socket, and every service
-worked over it unchanged, because `Session` owns the framing.
+definite answer. Slice 7 added a second `Transport`, over a socket, and every
+service worked over it unchanged, because `Session` owns the framing. Slice 8 gave
+the second device an identity: `DeviceId::serial` matches the USB `iSerial` descriptor
+that `adb devices` prints, and `UsbTransport::list` enumerates the serials, so two
+identical devices no longer both resolve to the first match.
 
 **Checkpoint.**
 
@@ -526,6 +547,9 @@ A few practical notes:
   running `adbcpp`, and vice versa (blocker 5).
 - The first connection after idle can time out; re-running usually succeeds
   (blocker 15).
+- `adb devices -l` lists each attached device with its serial, model, and product.
+  That serial is the USB `iSerial` descriptor and is what `--serial` takes, so it is
+  the baseline for which device a run reaches (blocker 30).
 
 ## Learning Outcomes
 
@@ -545,4 +569,6 @@ When you have finished, you should be able to:
   `OKAY` are for.
 - Install and uninstall an application by composing `push` and `run`, and explain why
   a package manager's rejection is a result rather than an error.
+- Tell two devices of the same model apart by their USB serial, and explain why that
+  serial is the `iSerial` descriptor that `adb devices` prints.
 - Capture a real `adb` session and use it as a baseline to debug your own.
