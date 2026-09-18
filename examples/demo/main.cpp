@@ -192,6 +192,12 @@ int main(int argc, char **argv)
                 std::cerr << "warning: no USB device found; skipping\n";
                 return 0;
             }
+            std::cout << "found " << devices->size() << " device(s):";
+            for (const auto &device : *devices)
+            {
+                std::cout << ' ' << (device.serial.empty() ? "(no serial)" : device.serial);
+            }
+            std::cout << std::endl;
             id = devices->front();
         }
         std::cout << "using device " << id.serial << '\n';
