@@ -69,6 +69,22 @@ Version bumps are derived from commit types, tying SemVer to the [commit message
 - `feat` maps to a **MINOR** release.
 - A `BREAKING CHANGE` (or `!`), regardless of type, maps to a **MAJOR** release.
 
+## Releasing
+
+A release is a tag, and the tag is the release: nothing is published that CI has not
+built and tested on every platform first.
+
+1. Bump `project(VERSION)` in `CMakeLists.txt`.
+2. Add the release's section to [`CHANGELOG.md`](../CHANGELOG.md), newest first.
+3. Commit with `chore(release): <version>`.
+4. Tag it `v<version>` and push the tag. The tag runs the whole CI matrix
+   (`.github/workflows/ci.yml`), and the `release` job then publishes the tag's
+   changelog section as the GitHub release.
+
+A release is only tagged once the tests pass on all three platforms, and a breaking
+change is only released on a **MAJOR** bump, so a tag's version and the changelog
+section it publishes never disagree.
+
 ## Commit Messages
 
 Commit messages follow the [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/#specification) specification.
