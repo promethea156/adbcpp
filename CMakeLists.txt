@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.24)
 
 project(
   adbcpp
-  VERSION 0.1.0
+  VERSION 1.0.0
   DESCRIPTION "A simplified, dependency-free ADB client library in C++"
   HOMEPAGE_URL "https://github.com/promethea156/adbcpp"
   LANGUAGES CXX

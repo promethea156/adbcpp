@@ -63,7 +63,13 @@ This completes the initial scope.
 - `UsbTransport::list()` enumerates the attached ADB devices with their serials, and `Connection::device_serial()` reports the banner's `serialno` for a device whose descriptor has none.
 - Public API: `DeviceId::parse("VID:PID")`, `DeviceId::parse("serial:<serial>")`, and `UsbTransport::list()`.
 
-**Next:** [Slice 9](#slice-9--release-10) — the 1.0 hardening — then the rest of [Future Improvements](#future-improvements).
+**Slice 9 — complete.** The 1.0 hardening, then the release:
+
+- `Transport::serial()` reports the device serial that `adb devices` prints, and `run` falls back to the v1 `shell` service without `shell_v2` (blockers 31 and 32).
+- The CNXN banner names only the features the library acts on.
+- `project(VERSION)` is `1.0.0`, [`CHANGELOG.md`](../CHANGELOG.md) records the release, and `v1.0.0` tags it.
+
+**Next:** The rest of [Future Improvements](#future-improvements).
 
 ## Proposed Order for What Remains
 
@@ -78,7 +84,7 @@ A proposal, not a commitment. Nothing below blocks the next slice, and any of it
 | 5 | Settle the [threading model for several devices](#working-with-several-devices-in-parallel) | **Done.** One thread per device; `Transport` stays blocking and `examples/multi` drives two devices on two threads. |
 | 6 | [Slice 7 — TCP transport](#slice-7--tcp-transport) | **Done.** Native sockets, so the core stays free of any third-party dependency. |
 | 7 | [Select devices by serial](#working-with-several-devices-in-parallel) | **Done.** `DeviceId` matches the USB `iSerial`, and `list()` discovers the serials. |
-| 8 | [Slice 9 — release 1.0 hardening](#slice-9--release-10) | The API and compatibility gaps to close before the version is fixed at 1.0. |
+| 8 | [Slice 9 — release 1.0 hardening](#slice-9--release-10) | **Done.** `Transport::serial`, the `shell` fallback, and the trimmed banner, then `1.0.0`. |
 | 9 | The rest of [Future Improvements](#other-improvements) | Logging and `sendrecv_v2` matter only once a caller needs them. |
 
 ## Slice 0 — Walking Skeleton
@@ -184,7 +190,7 @@ The `serialno` field of the system identity string, `<systemtype>::<serialno>::<
 
 ## Slice 9 — Release 1.0
 
-The initial scope is complete, so this slice is not new capability: it closes the API and compatibility gaps that would be expensive or misleading to change once the version is fixed at 1.0, and then performs the release itself. The three fixes are done and the release chores remain.
+The initial scope is complete, so this slice is not new capability: it closes the API and compatibility gaps that would be expensive or misleading to change once the version is fixed at 1.0, and then performs the release itself.
 
 - **The `adb devices` serial on the transport.** `Connection::device_serial` currently returns the banner `serialno`, which is empty on current devices, so a caller reading it gets nothing. Add `Transport::serial()`, returning the transport's identity (the USB `iSerial` descriptor, or the TCP endpoint), and have `device_serial` prefer it and fall back to the banner field. This is the one change here that alters a public type's layout, so it belongs before 1.0.
 - **Fall back to `shell:` when `shell_v2` is absent.** `run` opens `shell,v2,raw:` and requires the feature, while `list` and `stat` already fall back to their v1 forms. Open `shell:<command>` when the device did not advertise `shell_v2`, take the combined output as the raw bytes, and read the exit code from the `CLSE` message's `arg1` where the device provides it (the v1 shell has no exit packet; AOSP's own v1 path reports 0). The v1 path can be exercised on a current device by forcing the service string, so it needs no old device to test.

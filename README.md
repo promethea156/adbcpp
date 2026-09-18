@@ -4,7 +4,7 @@ A simplified, customized reimplementation of **ADB (Android Debug Bridge) as a C
 
 `adbcpp` is designed to be embedded directly into C++ applications, giving developers programmatic control over Android devices. It operates **without depending on Google's ADB server or the `adb` command-line tool** — no `adb.exe` process, no local server on port 5037, and no external binary.
 
-> **Status:** early development. Slices 0 through 8 are complete: shell over USB, file listing, pull, push and stat over `sync`, install and uninstall, app launch/close/status, a TCP transport, and selecting a device by its USB serial. The [error model](docs/07-error-model.md) is in place: every fallible operation returns a `Result<T>` instead of throwing. [`docs/03-roadmap.md`](docs/03-roadmap.md) has the plan, including the remaining [1.0 hardening](docs/03-roadmap.md#slice-9--release-10).
+> **Status:** 1.0.0. The [initial scope](docs/01-objective.md#initial-scope) is complete: shell, file listing, pull, push and stat over `sync`, install and uninstall, app launch/close/status, a USB and a TCP transport, and selecting a device by its USB serial. The [error model](docs/07-error-model.md) is in place: every fallible operation returns a `Result<T>` instead of throwing. See [`CHANGELOG.md`](CHANGELOG.md) and [`docs/03-roadmap.md`](docs/03-roadmap.md).
 
 > **Learning:** want to understand the protocol rather than just use it?
 > [`LEARNING.md`](LEARNING.md) is a guided curriculum that uses this
@@ -124,6 +124,7 @@ cmake/                  CMake package configuration
 ## Learning
 
 - [`LEARNING.md`](LEARNING.md) — a guided curriculum that uses this repository as a worked example, from byte channels to a full shell session and file listing
+- [`examples/demo/main.cpp`](examples/demo/main.cpp) — a guided tour that drives every feature once against the first attached device
 - [`docs/05-usage.md`](docs/05-usage.md) — copy-pasteable code examples for everything the library can do today
 - [`docs/06-sync-protocol.md`](docs/06-sync-protocol.md) — how the `sync` service and `list` work, byte by byte
 
