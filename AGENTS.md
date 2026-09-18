@@ -46,6 +46,16 @@ cmake --build build --target format-check
 ctest --test-dir build -C Release -E "^device$" --output-on-failure
 ```
 
+### The TCP example needs a `tcpip` device or an emulator
+
+`adbcpp_tcp_example` connects to `localhost:5555` by default, which is an emulator's ADB listener. For a phone, run `adb tcpip 5555`, pass the phone's `host:port`, and run `adb usb` to restore USB mode. The transport is covered device-free by `tcp_test`, so CI exercises it either way.
+
+```powershell
+adb tcpip 5555
+build\examples\Release\adbcpp_tcp_example.exe <phone-ip>:5555
+adb usb
+```
+
 ### The device test is destructive when it is configured to be
 
 `adbcpp_device_tests` exits with code 77 (a CTest skip) when no matching device is attached. It always checks the install and uninstall failure paths, which touch no package, and it runs the install and uninstall round trip only when `ADBCPP_TEST_APK` and `ADBCPP_TEST_PACKAGE` name a disposable APK. That round trip uninstalls and reinstalls the package and loses its data, so only set those variables for a package the user has agreed to replace. It also always launches, checks, and force-stops `com.android.settings`, which loses no data.

@@ -792,6 +792,11 @@ int main()
 }
 ```
 
+`tests/tcp_test.cpp` does the same over a real loopback socket: a background
+listener on `127.0.0.1` stands in for an emulator's ADB listener, so the TCP
+transport, the handshake, and `run` are all exercised with no device attached and
+in CI.
+
 ## Open a Service Manually
 
 `Stream` is the layer below `run`: it opens a named service and lets you write
