@@ -6,6 +6,20 @@ A small, self-contained **ADB (Android Debug Bridge) client, as a C++20 library*
 
 > **Status: 1.0.0.** The [initial scope](docs/01-objective.md#initial-scope) is complete, and every fallible operation returns a `Result<T>` instead of throwing. See [`CHANGELOG.md`](CHANGELOG.md) and [`docs/03-roadmap.md`](docs/03-roadmap.md).
 
+## Platform support
+
+| Platform | Status | Notes |
+|----------|--------|-------|
+| Windows  | ![Windows: tested](https://img.shields.io/badge/Windows-tested-brightgreen) | Developed and exercised here. |
+| Linux    | ![Linux: untested](https://img.shields.io/badge/Linux-untested-yellow) | Expected to work; not yet verified. |
+| macOS    | ![macOS: untested](https://img.shields.io/badge/macOS-untested-yellow) | Expected to work; not yet verified. |
+
+**`Windows` is the only platform this project has been built and run on so far.** The
+Linux and macOS instructions below are written from the toolchain and standard-library
+APIs the code targets, but no one has confirmed them on a real machine yet — expect
+rough edges, and please [open an issue](https://github.com/promethea156/adbcpp/issues) if
+you hit one.
+
 ## What it can do
 
 - **Shell**: run a command and read its combined output and exit code.
@@ -15,7 +29,7 @@ A small, self-contained **ADB (Android Debug Bridge) client, as a C++20 library*
 
 ## Build it
 
-You need a **C++20 compiler**, **CMake 3.24 or newer**, and **Git** (the test framework is fetched automatically at configure time). The build is the same everywhere; only the toolchain setup differs.
+You need a **C++20 compiler**, **CMake 3.24 or newer**, and **Git** (the test framework is fetched automatically at configure time). The build is the same everywhere; only the toolchain setup differs. Only **Windows** is known to work so far — see [Platform support](#platform-support).
 
 From the repository root:
 
@@ -25,10 +39,10 @@ cmake --build build --config Release
 ctest --test-dir build --output-on-failure -C Release
 ```
 
-The `--config Release` flag is used by multi-config generators (Visual Studio, Xcode) and ignored by single-config generators (Makefiles, Ninja). The tests that need a device skip themselves when none is attached, so the build and the suite pass on any machine.
+The `--config Release` flag is used by multi-config generators (Visual Studio, Xcode) and ignored by single-config generators (Makefiles, Ninja). The tests that need a device skip themselves when none is attached, so the build and the suite should pass on any machine.
 
 <details>
-<summary><b>Linux</b></summary>
+<summary><b>Linux</b> — untested</summary>
 
 Install the toolchain:
 
@@ -41,7 +55,7 @@ Then run the three commands above.
 </details>
 
 <details>
-<summary><b>macOS</b></summary>
+<summary><b>macOS</b> — untested</summary>
 
 Install the Xcode Command Line Tools (Clang) and CMake:
 
@@ -54,7 +68,7 @@ Then run the three commands above.
 </details>
 
 <details>
-<summary><b>Windows</b></summary>
+<summary><b>Windows</b> — tested</summary>
 
 Install **Visual Studio 2022** with the *Desktop development with C++* workload, and CMake 3.24 or newer. Then run the three commands above from a **Developer PowerShell for VS 2022**.
 </details>
