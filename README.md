@@ -32,6 +32,8 @@ a green run is just as useful as a red one, and see [Contributing](#contributing
 
 You need a **C++20 compiler**, **CMake 3.24 or newer**, and **Git** (the test framework is fetched automatically at configure time). The build is the same everywhere; only the toolchain setup differs. Only **Windows** is known to work so far — see [Platform support](#platform-support).
 
+Every dependency is fetched by CMake, so there is nothing else to install. The compiler, USB driver, and device steps for each platform are in [`docs/08-platform-setup.md`](docs/08-platform-setup.md).
+
 From the repository root:
 
 ```
@@ -162,6 +164,7 @@ cmake/                  CMake package configuration
 - [`docs/05-usage.md`](docs/05-usage.md) — usage guide with copy-pasteable code examples
 - [`docs/06-sync-protocol.md`](docs/06-sync-protocol.md) — the `sync` service wire format and how `list` is built on it
 - [`docs/07-error-model.md`](docs/07-error-model.md) — why nothing throws, and what `Result<T>` carries instead
+- [`docs/08-platform-setup.md`](docs/08-platform-setup.md) — per-platform compiler, dependency, USB driver, and device setup
 
 ## Contributing
 

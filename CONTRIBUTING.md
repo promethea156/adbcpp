@@ -70,7 +70,9 @@ Read [`docs/01-objective.md`](docs/01-objective.md) for the architecture and the
 ## Set up
 
 You need a C++20 compiler, CMake 3.24 or newer, and Git. The build is the same on every
-platform; the [README](README.md#build-it) has the toolchain notes. Configure once and keep
+platform; the [README](README.md#build-it) has the toolchain notes, and
+[`docs/08-platform-setup.md`](docs/08-platform-setup.md) has the per-platform compiler,
+USB driver, and device steps. Every dependency is fetched by CMake. Configure once and keep
 the tests running as you go:
 
 ```sh
