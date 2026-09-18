@@ -56,6 +56,7 @@ add_library(adbcpp
   src/shell.cpp
   src/stream.cpp
   src/sync.cpp
+  src/tcp/tcp_transport.cpp
 )
 add_library(adbcpp::adbcpp ALIAS adbcpp)
 
@@ -69,6 +70,13 @@ target_include_directories(adbcpp PUBLIC
 # `<tl/expected.hpp>` appears in the public `error.hpp`, so `tl::expected` is a
 # public dependency of the core target, which is no longer dependency-free.
 target_link_libraries(adbcpp PUBLIC tl::expected)
+
+# `TcpTransport` uses the platform's sockets, so on Windows the core links the
+# Winsock library. It is a system library with no license obligations, so the core
+# stays free of any third-party dependency.
+if(WIN32)
+  target_link_libraries(adbcpp PRIVATE ws2_32)
+endif()
 
 set_target_properties(adbcpp PROPERTIES
   VERSION ${PROJECT_VERSION}

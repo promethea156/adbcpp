@@ -1,7 +1,7 @@
 # Usage
 
 Practical, copy-pasteable examples for everything `adbcpp` can do today: connect
-over USB, run a shell command, list a directory, pull and push files, stat a path,
+over USB or TCP, run a shell command, list a directory, pull and push files, stat a path,
 install and uninstall an application, launch, close, and check an application, work
 with the ADB key, and use the lower-level protocol layers directly. Every
 example compiles against the library as it stands now. For the theory behind them, read
@@ -36,7 +36,9 @@ There are three targets:
 
 `adbcpp::crypto` and `adbcpp::usb` both link `adbcpp::adbcpp` publicly, so
 linking the USB backend pulls in the rest. `adbcpp::usb` is only defined when the
-project is built with `ADBCPP_BUILD_USB=ON` (the default at the top level).
+project is built with `ADBCPP_BUILD_USB=ON` (the default at the top level). The TCP
+transport has no third-party dependency, so it lives in `adbcpp::adbcpp` and is always
+available.
 
 Alternatively, install `adbcpp` and use `find_package`:
 
@@ -60,6 +62,7 @@ Include what you use:
 #include "adbcpp/app.hpp"                     // adbcpp::install, uninstall, launch, close, is_running
 #include "adbcpp/sync.hpp"                    // adbcpp::list, adbcpp::DirEntry
 #include "adbcpp/crypto/adb_key.hpp"          // adbcpp::crypto::Key
+#include "adbcpp/tcp/tcp_transport.hpp"       // adbcpp::tcp::TcpTransport
 #include "adbcpp/usb/usb_transport.hpp"       // adbcpp::usb::UsbTransport
 #include "adbcpp/testing/mock_transport.hpp"   // adbcpp::testing::MockTransport
 ```
@@ -208,6 +211,70 @@ int main()
 
 `CommandResult::output` is stdout and stderr combined, in the order the device
 produced them, and `exit_code` is the command's status.
+
+## Connect over TCP
+
+An emulator, or a device put into `tcpip` mode, is reached over TCP instead of
+USB. `TcpTransport::open` takes a `host:port` endpoint and implements the same
+`Transport` interface as `UsbTransport`, so every example below works unchanged;
+only the transport line differs.
+
+```cpp
+#include <iostream>
+#include <span>
+#include <string>
+
+#include "adbcpp/adbcpp.hpp"
+#include "adbcpp/crypto/adb_key.hpp"
+#include "adbcpp/tcp/tcp_transport.hpp"
+
+int main()
+{
+    // An emulator listens on `localhost:5555` by default. A device reached over
+    // the network uses its own `host:port`.
+    auto transport = adbcpp::tcp::TcpTransport::open("localhost:5555");
+    if (!transport)
+    {
+        std::cerr << "error: " << transport.error().message << '\n';
+        return 1;
+    }
+
+    const auto key = adbcpp::crypto::Key::load_or_generate();
+    if (!key)
+    {
+        std::cerr << "error: " << key.error().message << '\n';
+        return 1;
+    }
+    const std::string &public_key_string = key->public_key();
+    const auto public_key = std::span(reinterpret_cast<const std::byte *>(public_key_string.data()),
+                                     public_key_string.size());
+
+    auto connection = adbcpp::Connection::connect(*transport, public_key,
+                                  [&key](std::span<const std::byte> token) { return key->sign(token); });
+    if (!connection)
+    {
+        std::cerr << "error: " << connection.error().message << '\n';
+        return 1;
+    }
+
+    const auto result = adbcpp::run(*connection, "echo hello");
+    if (!result)
+    {
+        std::cerr << "error: " << result.error().message << '\n';
+        return 1;
+    }
+    std::cout << result->output;
+
+    transport->close();
+    return result->exit_code;
+}
+```
+
+The endpoint is `host:port`, where `host` is a name or a literal address and
+`port` is a service name or a number, so `localhost:5555`, `127.0.0.1:5555`, and
+`[::1]:5555` all work. The transport has no libusb dependency, so it needs no
+`ADBCPP_BUILD_USB`. Put a device into TCP mode with `adb tcpip 5555`, then connect
+directly with no adb server.
 
 ## List a Directory
 
@@ -1026,6 +1093,7 @@ int main()
 | ------------------------------------ | ------------------------------------------------------- |
 | Check that a device is attached        | `adbcpp::usb::UsbTransport::is_present(id)` → `Result<bool>` |
 | Open a USB transport                  | `adbcpp::usb::UsbTransport::open(id)` → `Result<UsbTransport>` |
+| Open a TCP transport                  | `adbcpp::tcp::TcpTransport::open("localhost:5555")` → `Result<TcpTransport>` |
 | Load or create the ADB key              | `adbcpp::crypto::Key::load_or_generate()` → `Result<Key>` |
 | Sign an AUTH token                     | `key->sign(token)`                                      |
 | Get the key's device fingerprint        | `key->fingerprint()` → `Result<std::string>`              |
@@ -1074,9 +1142,11 @@ int main()
 - **`run` merges stdout and stderr.** They arrive interleaved, so the order is not
   guaranteed. `CommandResult` does not separate them.
 - **This is not a full `adb` replacement yet.** The shell service, `sync`-based
-  directory listing, file transfer in both directions, install and uninstall, and
-  app launch, close, and running checks are exposed; the TCP transport is still on
-  the roadmap ([`03-roadmap.md`](03-roadmap.md)).
+  directory listing, file transfer in both directions, install and uninstall, app
+  launch, close, and running checks, and the USB and TCP transports are exposed.
+  There is no adb *server* protocol, so `host:connect`/`host:disconnect` and
+  device selection by serial are not
+  ([`03-roadmap.md`](03-roadmap.md)).
 - **`is_running` matches a process name.** `pidof` takes a process name, not a
   package name. A process is named after its package by default, so the two usually
   agree, but an application that renames its process makes `is_running` an

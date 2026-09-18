@@ -4,7 +4,7 @@ A simplified, customized reimplementation of **ADB (Android Debug Bridge) as a C
 
 `adbcpp` is designed to be embedded directly into C++ applications, giving developers programmatic control over Android devices. It operates **without depending on Google's ADB server or the `adb` command-line tool** — no `adb.exe` process, no local server on port 5037, and no external binary.
 
-> **Status:** early development. Slice 0 (the walking skeleton), Slice 1 (shell over USB), Slice 2 (file listing over `sync`), Slice 3 (pull over `sync`), Slice 4 (push, stat over `sync`), Slice 5 (install, uninstall), and Slice 6 (launch, close, is_running) are complete, and the [error model](docs/07-error-model.md) is in place: every fallible operation returns a `Result<T>` instead of throwing. See [`docs/03-roadmap.md`](docs/03-roadmap.md) for the plan.
+> **Status:** early development. Slice 0 (the walking skeleton), Slice 1 (shell over USB), Slice 2 (file listing over `sync`), Slice 3 (pull over `sync`), Slice 4 (push, stat over `sync`), Slice 5 (install, uninstall), Slice 6 (launch, close, is_running), and Slice 7 (TCP transport) are complete, and the [error model](docs/07-error-model.md) is in place: every fallible operation returns a `Result<T>` instead of throwing. See [`docs/03-roadmap.md`](docs/03-roadmap.md) for the plan.
 
 > **Learning:** want to understand the protocol rather than just use it?
 > [`LEARNING.md`](LEARNING.md) is a guided curriculum that uses this
@@ -110,6 +110,7 @@ cmake --build build --target adbcpp_docs
 include/adbcpp/         Public headers (transport, protocol, session, stream,
                         shell, sync, app)
 include/adbcpp/crypto/  The ADB key pair, backed by mbedTLS
+include/adbcpp/tcp/     The TCP transport, over the platform's sockets
 include/adbcpp/usb/     The USB transport, backed by libusb
 include/adbcpp/testing/ The in-memory transport used by the tests
 src/                    Library sources, mirroring the public headers

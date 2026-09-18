@@ -4,6 +4,13 @@ target_link_libraries(adbcpp_sample PRIVATE adbcpp::adbcpp)
 add_executable(adbcpp_sync_example sync/main.cpp)
 target_link_libraries(adbcpp_sync_example PRIVATE adbcpp::adbcpp)
 
+# The TCP example needs a listening device, an emulator or a `tcpip` device, so it
+# is not registered. It has no USB dependency, so it links only the core.
+add_executable(adbcpp_tcp_example tcp/main.cpp)
+target_link_libraries(adbcpp_tcp_example
+  PRIVATE adbcpp::adbcpp adbcpp::crypto
+)
+
 # The sample and the sync example are device-free, so CTest runs them as part of
 # the normal test suite. The USB example needs a device and is not registered.
 if(ADBCPP_BUILD_TESTS)

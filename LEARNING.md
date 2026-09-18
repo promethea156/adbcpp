@@ -468,10 +468,10 @@ package's data survives only when the caller keeps it.
 
 **Goal.** Choose the next slice and apply everything you have learned.
 
-**Read.** [`docs/03-roadmap.md`](docs/03-roadmap.md) — the remaining slices:
-TCP, which completes the initial scope. Silent authentication is not among them: it
-shipped with Slice 1, which is why this library never shows the on-device approval
-prompt once the key is authorized.
+**Read.** [`docs/03-roadmap.md`](docs/03-roadmap.md) — the initial scope is
+complete, so the remaining work is the future improvements. Silent authentication is
+not among them: it shipped with Slice 1, which is why this library never shows the
+on-device approval prompt once the key is authorized.
 
 **Run.** Everything, with a device attached:
 
@@ -479,12 +479,13 @@ prompt once the key is authorized.
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-**Exercise.** Slice 6 was exactly this. Launching and stopping an app are shell
-commands (`am start` and `am force-stop`), so the slice was composition again, and
-its work was in deciding what the device's output means: `am start` exits nonzero
+**Exercise.** Slices 6 and 7 were exactly this. Launching and stopping an app are
+shell commands (`am start` and `am force-stop`), so Slice 6 was composition again,
+and its work was in deciding what the device's output means: `am start` exits nonzero
 and prints `Error:` when the launcher cannot start, while `pidof` prints nothing and
 exits nonzero when the app is not running, so `is_running` reads the exit code as a
-definite answer.
+definite answer. Slice 7 added a second `Transport`, over a socket, and every service
+worked over it unchanged, because `Session` owns the framing.
 
 **Checkpoint.**
 

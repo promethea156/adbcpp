@@ -9,4 +9,5 @@
 #include "adbcpp/shell.hpp"
 #include "adbcpp/stream.hpp"
 #include "adbcpp/sync.hpp"
+#include "adbcpp/tcp/tcp_transport.hpp"
 #include "adbcpp/transport.hpp"
