@@ -63,7 +63,7 @@ This completes the initial scope.
 - `UsbTransport::list()` enumerates the attached ADB devices with their serials, and `Connection::device_serial()` reports the banner's `serialno` for a device whose descriptor has none.
 - Public API: `DeviceId::parse("VID:PID")`, `DeviceId::parse("serial:<serial>")`, and `UsbTransport::list()`.
 
-**Next:** The rest of [Future Improvements](#future-improvements).
+**Next:** [Slice 9](#slice-9--release-10) — the 1.0 hardening — then the rest of [Future Improvements](#future-improvements).
 
 ## Proposed Order for What Remains
 
@@ -78,7 +78,8 @@ A proposal, not a commitment. Nothing below blocks the next slice, and any of it
 | 5 | Settle the [threading model for several devices](#working-with-several-devices-in-parallel) | **Done.** One thread per device; `Transport` stays blocking and `examples/multi` drives two devices on two threads. |
 | 6 | [Slice 7 — TCP transport](#slice-7--tcp-transport) | **Done.** Native sockets, so the core stays free of any third-party dependency. |
 | 7 | [Select devices by serial](#working-with-several-devices-in-parallel) | **Done.** `DeviceId` matches the USB `iSerial`, and `list()` discovers the serials. |
-| 8 | The rest of [Future Improvements](#other-improvements) | Logging, the `shell_v2` fallback, and `sendrecv_v2` each matter only once a caller needs them. |
+| 8 | [Slice 9 — release 1.0 hardening](#slice-9--release-10) | The API and compatibility gaps to close before the version is fixed at 1.0. |
+| 9 | The rest of [Future Improvements](#other-improvements) | Logging and `sendrecv_v2` matter only once a caller needs them. |
 
 ## Slice 0 — Walking Skeleton
 
@@ -180,6 +181,17 @@ The last gap for the intended use case, [working with several devices](#working-
 **Acceptance:** `examples/multi` lists two attached devices and opens each by its own serial; the same serial also works as a selector on `examples/usb`.
 
 The `serialno` field of the system identity string, `<systemtype>::<serialno>::<banner>`, is empty on the two test devices, whose serial is the descriptor; `parse_serial` reads it for the devices that do fill it in. Reading a descriptor serial needs the device opened, which is why `find_device` only does it when a serial was asked for, and why the WinUSB single-handle rule (blocker 28) makes the two device opens sequential rather than nested.
+
+## Slice 9 — Release 1.0
+
+The initial scope is complete, so this slice is not new capability: it closes the API and compatibility gaps that would be expensive or misleading to change once the version is fixed at 1.0, and then performs the release itself. The three fixes are independent and can each ship on their own.
+
+- **The `adb devices` serial on the transport.** `Connection::device_serial` currently returns the banner `serialno`, which is empty on current devices, so a caller reading it gets nothing. Add `Transport::serial()`, returning the transport's identity (the USB `iSerial` descriptor, or the TCP endpoint), and have `device_serial` prefer it and fall back to the banner field. This is the one change here that alters a public type's layout, so it belongs before 1.0.
+- **Fall back to `shell:` when `shell_v2` is absent.** `run` opens `shell,v2,raw:` and requires the feature, while `list` and `stat` already fall back to their v1 forms. Open `shell:<command>` when the device did not advertise `shell_v2`, take the combined output as the raw bytes, and read the exit code from the `CLSE` message's `arg1` where the device provides it (the v1 shell has no exit packet; AOSP's own v1 path reports 0). The v1 path can be exercised on a current device by forcing the service string, so it needs no old device to test.
+- **Advertise only what is implemented.** The host banner claims `sendrecv_v2` with brotli, lz4, and zstd, and services that are never opened (`abb`, `apex`, `remount_shell`, `track_app`, `devraw`, `server_status`, ...). Either implement `sendrecv_v2` for `pull`/`push` or trim the list to the features the library acts on, so a peer cannot rely on a claim that is not honored.
+- **Release chores.** Bump `project(VERSION)` to `1.0.0` (`SOVERSION` follows to 1), add a `CHANGELOG.md` generated from the Conventional Commits history, and tag `v1.0.0`.
+
+**Acceptance:** `device_serial()` returns the same string `adb devices` prints for a USB device; `run` works against a device that does not advertise `shell_v2` (forced with `shell:`) as well as one that does; the banner claims nothing unimplemented; and a `v1.0.0` tag builds and passes the suite on all three CI platforms.
 
 ## Cross-Cutting Concerns
 
