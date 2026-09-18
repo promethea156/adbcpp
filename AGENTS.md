@@ -56,6 +56,16 @@ build\examples\Release\adbcpp_tcp_example.exe <phone-ip>:5555
 adb usb
 ```
 
+### The demo example walks every feature on one device
+
+`adbcpp_demo_example` detects the first attached device, connects, and runs every feature once. It needs a device and an APK, and takes the package and the APK (and any split APKs) as arguments. It uninstalls the package first, so it loses that package's data.
+
+```powershell
+build\examples\Release\adbcpp_demo_example.exe <package> <apk> [<split-apk>...]
+```
+
+`am start <package>` only resolves for an app with a `MAIN`/`LAUNCHER` activity, which not every app has; the demo retries the launch for a few seconds because the package manager can still be indexing a fresh install.
+
 ### The device test is destructive when it is configured to be
 
 `adbcpp_device_tests` exits with code 77 (a CTest skip) when no matching device is attached. It always checks the install and uninstall failure paths, which touch no package, and it runs the install and uninstall round trip only when `ADBCPP_TEST_APK` and `ADBCPP_TEST_PACKAGE` name a disposable APK. That round trip uninstalls and reinstalls the package and loses its data, so only set those variables for a package the user has agreed to replace. It also always launches, checks, and force-stops `com.android.settings`, which loses no data.

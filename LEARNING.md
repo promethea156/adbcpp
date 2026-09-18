@@ -506,6 +506,10 @@ on-device approval prompt once the key is authorized.
 ctest --test-dir build -C Release --output-on-failure
 ```
 
+[`examples/demo/main.cpp`](examples/demo/main.cpp) is the same idea as one
+executable: it detects a device, connects, and walks every feature once, ending with
+a ten-second `is_running` check before it closes the app.
+
 **Exercise.** Slices 6 and 7 were exactly this. Launching and stopping an app are
 shell commands (`am start` and `am force-stop`), so Slice 6 was composition again,
 and its work was in deciding what the device's output means: `am start` exits nonzero
