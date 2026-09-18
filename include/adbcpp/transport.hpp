@@ -16,7 +16,9 @@ namespace adbcpp
  * protocol logic lives above this interface, which keeps the protocol layer
  * independent of the underlying medium (USB, TCP, mock).
  *
- * Implementations are not required to be thread-safe.
+ * Implementations are not required to be thread-safe: concurrent use of one
+ * transport must be serialized. Different transports are independent, so one
+ * transport per thread is how several devices are driven at once.
  */
 class ADBCPP_API Transport
 {

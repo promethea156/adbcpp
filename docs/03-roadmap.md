@@ -60,11 +60,11 @@ A proposal, not a commitment. Nothing below blocks the next slice, and any of it
 | --- | --- | --- |
 | 1 | Apply the [error model](07-error-model.md) | **Done.** The whole library returns `Result<T>`, so Slice 6 adds its three functions in the new shape rather than converting them later. |
 | 2 | [Slice 6 — app control](#slice-6--app-control) | **Done.** Composition again: `am start`, `am force-stop`, and `pidof` are shell commands. |
-| 3 | Validate the received header | **Done.** `Session::receive` checks `magic`, bounds `data_length`, and verifies a non-zero CRC, closing the transport on a framing error. |
+| 3 | Validate the received header | **Done.** `Session::receive` checks `magic`, bounds `data_length`, and verifies a non-zero payload checksum, closing the transport on a framing error. |
 | 4 | State thread safety for `Connection`, `Stream`, and `Key` | **Done.** Each states that it is not thread-safe and must be serialized by the caller, matching `Transport`. |
-| 5 | Settle the [threading model for several devices](#working-with-several-devices-in-parallel) | One thread per device works today; a non-blocking read, if needed, must land before Slice 7 so both transports implement it once. |
+| 5 | Settle the [threading model for several devices](#working-with-several-devices-in-parallel) | **Done.** One thread per device; `Transport` stays blocking and `examples/multi` drives two devices on two threads. |
 | 6 | [Slice 7 — TCP transport](#slice-7--tcp-transport) | Completes the initial scope. |
-| 7 | [Select devices by serial](#working-with-several-devices-in-parallel) | The enabler for the intended use case, once the threading model is fixed and TCP is in. |
+| 7 | [Select devices by serial](#working-with-several-devices-in-parallel) | The last gap for the intended use case, once TCP is in. |
 | 8 | The rest of [Future Improvements](#other-improvements) | Logging, the `shell_v2` fallback, and `sendrecv_v2` each matter only once a caller needs them. |
 
 ## Slice 0 — Walking Skeleton
@@ -160,7 +160,7 @@ Obligations that run through every slice, with the current state of each.
 - **Error handling**: every operation that can fail returns a `Result<T>`; nothing in the library throws, and third-party exceptions are caught at the boundary. The rule, the types, and the shape of each command's answer are in [`07-error-model.md`](07-error-model.md).
 - **Testing**: unit tests per module, driven by the mock transport, plus one integration test against a real device. Device-dependent tests live in `adbcpp_device_tests`; when no matching USB device is present they exit with code 77 so CTest reports them as skipped rather than failed, and the USB example prints a warning and exits successfully in the same case.
 - **Logging**: not implemented. When it is, it must be optional, configurable, and must never log keys or payloads.
-- **Thread safety**: `Transport`, `Connection`, `Stream`, and `Key` each state that they are not thread-safe, and that a caller must serialize concurrent use.
+- **Thread safety**: `Transport`, `Connection`, `Stream`, and `Key` each state that they are not thread-safe, and that a caller must serialize concurrent use. Independent objects share no state, so the model for several devices is one thread per device (see [Working with Several Devices in Parallel](#working-with-several-devices-in-parallel)).
 - **Documentation**: Doxygen comments on every public declaration, and the reasoning behind each protocol decision written down in [`04-blockers.md`](04-blockers.md).
 
 ## Open Questions
@@ -172,26 +172,34 @@ Obligations that run through every slice, with the current state of each.
 
 ### Working with Several Devices in Parallel
 
-The intended use case is driving several devices at once. Most of the design already
-supports it: every `UsbTransport` has its own libusb context, and `Connection`,
-`Stream`, and `Key` are independent and already documented as one-object-per-thread,
-so one device per thread works today. Two gaps remain, and one decision.
+The intended use case is driving several devices at once, and the model is **one
+thread per device**. It needs no change to `Transport`: every `UsbTransport` has its
+own libusb context, and `Connection`, `Stream`, and `Key` are independent and
+documented as one-object-per-thread, so several connections on several threads share
+no state. The blocking `Transport::read` is therefore kept, and a non-blocking read or
+poll is deferred until one thread must drive several devices.
 
-- **Device identity.** `UsbTransport::open(DeviceId)` matches on vendor and product id
-  alone, and `find_device` returns the first match, so two identical devices cannot be
-  told apart. Add selection by serial: enumerate, read each device's USB `iSerial`
-  string, and let the caller open by serial, as adb does. The device banner's
-  `serialno` is the fallback where the descriptor has none.
-- **Threading model.** The blocking `Transport::read` leaves one thread per device as the
-  only option. If that is acceptable, state it and add a two-thread example. If one
-  thread must drive several devices, add a non-blocking read or a poll to `Transport`
-  and build the wait on it. This belongs **before** Slice 7's TCP transport, so both
-  backends implement the same interface once instead of one being retrofitted.
-- **Acceptance.** Two devices, or two emulators over TCP, are opened by serial and
-  driven concurrently, and both run `echo hello` and a file round trip.
+Each device also needs its own connection: the WinUSB driver on the test device admits
+a single handle, so the same device cannot be opened twice, not even from two
+processes (blocker 28). Two devices are therefore needed, and `examples/multi` opens
+two and reports clearly when only one is present.
+
+A USB 3 device also resets its link around the open and stalls the first write
+(blocker 29), so both examples retry the whole open and handshake; `adb` does the
+same at a lower level by sending the CNXN twice.
+
+One gap remains: `UsbTransport::open(DeviceId)` matches on vendor and product id
+alone, and `find_device` returns the first match, so two identical devices cannot be
+told apart. Add selection by serial: enumerate, read each device's USB `iSerial`
+string, and let the caller open by serial, as adb does. The device banner's
+`serialno` is the fallback where the descriptor has none.
+
+`examples/multi` is the acceptance: it opens two devices, each on its own thread,
+and both run `echo hello` and a file round trip.
 
 ### Other Improvements
 
+- **Select a device by serial.** `UsbTransport::open(DeviceId)` matches on vendor and product id alone, so two identical devices cannot be told apart, and there is no serial handling anywhere in the library. adb selects by serial, which it reads from the device's banner.
 - **Fall back to `shell:` when `shell_v2` is absent.** `run` requires `shell_v2`, while `list` and `stat` already fall back to their v1 forms.
 - **Use `sendrecv_v2`, or stop advertising it.** The CNXN banner claims `sendrecv_v2` with brotli, lz4, and zstd, but `pull` and `push` always send the v1 forms, so a transfer is never compressed. The rest of the banner is copied from adb byte-for-byte and therefore also claims services that are never opened (`abb`, `apex`, `remount_shell`, `track_app`, `devraw`, `server_status`, ...); it should be trimmed to what the library implements.
 - Replace the dynamically-linked libusb backend with platform-native USB APIs (WinUSB, IOKit, `usbfs`) to remove the third-party dependency and its license obligations. See [USB Backend](01-objective.md#usb-backend).

@@ -291,7 +291,7 @@ Result<std::size_t> UsbTransport::read(std::span<std::byte> buffer)
         // bytes are used and the caller reads on.
         if (rc != 0 && !(rc == LIBUSB_ERROR_TIMEOUT && transferred > 0))
         {
-            return tl::unexpected(fail("libusb_bulk_transfer", rc));
+            return tl::unexpected(fail("libusb_bulk_transfer (read)", rc));
         }
         impl_->incoming.resize(static_cast<std::size_t>(transferred));
         impl_->incoming_offset = 0;
@@ -330,7 +330,7 @@ Status UsbTransport::write(std::span<const std::byte> data)
         {
             return tl::unexpected(Error{ErrorCode::Transport, "short USB write: the stream is desynchronized"});
         }
-        return tl::unexpected(fail("libusb_bulk_transfer", rc));
+        return tl::unexpected(fail("libusb_bulk_transfer (write)", rc));
     }
     // A short write means the device received only part of a message, which would
     // desynchronize the stream, so it is treated as an error.

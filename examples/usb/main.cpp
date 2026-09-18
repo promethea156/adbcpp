@@ -1,10 +1,14 @@
+#include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "adbcpp/app.hpp"
@@ -35,7 +39,8 @@ namespace
 // (`--close <package>`), check whether an app runs (`--running <package>`), or run
 // a shell command (the default). All of them mirror what `adb` does, so they are
 // interchangeable on the device. `--timeout <ms>` and `--budget <ms>` tune the
-// transfer timing anywhere on the command line.
+// transfer timing, and `--device <VID:PID>` (hex) picks the target device;
+// both may appear anywhere on the command line.
 int main(int argc, char **argv)
 {
     // `--timeout <ms>` is the timeout for each bulk transfer and `--budget <ms>`
@@ -44,6 +49,11 @@ int main(int argc, char **argv)
     // user approving the debugging prompt, take its time.
     unsigned int transfer_timeout_ms = adbcpp::usb::UsbTransport::kDefaultTransferTimeoutMs;
     unsigned int transfer_budget_ms = adbcpp::usb::UsbTransport::kDefaultTransferBudgetMs;
+    // The vendor/product id of the target device. Every Android device exposes its
+    // ADB function with the same ids by default.
+    adbcpp::usb::DeviceId id;
+    id.vendor_id = 0x22D9;
+    id.product_id = 0x2769;
     std::vector<std::string> args;
     for (int i = 1; i < argc; ++i)
     {
@@ -55,17 +65,23 @@ int main(int argc, char **argv)
         {
             transfer_budget_ms = static_cast<unsigned int>(std::stoul(argv[++i]));
         }
+        else if (std::string_view(argv[i]) == "--device" && i + 1 < argc)
+        {
+            const std::string_view text = argv[++i];
+            const auto colon = text.find(':');
+            if (colon == std::string_view::npos)
+            {
+                std::cerr << "error: --device expects VID:PID in hex\n";
+                return 1;
+            }
+            id.vendor_id = static_cast<std::uint16_t>(std::stoul(std::string(text.substr(0, colon)), nullptr, 16));
+            id.product_id = static_cast<std::uint16_t>(std::stoul(std::string(text.substr(colon + 1)), nullptr, 16));
+        }
         else
         {
             args.emplace_back(argv[i]);
         }
     }
-
-    // The vendor/product id of the target device. Every Android device exposes its
-    // ADB function with these particular ids.
-    adbcpp::usb::DeviceId id;
-    id.vendor_id = 0x22D9;
-    id.product_id = 0x2769;
 
     // Opening a device that is not attached fails, and the ADB interface may be
     // claimed by a running adb server, so check for it first (blocker 5).
@@ -83,12 +99,6 @@ int main(int argc, char **argv)
 
     try
     {
-        auto transport = adbcpp::usb::UsbTransport::open(id, transfer_timeout_ms, transfer_budget_ms);
-        if (!transport)
-        {
-            fail(transport.error());
-        }
-
         // Load the key adb already authorized, so the device does not prompt. The
         // public key is only needed for the AUTH type 3 fallback (blocker 11).
         const auto key = adbcpp::crypto::Key::load_or_generate();
@@ -108,12 +118,43 @@ int main(int argc, char **argv)
         std::cerr << "key fingerprint: " << *fingerprint << '\n';
         std::cerr << "connecting; approve the USB debugging prompt on the device "
                      "if it appears\n";
-        auto connection = adbcpp::Connection::connect(*transport, public_key,
-                                                      [&key](std::span<const std::byte> token)
-                                                      {
-                                                          return key->sign(token);
-                                                      });
-        if (!connection)
+
+        // A device can reset its USB 3 link right after the open and stall the
+        // first write. Re-opening and re-handshaking recovers, so a run does not
+        // need a manual retry (blocker 29).
+        std::optional<adbcpp::usb::UsbTransport> transport;
+        adbcpp::Result<adbcpp::Connection> connection =
+            tl::unexpected(adbcpp::Error{adbcpp::ErrorCode::Transport, "the device was not opened"});
+        for (int attempt = 0; attempt < 5; ++attempt)
+        {
+            if (attempt > 0)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            }
+            auto opened = adbcpp::usb::UsbTransport::open(id, transfer_timeout_ms, transfer_budget_ms);
+            if (!opened)
+            {
+                connection = tl::unexpected(opened.error());
+                continue;
+            }
+            // The connection keeps a pointer to the transport, so the transport is
+            // emplaced into the optional before `connect` and never moved again.
+            transport.emplace(std::move(*opened));
+            auto connected = adbcpp::Connection::connect(*transport, public_key,
+                                                         [&key](std::span<const std::byte> token)
+                                                         {
+                                                             return key->sign(token);
+                                                         });
+            if (!connected)
+            {
+                connection = tl::unexpected(connected.error());
+                transport.reset();
+                continue;
+            }
+            connection = std::move(*connected);
+            break;
+        }
+        if (!transport)
         {
             fail(connection.error());
         }
@@ -224,7 +265,21 @@ int main(int argc, char **argv)
             return 0;
         }
 
-        const std::string command = args.empty() ? "echo hello" : args[0];
+        // The remaining arguments are the command, so `echo hello` works whether it
+        // is quoted or passed as two words.
+        std::string command = "echo hello";
+        if (!args.empty())
+        {
+            command.clear();
+            for (const auto &arg : args)
+            {
+                if (!command.empty())
+                {
+                    command.push_back(' ');
+                }
+                command += arg;
+            }
+        }
         const auto result = adbcpp::run(*connection, command);
         if (!result)
         {
