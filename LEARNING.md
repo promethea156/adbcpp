@@ -177,14 +177,16 @@ check value `0xCBF43926` that the field's name suggests.
 
 The host banner is not decorative. `adbd` **resets its own feature set** from the
 host's `features=` list, so an empty list makes the device treat the host as
-supporting nothing (blocker 6). This is the first place where "looks fine" is not
-enough.
+supporting nothing (blocker 6). Because the device acts on the list, it must name only
+what the host really does: `kSystemIdentity` lists `shell_v2`, `ls_v2`, and `stat_v2`,
+and nothing else, rather than copying adb's longer list and claiming services that are
+never opened (blocker 32).
 
 The identity string is `<systemtype>::<serialno>::<banner>`. The `serialno` field is
 empty on current devices, whose serial is their USB `iSerial` descriptor instead, so
-`Connection::device_serial` reads the field only for the devices that do fill it in;
-blocker 30 records the difference. The descriptor is also what `adb devices` prints,
-which is why a later module reads it rather than the banner.
+`Connection::device_serial` reports the transport's serial and uses the banner field only
+as a fallback; blocker 30 records the difference. The descriptor is also what
+`adb devices` prints, which is why a later module reads it rather than the banner.
 
 **Run.** With a device attached:
 
@@ -381,7 +383,7 @@ fields go missing and why.
    [`src/shell.cpp`](src/shell.cpp) — the packet framing.
 2. AOSP's `shell_protocol.h`:
    <https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/shell_protocol.h>
-3. Blockers 14 and 19 in [`docs/04-blockers.md`](docs/04-blockers.md).
+3. Blockers 14, 19, and 31 in [`docs/04-blockers.md`](docs/04-blockers.md).
 
 `shell_v2` packets are **not** ADB commands. They are the payload of `WRTE`
 messages, and each is a 1-byte id followed by a 4-byte little-endian length. For
@@ -389,6 +391,12 @@ the exit packet the length is always 1 and the single data byte is the exit stat
 adbd writes it with `data()[0] = exit_code; Write(kIdExit, 1)` in
 `daemon/shell_service.cpp`. Reading the length as the status was blocker 19 and made
 every command look like it exited with 1.
+
+`run` opens `shell,v2,raw` only when the device advertised `shell_v2`. A device that
+did not gets the v1 `shell:<command>` instead: its output is the raw stream and there
+is no exit packet at all, so the exit code is 0, exactly as in adb (blocker 31). The
+`raw` in `shell,v2,raw` means "do not allocate a pty", so adbd runs the command
+directly; the v1 `shell` form has no such suffix.
 
 **Run.** The shell tests are device-free; the device test runs `echo hello` on a
 real device:
@@ -405,6 +413,7 @@ device interleaves them, so order is not guaranteed.
 **Checkpoint.**
 
 - Why does `shell:` give you no exit code, while `shell,v2` does?
+- Why does `run` fall back to `shell:` instead of failing on a device without `shell_v2`?
 - What does the `raw` in `shell,v2,raw:` change?
 
 ## Module 9 — Flow Control and Robustness

@@ -153,6 +153,9 @@ public:
     Status write(std::span<const std::byte> data) override;
     void close() override;
 
+    /// The opened device's USB `iSerial` descriptor, or empty when it has none.
+    std::string_view serial() const noexcept override;
+
 private:
     // Opening is done by `open`, so the constructor is private.
     UsbTransport();

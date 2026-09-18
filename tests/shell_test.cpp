@@ -52,9 +52,9 @@ void feed_frame(adbcpp::testing::MockTransport &transport, const adbcpp::protoco
 
 // Feeds the device's CNXN and the OKAY that accepts the stream's OPEN. The
 // device's id for the stream is 7, ours is 2.
-void feed_device(adbcpp::testing::MockTransport &transport)
+void feed_device(adbcpp::testing::MockTransport &transport, std::string_view features = "shell_v2")
 {
-    const std::string banner = "device::features=shell_v2";
+    const std::string banner = "device::features=" + std::string(features);
     const auto banner_bytes = std::span(reinterpret_cast<const std::byte *>(banner.data()), banner.size());
     feed_frame(transport, make_message(adbcpp::protocol::kCnxn, 0x01000001u, 4096u, banner_bytes), banner_bytes);
     feed_frame(transport, make_message(adbcpp::protocol::kOkay, 7, 2));
@@ -135,4 +135,38 @@ TEST_CASE("run reads a nonzero exit code from the exit packet's data", "[shell]"
     const auto result = unwrap(adbcpp::run(connection, "false"));
 
     REQUIRE(result.exit_code == 42);
+}
+
+TEST_CASE("run falls back to the v1 shell when shell_v2 is absent", "[shell]")
+{
+    adbcpp::testing::MockTransport transport;
+    // The device did not advertise shell_v2, so `run` must not open
+    // `shell,v2,raw`; it opens `shell` and reads the raw output instead.
+    feed_device(transport, "cmd");
+    const std::string output = "hello\n";
+    feed_frame(transport, make_message(adbcpp::protocol::kWrte, 7, 2, bytes_of(output)), bytes_of(output));
+    feed_close(transport);
+
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    const auto result = unwrap(adbcpp::run(connection, "echo hello"));
+
+    REQUIRE(result.output == "hello\n");
+    // The v1 shell has no exit packet, so the exit code is 0, as in adb.
+    REQUIRE(result.exit_code == 0);
+    REQUIRE(result.success);
+}
+
+TEST_CASE("run can force the v1 shell on a device that has shell_v2", "[shell]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport);
+    const std::string output = "hello\n";
+    feed_frame(transport, make_message(adbcpp::protocol::kWrte, 7, 2, bytes_of(output)), bytes_of(output));
+    feed_close(transport);
+
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    const auto result = unwrap(adbcpp::run(connection, "echo hello", adbcpp::ShellProtocol::V1));
+
+    REQUIRE(result.output == "hello\n");
+    REQUIRE(result.exit_code == 0);
 }

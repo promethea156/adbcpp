@@ -29,7 +29,31 @@ std::uint32_t read_u32_le(const std::byte *in) noexcept
 
 } // namespace
 
-Result<CommandResult> run(Connection &connection, std::string_view command)
+// The v1 `shell:<command>` service: the device's combined output arrives as raw
+// WRTE payloads with no packet framing, and there is no exit packet, so the exit
+// code is always 0. This matches adb's own v1 path, which also reports 0.
+Result<CommandResult> run_v1(Connection &connection, std::string_view command)
+{
+    auto stream = Stream::open(connection, "shell:" + std::string(command));
+    if (!stream)
+    {
+        return tl::unexpected(stream.error());
+    }
+    const auto raw = stream->read_all();
+    if (!raw)
+    {
+        return tl::unexpected(raw.error());
+    }
+
+    CommandResult result;
+    result.output.assign(reinterpret_cast<const char *>(raw->data()), raw->size());
+    result.success = true;
+    return result;
+}
+
+// The v2 `shell,v2,raw` service: the device's output arrives as shell_v2 packets
+// and the exit code is the exit packet's data.
+Result<CommandResult> run_v2(Connection &connection, std::string_view command)
 {
     // The service string is the whole command line, for example
     // `shell,v2,raw:echo hello`. adbd runs it and streams the output back.
@@ -83,6 +107,17 @@ Result<CommandResult> run(Connection &connection, std::string_view command)
     }
     result.success = result.exit_code == 0;
     return result;
+}
+
+Result<CommandResult> run(Connection &connection, std::string_view command, ShellProtocol protocol)
+{
+    const bool use_v2 =
+        protocol == ShellProtocol::V2 || (protocol == ShellProtocol::Auto && connection.supports_feature("shell_v2"));
+    if (!use_v2)
+    {
+        return run_v1(connection, command);
+    }
+    return run_v2(connection, command);
 }
 
 } // namespace adbcpp

@@ -278,6 +278,9 @@ struct UsbTransport::Impl
     bool claimed = false;
     std::vector<std::byte> incoming;
     std::size_t incoming_offset = 0;
+    // The matched device's `iSerial` descriptor, cached at open so `serial()` does
+    // not have to reopen the device.
+    std::string serial;
     unsigned int transfer_timeout_ms = kDefaultTransferTimeoutMs;
     unsigned int transfer_budget_ms = kDefaultTransferBudgetMs;
 
@@ -374,6 +377,15 @@ Result<UsbTransport> UsbTransport::open(DeviceId id, unsigned int transfer_timeo
     transport.impl_->interface_number = (*adb)->number;
     transport.impl_->endpoint_in = (*adb)->endpoint_in;
     transport.impl_->endpoint_out = (*adb)->endpoint_out;
+
+    // The serial is read here, by opening the device once, so `serial()` can report
+    // it later without reopening. This is the same descriptor string `adb devices`
+    // prints and `DeviceId::serial` matches.
+    libusb_device_descriptor descriptor{};
+    if (libusb_get_device_descriptor(match, &descriptor) == 0)
+    {
+        transport.impl_->serial = device_serial(match, descriptor);
+    }
 
     rc = libusb_open(match, &transport.impl_->handle);
     libusb_free_device_list(devices, 1);
@@ -506,6 +518,11 @@ void UsbTransport::close()
         libusb_close(impl_->handle);
         impl_->handle = nullptr;
     }
+}
+
+std::string_view UsbTransport::serial() const noexcept
+{
+    return impl_->serial;
 }
 
 } // namespace adbcpp::usb

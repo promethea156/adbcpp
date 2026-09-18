@@ -89,6 +89,22 @@ TEST_CASE("connection reports an empty serial when the banner has none", "[conne
     REQUIRE(connection.supports_feature("shell_v2"));
 }
 
+TEST_CASE("connection prefers the transport serial over the banner", "[connection]")
+{
+    adbcpp::testing::MockTransport transport;
+    transport.set_serial("USB123");
+
+    const std::string banner = "device::BANNER456::features=shell_v2";
+    const auto payload = std::span(reinterpret_cast<const std::byte *>(banner.data()), banner.size());
+    const auto device = make_message(adbcpp::protocol::kCnxn, 0x01000001u, 4096u, payload);
+    transport.feed(device.encode());
+    transport.feed(payload);
+
+    const auto connection = unwrap(adbcpp::Connection::connect(transport));
+
+    REQUIRE(connection.device_serial() == "USB123");
+}
+
 TEST_CASE("connection answers an AUTH request with the public key", "[connection]")
 {
     adbcpp::testing::MockTransport transport;

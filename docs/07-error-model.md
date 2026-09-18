@@ -198,5 +198,5 @@ The core target is no longer dependency-free once this lands, so the "Extra depe
 The conversion is complete. Every layer returns a `Result`, from `Transport` and `Session` up through
 `Stream`, the `sync` and shell services, `app`, `crypto`, and the `usb` and `tcp` transports; the tests and the
 examples are converted with them, and nothing in the library calls `value()` or `error()` without checking first.
-`format-check` is clean, the 86 unit tests pass, and the device test passes against the test device. Slices 6 to 8
+`format-check` is clean, the 89 unit tests pass, and the device test passes against the test device. Slices 6 to 9
 were the first work that was written in the new shape rather than converted to it.

@@ -163,6 +163,9 @@ void set_timeout(socket_t socket, int option, unsigned int timeout_ms)
 struct TcpTransport::Impl
 {
     socket_t socket = kInvalidSocket;
+    // The endpoint as written by the caller, which is the serial `adb devices`
+    // prints for a `tcpip` device or an emulator.
+    std::string endpoint;
     unsigned int transfer_timeout_ms = TcpTransport::kDefaultTransferTimeoutMs;
     unsigned int transfer_budget_ms = TcpTransport::kDefaultTransferBudgetMs;
 
@@ -227,6 +230,7 @@ Result<TcpTransport> TcpTransport::open(std::string_view endpoint, unsigned int 
     }
 
     TcpTransport transport;
+    transport.impl_->endpoint = std::string(endpoint);
     transport.impl_->transfer_timeout_ms = transfer_timeout_ms;
     transport.impl_->transfer_budget_ms = transfer_budget_ms;
 
@@ -356,6 +360,11 @@ void TcpTransport::close()
         close_socket(impl_->socket);
         impl_->socket = kInvalidSocket;
     }
+}
+
+std::string_view TcpTransport::serial() const noexcept
+{
+    return impl_->endpoint;
 }
 
 } // namespace adbcpp::tcp

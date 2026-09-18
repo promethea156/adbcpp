@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <span>
+#include <string_view>
 
 #include "adbcpp/error.hpp"
 #include "adbcpp/export.hpp"
@@ -45,6 +46,20 @@ public:
 
     /// Closes the transport, releasing any underlying resources.
     virtual void close() = 0;
+
+    /**
+     * @brief The device's serial, as `adb devices` prints it, or empty when the
+     * transport has none.
+     *
+     * A USB device's serial is its `iSerial` string descriptor and a TCP
+     * transport's is its `host:port` endpoint, mirroring adb's `serial_name`. This
+     * is the value `usb::DeviceId::serial` selects on, and the default is empty
+     * for a transport, such as a mock, that has no serial of its own.
+     */
+    virtual std::string_view serial() const noexcept
+    {
+        return {};
+    }
 
 protected:
     Transport() = default;

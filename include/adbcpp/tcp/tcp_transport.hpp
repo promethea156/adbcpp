@@ -93,6 +93,10 @@ public:
     Status write(std::span<const std::byte> data) override;
     void close() override;
 
+    /// The `host:port` endpoint, which is what `adb devices` prints for a `tcpip`
+    /// device or an emulator.
+    std::string_view serial() const noexcept override;
+
 private:
     // Opening is done by `open`, so the constructor is private.
     TcpTransport();

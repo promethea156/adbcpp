@@ -54,8 +54,8 @@ Each entry has the same shape:
 
 - **Symptom**: The device did not accept `shell_v2` and the handshake did not progress.
 - **Cause**: AOSP's host sends `host::features=<list>` and adbd **resets its feature set from that banner**. Without a feature list the device treats the host as supporting nothing.
-- **Resolution**: Send the standard host feature set in the CNXN banner. See `kSystemIdentity` in `include/adbcpp/connection.hpp`.
-- **Note**: The exact feature list matters for `shell_v2` and for delayed acknowledgements. The current list is hand-maintained; deriving it from AOSP's `supported_features()` would be more robust. A USBPcap capture of adb 37.0.1 showed that the adb host advertises `...sendrecv_v2_dry_run_send,devicetracker_proto_format,devraw,app_info,server_status,track_mdns` with **no** `openscreen_mdns` (that is an adbd feature, not a host one), so it was removed from `kSystemIdentity` to match.
+- **Resolution**: Send a host feature set in the CNXN banner. See `kSystemIdentity` in `include/adbcpp/connection.hpp`.
+- **Note**: The list must name every feature a service relies on, and nothing else; blocker 32 is what happened when it named more. A USBPcap capture of adb 37.0.1 showed that the adb host advertises `...sendrecv_v2_dry_run_send,devicetracker_proto_format,devraw,app_info,server_status,track_mdns` with **no** `openscreen_mdns` (that is an adbd feature, not a host one).
 
 ### 7. The OPEN/AUTH payloads are null-terminated
 
@@ -244,5 +244,21 @@ Each entry has the same shape:
 
 - **Symptom**: `Connection::device_serial()`, which reads the `serialno` field of the system identity string `<systemtype>::<serialno>::<banner>`, is empty for both test devices, while `adb devices` shows their serials.
 - **Cause**: Current adbd sends `device::<props>`, with the serialno field left empty and the props (`ro.product.*`, `features=`) directly after the one `::`. `adb` takes a USB device's serial from its `iSerial` descriptor instead, not from the banner. A device that fills the field in would have it read as the props string by AOSP's `parse_banner`, losing `features=`, so current devices leave it empty.
-- **Resolution**: The USB `iSerial` descriptor is the real source, and `DeviceId::serial` matches on it. `Connection::device_serial()` still parses the banner field, for the devices that do fill it in.
+- **Resolution**: The USB `iSerial` descriptor is the real source, and `DeviceId::serial` matches on it. `Connection::device_serial()` reads it from the transport and falls back to the banner field only for a device whose transport has none.
 - **Note**: A device with neither an `iSerial` descriptor nor a banner serialno can only be selected as part of its model. `adb`'s `serial_name()` has the same two sources and the same gap.
+
+## Shell Protocol
+
+### 31. The v1 shell reports no exit code
+
+- **Symptom**: `run` against a device that did not advertise `shell_v2` cannot report the command's status: the device sends the output and closes the stream, with no exit packet.
+- **Cause**: AOSP's `Subprocess::WaitForExit` in `daemon/shell_service.cpp` writes the `kIdExit` packet only when the protocol fd is open, which is the shell_v2 path. The v1 `shell` service has no exit packet at all, and AOSP's own client `read_and_dump` leaves `exit_code` at 0 on the non-protocol path.
+- **Resolution**: `run` opens `shell,v2,raw` when the device advertised `shell_v2`, and the v1 `shell:<command>` otherwise, whose raw output is the result and whose exit code is 0, matching adb. `ShellProtocol::V1` forces the v1 path even on a device that has `shell_v2`.
+- **Note**: The v1 path is covered device-free by a mock banner, and against a current device by forcing `ShellProtocol::V1`. A caller that needs the exit status on an old device needs `shell_v2`; this is the floor the [open question](03-roadmap.md#open-questions) names.
+
+### 32. The host banner claimed features the host does not act on
+
+- **Symptom**: The host CNXN banner claimed `sendrecv_v2` and its compression variants, and services the library never opens (`abb`, `abb_exec`, `apex`, `remount_shell`, `track_app`, `devraw`, `app_info`, `server_status`, `track_mdns`, `devicetracker_proto_format`).
+- **Cause**: The list was copied from AOSP's `supported_features()` byte-for-byte, but adb uses the whole list while the library uses only `shell_v2`, `ls_v2`, and `stat_v2`. adbd **resets its own feature set from the host's list** (blocker 6), so an unused name is a promise the peer may act on; `pull`/`push` always send the v1 `RECV`/`SEND` forms, so `sendrecv_v2` was the clearest false claim.
+- **Resolution**: `kSystemIdentity` now names only `shell_v2,stat_v2,ls_v2`, and `delayed_ack` is still appended when it is enabled.
+- **Note**: The device test exercises `run`, `list`, `pull`, `push`, `install`, `uninstall`, `launch`, `is_running`, and `close` against the trimmed banner, so every feature the services rely on is kept. Implementing `sendrecv_v2` would be a future improvement, not a claim.

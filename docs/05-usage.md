@@ -212,6 +212,16 @@ int main()
 `CommandResult::output` is stdout and stderr combined, in the order the device
 produced them, and `exit_code` is the command's status.
 
+`run` uses the `shell,v2,raw` service when the device advertised `shell_v2`, and the
+v1 `shell:<command>` service otherwise. The v1 form has no exit packet, so
+`exit_code` is always 0, exactly as in adb; `ShellProtocol::V1` and
+`ShellProtocol::V2` force one form or the other:
+
+```cpp
+// Force the v1 service, whose output is raw and whose exit code is always 0.
+const auto result = adbcpp::run(*connection, "echo hello", adbcpp::ShellProtocol::V1);
+```
+
 Two devices of the same model share the vendor and product id, so they are told
 apart by their USB serial. `UsbTransport::list` returns every attached ADB device
 with its serial, and `DeviceId::parse` accepts either a `VID:PID` model or a
@@ -238,15 +248,13 @@ if (!id)
 auto transport = adbcpp::usb::UsbTransport::open(*id);
 ```
 
-`Connection::device_serial` returns the `serialno` from the device's banner, which
-is the fallback for a device whose USB descriptor has no serial. It is empty on most
-current devices, whose serial is the descriptor:
+`Connection::device_serial` returns the device's serial, which is the transport's USB
+`iSerial` descriptor or TCP endpoint, the same string `adb devices` prints. It falls back
+to the banner's `serialno` field for a device whose transport has none, which is empty on
+most current devices:
 
 ```cpp
-if (!connection->device_serial().empty())
-{
-    std::cout << "serial: " << connection->device_serial() << '\n';
-}
+std::cout << "serial: " << connection->device_serial() << '\n';
 ```
 
 ## Connect over TCP
@@ -1143,6 +1151,7 @@ int main()
 | Get the key's device fingerprint        | `key->fingerprint()` → `Result<std::string>`              |
 | Handshake and connect                  | `adbcpp::Connection::connect(transport, public_key, signer)` → `Result<Connection>` |
 | Run a shell command                    | `adbcpp::run(connection, "echo hello")` → `Result<CommandResult>` |
+| Force the v1 shell                     | `adbcpp::run(connection, cmd, adbcpp::ShellProtocol::V1)` |
 | Read a command's output                 | `result->output`                                        |
 | Read a command's exit code              | `result->exit_code`                                     |
 | Check whether a command worked           | `result->success`                                       |

@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstddef>
 #include <span>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "adbcpp/export.hpp"
@@ -48,6 +50,17 @@ public:
         closed_ = true;
     }
 
+    /// Sets the serial reported by serial(), to stand in for a real transport's.
+    void set_serial(std::string serial)
+    {
+        serial_ = std::move(serial);
+    }
+
+    std::string_view serial() const noexcept override
+    {
+        return serial_;
+    }
+
     /// Bytes accumulated by write() so far.
     const std::vector<std::byte> &written() const noexcept
     {
@@ -65,6 +78,7 @@ private:
     std::size_t read_position_ = 0;
     std::vector<std::byte> written_;
     bool closed_ = false;
+    std::string serial_;
 };
 
 } // namespace adbcpp::testing

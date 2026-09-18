@@ -277,6 +277,26 @@ int main()
         return 1;
     }
 
+    // Both test devices advertise shell_v2, so the v1 fallback is forced here to
+    // exercise it against a real device. The v1 shell has no exit packet, so the
+    // exit code is 0, as in adb.
+    const auto v1 = adbcpp::run(*connection, "echo v1", adbcpp::ShellProtocol::V1);
+    if (!v1)
+    {
+        report(v1.error());
+        return 1;
+    }
+    if (v1->output != "v1\n")
+    {
+        std::cerr << "unexpected v1 output: " << v1->output << '\n';
+        return 1;
+    }
+    if (v1->exit_code != 0)
+    {
+        std::cerr << "unexpected v1 exit code: " << static_cast<int>(v1->exit_code) << '\n';
+        return 1;
+    }
+
     // `/` is always present and always holds at least `sdcard`.
     const auto entries = adbcpp::list(*connection, "/");
     if (!entries)

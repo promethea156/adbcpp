@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <span>
+#include <string_view>
 #include <vector>
 
 #include "adbcpp/error.hpp"
@@ -51,6 +52,13 @@ public:
     /// recover from a framing error the transport is closed and an
     /// `ErrorCode::Protocol` is returned.
     Result<Frame> receive();
+
+    /// The transport's serial, as `adb devices` prints it, or empty when the
+    /// transport has none.
+    std::string_view serial() const noexcept
+    {
+        return transport_->serial();
+    }
 
 private:
     Transport *transport_;
