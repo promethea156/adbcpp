@@ -17,8 +17,9 @@ A small, self-contained **ADB (Android Debug Bridge) client, as a C++20 library*
 **`Windows` is the only platform this project has been built and run on so far.** The
 Linux and macOS instructions below are written from the toolchain and standard-library
 APIs the code targets, but no one has confirmed them on a real machine yet — expect
-rough edges, and please [open an issue](https://github.com/promethea156/adbcpp/issues) if
-you hit one.
+rough edges. If you have either, please build it and
+[report the result](https://github.com/promethea156/adbcpp/issues/new?template=platform_verification.yml);
+a green run is just as useful as a red one, and see [Contributing](#contributing).
 
 ## What it can do
 
@@ -30,6 +31,8 @@ you hit one.
 ## Build it
 
 You need a **C++20 compiler**, **CMake 3.24 or newer**, and **Git** (the test framework is fetched automatically at configure time). The build is the same everywhere; only the toolchain setup differs. Only **Windows** is known to work so far — see [Platform support](#platform-support).
+
+Every dependency is fetched by CMake, so there is nothing else to install. The compiler, USB driver, and device steps for each platform are in [`docs/08-platform-setup.md`](docs/08-platform-setup.md).
 
 From the repository root:
 
@@ -161,6 +164,16 @@ cmake/                  CMake package configuration
 - [`docs/05-usage.md`](docs/05-usage.md) — usage guide with copy-pasteable code examples
 - [`docs/06-sync-protocol.md`](docs/06-sync-protocol.md) — the `sync` service wire format and how `list` is built on it
 - [`docs/07-error-model.md`](docs/07-error-model.md) — why nothing throws, and what `Result<T>` carries instead
+- [`docs/08-platform-setup.md`](docs/08-platform-setup.md) — per-platform compiler, dependency, USB driver, and device setup
+
+## Contributing
+
+Contributions are welcome, and the most useful ones often need no new code: verifying a
+platform, reporting a failure, or fixing a document. See [`CONTRIBUTING.md`](CONTRIBUTING.md)
+for how to build, test, and open a pull request, and the
+[roadmap](docs/03-roadmap.md#future-improvements) for what is planned. Issues labelled
+[`good first issue`](https://github.com/promethea156/adbcpp/labels/good%20first%20issue)
+are a good place to start.
 
 ## References
 

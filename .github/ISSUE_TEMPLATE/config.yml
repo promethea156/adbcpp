@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Roadmap and open questions
+    url: https://github.com/promethea156/adbcpp/blob/development/docs/03-roadmap.md
+    about: Check what is already planned before proposing a feature.
+  - name: Blockers and solutions
+    url: https://github.com/promethea156/adbcpp/blob/development/docs/04-blockers.md
+    about: The non-obvious ADB problems and how they were solved. Your bug may be known.
