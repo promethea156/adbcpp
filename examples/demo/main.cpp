@@ -44,6 +44,23 @@ void step(std::string_view what)
     std::cout << "\n== " << what << " ==" << std::endl;
 }
 
+// Sends a power key (223 sleeps, 224 wakes) and prints the resulting wakefulness, so
+// the tour shows the device really slept and woke again.
+void set_power(adbcpp::Connection &connection, std::string_view action, std::string_view key)
+{
+    step(action);
+    if (const auto sent = adbcpp::run(connection, "input keyevent " + std::string(key)); !sent)
+    {
+        fail(sent.error());
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    const auto state = adbcpp::run(connection, "dumpsys power | grep mWakefulness");
+    if (state && !state->output.empty())
+    {
+        std::cout << state->output;
+    }
+}
+
 // Opens the transport and connects, retrying the whole open and handshake because a
 // USB 3 device can reset its link right after the open and stall the first write
 // (blocker 29). `transport` lives in the caller and is never moved once it holds a
@@ -283,7 +300,10 @@ int main(int argc, char **argv)
         (void)adbcpp::run(connection, "rm -f " + remote);
         std::cout << "round-tripped " << contents.size() << " bytes\n";
 
-        // 5. Install the app, uninstalling an existing copy first.
+        // 5. Put the device to sleep, then install the app, uninstalling an existing
+        // copy first. Installing while the screen is off is the realistic case, and it
+        // also shows that the transfer does not need an awake device.
+        set_power(connection, "sleep the device", "223");
         step("install " + package);
         const auto installed = adbcpp::run(connection, "pm path " + package);
         if (!installed)
@@ -314,8 +334,10 @@ int main(int argc, char **argv)
         }
         std::cout << "installed " << package << " from " << apks.size() << " apk(s)\n";
 
-        // 6. Launch the app. Right after a fresh install the package manager can
-        // still be indexing, so `am start` may not resolve the launcher yet.
+        // 6. Wake the device, then launch the app. Right after a fresh install the
+        // package manager can still be indexing, so `am start` may not resolve the
+        // launcher yet.
+        set_power(connection, "wake the device", "224");
         step("launch " + package);
         adbcpp::Result<adbcpp::CommandResult> launched =
             tl::unexpected(adbcpp::Error{adbcpp::ErrorCode::Device, "the app was not launched"});
