@@ -1057,7 +1057,7 @@ int main()
 
 ## Pitfalls
 
-- **Nothing is thread-safe.** `Transport`, `Connection`, `Stream`, and `Key` each say so: they share mutable state, so concurrent use of one object must be serialized by the caller. A common pattern is one thread per connection, or one connection per thread.
+- **Nothing is thread-safe.** `Transport`, `Connection`, `Stream`, and `Key` each say so: they share mutable state, so concurrent use of one object must be serialized by the caller. One thread per connection is the supported way to work with several devices at once, because every connection is independent; `UsbTransport::open` cannot yet tell two identical devices apart, so opening several needs a unique USB serial ([`03-roadmap.md`](03-roadmap.md#working-with-several-devices-in-parallel)).
 - **Keep the key alive.** The signer callback is stored by the `Connection`, so the
   `Key` it captures must outlive the connection. A dangling reference crashes on
   the first AUTH.

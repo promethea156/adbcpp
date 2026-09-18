@@ -50,7 +50,7 @@ Every slice so far hid at least one non-obvious problem. The record of each — 
 
 Nothing was needed at the protocol layer: the slice is composition again, as the roadmap predicted. `am start`, `am force-stop`, and `pidof` are shell commands, so both already existed.
 
-**Next:** Slice 7 — TCP transport.
+**Next:** settle the threading model for several devices, then Slice 7 — TCP transport.
 
 ## Proposed Order for What Remains
 
@@ -62,8 +62,10 @@ A proposal, not a commitment. Nothing below blocks the next slice, and any of it
 | 2 | [Slice 6 — app control](#slice-6--app-control) | **Done.** Composition again: `am start`, `am force-stop`, and `pidof` are shell commands. |
 | 3 | Validate the received header | **Done.** `Session::receive` checks `magic`, bounds `data_length`, and verifies a non-zero CRC, closing the transport on a framing error. |
 | 4 | State thread safety for `Connection`, `Stream`, and `Key` | **Done.** Each states that it is not thread-safe and must be serialized by the caller, matching `Transport`. |
-| 5 | [Slice 7 — TCP transport](#slice-7--tcp-transport) | Completes the initial scope. |
-| 6 | The rest of [Future Improvements](#future-improvements) | Logging, device selection, the `shell_v2` fallback, and `sendrecv_v2` each matter only once a device or a caller needs them. |
+| 5 | Settle the [threading model for several devices](#working-with-several-devices-in-parallel) | One thread per device works today; a non-blocking read, if needed, must land before Slice 7 so both transports implement it once. |
+| 6 | [Slice 7 — TCP transport](#slice-7--tcp-transport) | Completes the initial scope. |
+| 7 | [Select devices by serial](#working-with-several-devices-in-parallel) | The enabler for the intended use case, once the threading model is fixed and TCP is in. |
+| 8 | The rest of [Future Improvements](#other-improvements) | Logging, the `shell_v2` fallback, and `sendrecv_v2` each matter only once a caller needs them. |
 
 ## Slice 0 — Walking Skeleton
 
@@ -168,7 +170,28 @@ Obligations that run through every slice, with the current state of each.
 
 ## Future Improvements
 
-- **Select a device by serial.** `UsbTransport` matches on vendor and product id alone, so two identical devices cannot be told apart, and there is no serial handling anywhere in the library. adb selects by serial, which it reads from the device's banner.
+### Working with Several Devices in Parallel
+
+The intended use case is driving several devices at once. Most of the design already
+supports it: every `UsbTransport` has its own libusb context, and `Connection`,
+`Stream`, and `Key` are independent and already documented as one-object-per-thread,
+so one device per thread works today. Two gaps remain, and one decision.
+
+- **Device identity.** `UsbTransport::open(DeviceId)` matches on vendor and product id
+  alone, and `find_device` returns the first match, so two identical devices cannot be
+  told apart. Add selection by serial: enumerate, read each device's USB `iSerial`
+  string, and let the caller open by serial, as adb does. The device banner's
+  `serialno` is the fallback where the descriptor has none.
+- **Threading model.** The blocking `Transport::read` leaves one thread per device as the
+  only option. If that is acceptable, state it and add a two-thread example. If one
+  thread must drive several devices, add a non-blocking read or a poll to `Transport`
+  and build the wait on it. This belongs **before** Slice 7's TCP transport, so both
+  backends implement the same interface once instead of one being retrofitted.
+- **Acceptance.** Two devices, or two emulators over TCP, are opened by serial and
+  driven concurrently, and both run `echo hello` and a file round trip.
+
+### Other Improvements
+
 - **Fall back to `shell:` when `shell_v2` is absent.** `run` requires `shell_v2`, while `list` and `stat` already fall back to their v1 forms.
 - **Use `sendrecv_v2`, or stop advertising it.** The CNXN banner claims `sendrecv_v2` with brotli, lz4, and zstd, but `pull` and `push` always send the v1 forms, so a transfer is never compressed. The rest of the banner is copied from adb byte-for-byte and therefore also claims services that are never opened (`abb`, `apex`, `remount_shell`, `track_app`, `devraw`, `server_status`, ...); it should be trimmed to what the library implements.
 - Replace the dynamically-linked libusb backend with platform-native USB APIs (WinUSB, IOKit, `usbfs`) to remove the third-party dependency and its license obligations. See [USB Backend](01-objective.md#usb-backend).
