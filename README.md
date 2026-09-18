@@ -136,6 +136,7 @@ cmake/                  CMake package configuration
 - [`LEARNING.md`](LEARNING.md) — the theory: a guided curriculum, module by module.
 - [`docs/05-usage.md`](docs/05-usage.md) — copy-pasteable snippets for one feature at a time.
 - [`docs/06-sync-protocol.md`](docs/06-sync-protocol.md) — how the `sync` service and file transfer work, byte by byte.
+- [`docs/03-roadmap.md`](docs/03-roadmap.md) and the [open issues](https://github.com/promethea156/adbcpp/issues) — what is planned next.
 
 ## Design documents
 
