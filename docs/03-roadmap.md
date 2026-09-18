@@ -174,7 +174,7 @@ Obligations that run through every slice, with the current state of each.
 
 ## Open Questions
 
-- **Does a target need ADB's TLS handshake?** Modern ADB encrypts the host-to-server link on port 5037; over USB the direct protocol has none, and an emulator's ADB listener accepts plaintext. So this only matters for a target that demands the handshake, which belongs with [Slice 7](#slice-7--tcp-transport). mbedTLS can provide it if so.
+- **Does a target need ADB's TLS handshake?** Modern ADB encrypts the host-to-server link on port 5037; over USB the direct protocol has none, and an emulator's ADB listener and a `tcpip` device both accept plaintext. So this only matters for a target that demands the handshake, which is a [future improvement](#other-improvements). mbedTLS can provide it if so.
 - **What is the minimum supported Android version?** Today it is set by `shell_v2`, which `run` requires and has no fallback for, and by the v1 `LIST`/`STAT` forms, which are used when the device does not advertise `ls_v2`/`stat_v2`. The floor should be stated once a device without `shell_v2` has been tried.
 
 ## Future Improvements
@@ -208,7 +208,6 @@ and both run `echo hello` and a file round trip.
 
 ### Other Improvements
 
-- **Select a device by serial.** `UsbTransport::open(DeviceId)` matches on vendor and product id alone, so two identical devices cannot be told apart, and there is no serial handling anywhere in the library. adb selects by serial, which it reads from the device's banner.
 - **Fall back to `shell:` when `shell_v2` is absent.** `run` requires `shell_v2`, while `list` and `stat` already fall back to their v1 forms.
 - **Use `sendrecv_v2`, or stop advertising it.** The CNXN banner claims `sendrecv_v2` with brotli, lz4, and zstd, but `pull` and `push` always send the v1 forms, so a transfer is never compressed. The rest of the banner is copied from adb byte-for-byte and therefore also claims services that are never opened (`abb`, `apex`, `remount_shell`, `track_app`, `devraw`, `server_status`, ...); it should be trimmed to what the library implements.
 - Replace the dynamically-linked libusb backend with platform-native USB APIs (WinUSB, IOKit, `usbfs`) to remove the third-party dependency and its license obligations. See [USB Backend](01-objective.md#usb-backend).

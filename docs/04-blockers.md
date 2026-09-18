@@ -128,8 +128,8 @@ Each entry has the same shape:
 
 - **Symptom**: The first connection attempt sometimes timed out on the first bulk transfer, then succeeded on retry.
 - **Cause**: Observed intermittently; the exact cause is not confirmed. It is not related to device presence (the device is enumerated) and predates the presence check.
-- **Resolution**: The transfer timeout was raised to 120 seconds, which also gives the user time to approve the on-device prompt. The device integration test can be re-run.
-- **Note**: This is worth revisiting with a raw USB capture. It may be a device or host controller quirk.
+- **Resolution**: The transfer timeout was raised from the original short value, which also gives the user time to approve the on-device prompt. Blocker 24 later split it into a short per-transfer timeout and a long budget, and blocker 29's capture showed the first failure is a link reset, which the examples now retry.
+- **Note**: The raw USB capture was taken and is recorded as blocker 29: the first failure is the device resetting its USB 3 link, which the examples now retry. The per-transfer timeout is short with a separate budget (blocker 24), so a device that has gone quiet is still noticed quickly.
 
 ### 16. The device prompts for authorization on every run
 
