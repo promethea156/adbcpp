@@ -18,11 +18,21 @@
 #include "adbcpp/sync.hpp"
 #include "adbcpp/usb/usb_transport.hpp"
 
-// A guided tour of the whole library against the first attached device. It detects a
-// device, connects, then walks every public feature once, in the order a real
-// session would use them: run a command, list a directory, push and pull a file,
-// install an app (uninstalling it first when it is already present), launch it,
-// check it stays running for ten seconds, and close it.
+// A guided tour of the whole library against the first attached device, with the
+// step-by-step written out here rather than in a separate document. It detects a
+// device, connects, then walks every public feature once, in the order a real session
+// would use them:
+//
+//   1. detect a device and connect   UsbTransport::list, DeviceId::serial, connect
+//   2. run a shell command           run
+//   3. list a directory              list
+//   4. push, stat, and pull a file    push, stat, pull
+//   5. sleep the device              run("input keyevent 223")
+//   6. install the app               uninstall if present, then install
+//   7. wake the device               run("input keyevent 224")
+//   8. launch the app                launch
+//   9. check it runs for ten seconds  is_running
+//  10. close the app                 close
 //
 // A split app is installed from all of its APKs, which are given after the package.
 //
@@ -190,7 +200,14 @@ int main(int argc, char **argv)
 
     try
     {
-        // 1. Detect a device and connect to it.
+        // Step 1a: detect a device.
+        //
+        // `UsbTransport::list` enumerates the attached ADB devices and returns each
+        // one's serial, which is the USB `iSerial` descriptor and the string
+        // `adb devices` prints. With no `--serial` the list is printed and the first
+        // device is used; `--serial` skips the enumeration and matches that serial
+        // alone, so the device's model does not have to be known. No device at all is a
+        // warning and a successful exit, so the demo can run in a loop.
         step("detect a device");
         adbcpp::usb::DeviceId id;
         if (serial)
@@ -219,6 +236,18 @@ int main(int argc, char **argv)
         }
         std::cout << "using device " << id.serial << '\n';
 
+        // Step 1b: connect.
+        //
+        // `Key::load_or_generate` reuses the key `adb` already authorized, so the
+        // device usually shows no prompt. `UsbTransport::open` opens the ADB interface
+        // and `Connection::connect` performs the CNXN/AUTH handshake, signing the
+        // device's token with the key. `device_serial()` then reports the serial the
+        // transport opened, the same string `adb devices` prints.
+        //
+        // The open and the handshake are retried, because a USB 3 device can reset its
+        // link right after the open and stall the first write (blocker 29). The transport
+        // lives in `main` and is never moved once it holds a device, because the
+        // connection keeps a pointer to it.
         step("connect");
         const auto key = adbcpp::crypto::Key::load_or_generate();
         if (!key)
@@ -227,8 +256,6 @@ int main(int argc, char **argv)
         }
         std::cout << "key fingerprint: " << key->fingerprint().value_or("?") << std::endl;
         std::cout << "approve the USB debugging prompt on the device if it appears" << std::endl;
-        // The transport lives here and is never moved once it holds a device, because
-        // the connection keeps a pointer to it.
         std::optional<adbcpp::usb::UsbTransport> transport;
         auto connected = connect(id, *key, transport);
         if (!connected)
@@ -243,7 +270,13 @@ int main(int argc, char **argv)
         }
         std::cout << std::endl;
 
-        // 2. Run a shell command and read its output and exit code.
+        // Step 2: run a shell command.
+        //
+        // `run` opens the `shell,v2,raw` service, sends the command, and
+        // reassembles the output, the exit code, and whether it worked. The `raw`
+        // suffix runs the command directly rather than through a login shell. A device
+        // without `shell_v2` gets the v1 `shell` service instead, whose output is raw
+        // and whose exit code is always 0 (blocker 31).
         step("run a shell command");
         const auto hello = adbcpp::run(connection, "echo hello");
         if (!hello)
@@ -252,7 +285,11 @@ int main(int argc, char **argv)
         }
         std::cout << "exit code " << static_cast<int>(hello->exit_code) << ", output: " << hello->output;
 
-        // 3. List a directory.
+        // Step 3: list a directory.
+        //
+        // `list` opens the `sync` service and sends `LIST`, which the device
+        // answers with `DENT` records that the library parses into `DirEntry` values.
+        // The wire format is in `docs/06-sync-protocol.md`.
         step("list /sdcard");
         const auto entries = adbcpp::list(connection, "/sdcard");
         if (!entries)
@@ -266,7 +303,12 @@ int main(int argc, char **argv)
         }
         std::cout << '\n';
 
-        // 4. Push a file, stat it, and pull it back.
+        // Step 4: push a file, stat it, and pull it back.
+        //
+        // All three go over `sync`: `push` sends `STAT` to see whether the
+        // destination is a directory and then `SEND`, `stat` sends `STAT`, and
+        // `pull` sends `RECV`. The round trip is compared, so a silent corruption
+        // would be caught.
         step("push, stat, and pull a file");
         const auto local = std::filesystem::temp_directory_path() / "adbcpp_demo_push.txt";
         {
@@ -300,10 +342,24 @@ int main(int argc, char **argv)
         (void)adbcpp::run(connection, "rm -f " + remote);
         std::cout << "round-tripped " << contents.size() << " bytes\n";
 
-        // 5. Put the device to sleep, then install the app, uninstalling an existing
-        // copy first. Installing while the screen is off is the realistic case, and it
-        // also shows that the transfer does not need an awake device.
+        // Step 5: put the device to sleep.
+        //
+        // `input keyevent 223` is `KEYCODE_SLEEP`; the following `dumpsys power`
+        // shows the device really went to sleep. Installing with the screen off is the
+        // realistic case, and it shows the transfer does not need an awake device.
         set_power(connection, "sleep the device", "223");
+
+        // Step 6: install the app, uninstalling an existing copy first.
+        //
+        // `pm path <package>` prints the package's APK path when it is installed and
+        // nothing when it is not, so the program can remove the old copy first and
+        // always install fresh. `uninstall` runs `pm uninstall`, and a rejection is a
+        // normal result rather than an error.
+        //
+        // A single APK is `install`, which pushes it to `/data/local/tmp` and runs
+        // `pm install`. A split app has no `pm install-multiple`; `install_app` does
+        // what `adb install-multiple` does: create a `pm` session, write each pushed
+        // APK into it, and commit it.
         step("install " + package);
         const auto installed = adbcpp::run(connection, "pm path " + package);
         if (!installed)
@@ -334,10 +390,19 @@ int main(int argc, char **argv)
         }
         std::cout << "installed " << package << " from " << apks.size() << " apk(s)\n";
 
-        // 6. Wake the device, then launch the app. Right after a fresh install the
-        // package manager can still be indexing, so `am start` may not resolve the
-        // launcher yet.
+        // Step 7: wake the device.
+        //
+        // `input keyevent 224` is `KEYCODE_WAKEUP`, and the `dumpsys power` check
+        // shows the device is awake again before the app is started.
         set_power(connection, "wake the device", "224");
+
+        // Step 8: launch the app.
+        //
+        // `launch` runs `am start -W <package>`, which starts the package's
+        // launcher activity and waits for the launch to finish. It is retried because
+        // the package manager can still be indexing the fresh install and `am start`
+        // does not resolve the launcher until it has. `am start` only resolves for an
+        // app with a `MAIN`/`LAUNCHER` activity, which not every app has.
         step("launch " + package);
         adbcpp::Result<adbcpp::CommandResult> launched =
             tl::unexpected(adbcpp::Error{adbcpp::ErrorCode::Device, "the app was not launched"});
@@ -359,7 +424,12 @@ int main(int argc, char **argv)
             fail(adbcpp::Error{adbcpp::ErrorCode::Device, launched->output});
         }
 
-        // 7. Check that it is running, and wait ten seconds.
+        // Step 9: check that it runs, for ten seconds.
+        //
+        // `is_running` runs `pidof <package>`, which answers both cases
+        // directly: it exits zero with the pids when the process runs and nonzero
+        // with no output when it does not. The loop polls once a second for ten
+        // seconds and stops early if the app exits on its own.
         step("check that it runs for ten seconds");
         for (int second = 0; second < 10; ++second)
         {
@@ -376,7 +446,11 @@ int main(int argc, char **argv)
             }
         }
 
-        // 8. Close the app.
+        // Step 10: close the app.
+        //
+        // `close` runs `am force-stop <package>`, which stops the process and
+        // removes its activities from the task stack. The transport is then closed
+        // and the tour is done.
         step("close " + package);
         if (const auto status = adbcpp::close(connection, package); !status)
         {
