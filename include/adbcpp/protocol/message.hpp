@@ -26,10 +26,10 @@ inline constexpr std::size_t kMessageHeaderSize = 24;
  * `arg0` as the protocol version and `arg1` as the maximum payload size, while a
  * WRTE uses them as the stream's local and remote ids.
  *
- * `magic` is always the bitwise inverse of `command`. Together with the CRC it is
- * how the protocol detects a desynchronized stream: the document requires that a
- * bad header or payload close the connection, because the protocol depends on shared
- * state and cannot recover from a framing error.
+ * `magic` is always the bitwise inverse of `command`. Together with the payload
+ * checksum it is how the protocol detects a desynchronized stream: the document
+ * requires that a bad header or payload close the connection, because the protocol
+ * depends on shared state and cannot recover from a framing error.
  */
 struct ADBCPP_API Message
 {
@@ -37,7 +37,10 @@ struct ADBCPP_API Message
     std::uint32_t arg0 = 0;
     std::uint32_t arg1 = 0;
     std::uint32_t data_length = 0;
-    std::uint32_t data_crc32 = 0;
+    /// The payload checksum. `docs/dev/protocol.md` calls this field
+    /// `data_crc32`, but AOSP's `amessage` calls it `data_check` and computes a
+    /// plain byte sum, not a CRC-32.
+    std::uint32_t data_check = 0;
     std::uint32_t magic = 0;
 
     /// Returns the magic value for a given command (`command ^ 0xFFFFFFFF`).
@@ -46,15 +49,15 @@ struct ADBCPP_API Message
     /// header whose magic does not match its command.
     static std::uint32_t compute_magic(std::uint32_t command) noexcept;
 
-    /// Returns the standard CRC32 of `data`.
+    /// Returns the sum of the payload bytes, which is AOSP's `data_check`.
     ///
-    /// This is the usual zlib CRC-32 (reflected polynomial `0xEDB88320`, initial
-    /// and final value `0xFFFFFFFF`). AOSP's `apacket` computes the same CRC over
-    /// the payload. Protocol `0x01000001` and later skip it (AOSP's
-    /// `A_VERSION_SKIP_CHECKSUM`), so a sender that follows the current protocol
-    /// leaves `data_crc32` at zero; `Session::receive` therefore verifies it only
-    /// when it is non-zero.
-    static std::uint32_t compute_crc32(std::span<const std::byte> data) noexcept;
+    /// AOSP's `calculate_apacket_checksum` adds the payload bytes rather than
+    /// computing a CRC-32, and `send_packet` computes it only while the protocol
+    /// is below `A_VERSION_SKIP_CHECKSUM`: adb sets it on the handshake's CNXN
+    /// and AUTH messages, which is where adbd verifies it. A device on the
+    /// current protocol sends zero, so `Session::receive` verifies it only when it
+    /// is non-zero.
+    static std::uint32_t compute_checksum(std::span<const std::byte> data) noexcept;
 
     /// Returns `payload.size()` as the 32-bit `data_length` field.
     ///

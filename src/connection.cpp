@@ -31,7 +31,7 @@ Result<protocol::Message> make_auth(std::uint32_t type, std::span<const std::byt
     auth.command = protocol::kAuth;
     auth.arg0 = type;
     auth.data_length = *length;
-    auth.data_crc32 = protocol::Message::compute_crc32(payload);
+    auth.data_check = protocol::Message::compute_checksum(payload);
     auth.magic = protocol::Message::compute_magic(auth.command);
     return auth;
 }
@@ -110,7 +110,7 @@ Result<Connection> Connection::connect(Transport &transport, std::span<const std
     connect_message.arg0 = protocol::kVersion;
     connect_message.arg1 = protocol::kMaxData;
     connect_message.data_length = *length;
-    connect_message.data_crc32 = protocol::Message::compute_crc32(identity_bytes);
+    connect_message.data_check = protocol::Message::compute_checksum(identity_bytes);
     connect_message.magic = protocol::Message::compute_magic(connect_message.command);
     if (const auto sent = connection.send(connect_message, identity_bytes); !sent)
     {

@@ -75,7 +75,7 @@ adbcpp::protocol::Message make_message(std::uint32_t command, std::uint32_t arg0
     message.arg0 = arg0;
     message.arg1 = arg1;
     message.data_length = *adbcpp::protocol::Message::data_length_of(payload);
-    message.data_crc32 = adbcpp::protocol::Message::compute_crc32(payload);
+    message.data_check = adbcpp::protocol::Message::compute_checksum(payload);
     message.magic = adbcpp::protocol::Message::compute_magic(command);
     return message;
 }

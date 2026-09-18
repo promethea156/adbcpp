@@ -9,7 +9,8 @@
 
 // These tests pin down the wire format of the 24-byte ADB header described in
 // `docs/dev/protocol.md`: six little-endian 32-bit words, `magic` as the inverse
-// of `command`, and a standard CRC-32 over the payload.
+// of `command`, and a payload byte sum in the field the document calls
+// `data_crc32`.
 using adbcpp::protocol::Message;
 
 TEST_CASE("message header round-trips through encode/decode", "[protocol]")
@@ -19,7 +20,7 @@ TEST_CASE("message header round-trips through encode/decode", "[protocol]")
     original.arg0 = 0x01000001u;
     original.arg1 = 4096u;
     original.data_length = 0u;
-    original.data_crc32 = 0u;
+    original.data_check = 0u;
     original.magic = Message::compute_magic(original.command);
 
     const auto encoded = original.encode();
@@ -29,7 +30,7 @@ TEST_CASE("message header round-trips through encode/decode", "[protocol]")
     REQUIRE(decoded.arg0 == original.arg0);
     REQUIRE(decoded.arg1 == original.arg1);
     REQUIRE(decoded.data_length == original.data_length);
-    REQUIRE(decoded.data_crc32 == original.data_crc32);
+    REQUIRE(decoded.data_check == original.data_check);
     REQUIRE(decoded.magic == original.magic);
 }
 
@@ -57,14 +58,16 @@ TEST_CASE("magic is the bitwise inverse of command", "[protocol]")
     REQUIRE(Message::compute_magic(adbcpp::protocol::kCnxn) == (adbcpp::protocol::kCnxn ^ 0xFFFFFFFFu));
 }
 
-TEST_CASE("crc32 matches the standard test vector", "[protocol]")
+TEST_CASE("checksum is the sum of the payload bytes", "[protocol]")
 {
-    // "123456789" has the well-known CRC-32 check value 0xCBF43926, which is how
-    // this implementation is confirmed to be the same CRC-32 adb uses.
+    // Despite the field's name, adb's `calculate_apacket_checksum` adds the
+    // payload bytes rather than computing a CRC-32. adbd verifies the CNXN and
+    // AUTH checksum, so this is the value the handshake must carry.
     const char *text = "123456789";
     const auto data = std::span(reinterpret_cast<const std::byte *>(text), 9);
 
-    REQUIRE(Message::compute_crc32(data) == 0xCBF43926u);
+    REQUIRE(Message::compute_checksum(data) == 0x1DDu);
+    REQUIRE(Message::compute_checksum({}) == 0u);
 }
 
 TEST_CASE("data_length_of reports the payload size as a 32-bit length", "[protocol]")

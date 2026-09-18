@@ -103,12 +103,13 @@ Result<Frame> Session::receive()
             return tl::unexpected(read.error());
         }
 
-        // The CRC is advisory: protocol 0x01000001 and later send it as zero and do
-        // not compute it (AOSP's `A_VERSION_SKIP_CHECKSUM`), so it is verified only
-        // when a sender set it.
-        if (frame.header.data_crc32 != 0 && frame.header.data_crc32 != protocol::Message::compute_crc32(frame.payload))
+        // The checksum is advisory: a device on protocol 0x01000001 and later
+        // sends zero, while adb computes it for the handshake's CNXN and AUTH, so
+        // it is verified only when a sender set it.
+        if (frame.header.data_check != 0 &&
+            frame.header.data_check != protocol::Message::compute_checksum(frame.payload))
         {
-            return tl::unexpected(framing_error(*transport_, "the header payload CRC does not match the payload"));
+            return tl::unexpected(framing_error(*transport_, "the header payload checksum does not match the payload"));
         }
     }
     return frame;

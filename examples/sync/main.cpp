@@ -80,7 +80,7 @@ std::span<const std::byte> bytes_of(const std::string &text)
     return std::span(reinterpret_cast<const std::byte *>(text.data()), text.size());
 }
 
-// An ADB header with its derived fields (`data_length`, `data_crc32`, `magic`)
+// An ADB header with its derived fields (`data_length`, `data_check`, `magic`)
 // filled in.
 adbcpp::protocol::Message message(std::uint32_t command, std::uint32_t arg0, std::uint32_t arg1,
                                   std::span<const std::byte> payload = {})
@@ -90,7 +90,7 @@ adbcpp::protocol::Message message(std::uint32_t command, std::uint32_t arg0, std
     header.arg0 = arg0;
     header.arg1 = arg1;
     header.data_length = *adbcpp::protocol::Message::data_length_of(payload);
-    header.data_crc32 = adbcpp::protocol::Message::compute_crc32(payload);
+    header.data_check = adbcpp::protocol::Message::compute_checksum(payload);
     header.magic = adbcpp::protocol::Message::compute_magic(command);
     return header;
 }

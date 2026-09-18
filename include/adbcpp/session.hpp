@@ -46,7 +46,7 @@ public:
     ///
     /// The header is validated before its payload is read: `magic` must be the
     /// inverse of `command`, `data_length` must not exceed the protocol's maximum
-    /// payload, and a non-zero `data_crc32` must match the payload. Any of these
+    /// payload, and a non-zero `data_check` must match the payload. Any of these
     /// means the byte stream is desynchronized, and since the protocol cannot
     /// recover from a framing error the transport is closed and an
     /// `ErrorCode::Protocol` is returned.

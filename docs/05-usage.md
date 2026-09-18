@@ -775,7 +775,7 @@ int main()
     wrte.arg0 = 7;
     wrte.arg1 = 2;
     wrte.data_length = *length;
-    wrte.data_crc32 = adbcpp::protocol::Message::compute_crc32(payload);
+    wrte.data_check = adbcpp::protocol::Message::compute_checksum(payload);
     wrte.magic = adbcpp::protocol::Message::compute_magic(wrte.command);
     transport.feed(wrte.encode());
     transport.feed(payload);
@@ -816,8 +816,10 @@ int main()
 ## Build a Message by Hand
 
 `protocol::Message` is the 24-byte ADB header. `encode()` serializes it
-little-endian; `compute_magic` and `compute_crc32` fill in the derived fields, and
-`data_length_of` is the checked payload length.
+little-endian; `compute_magic` and `compute_checksum` fill in the derived fields, and
+`data_length_of` is the checked payload length. `compute_checksum` is the **sum of the
+payload bytes**, matching AOSP's `calculate_apacket_checksum`, even though the protocol
+document names the field `data_crc32` (blocker 27).
 
 ```cpp
 #include <cstddef>
@@ -844,7 +846,7 @@ int main()
     cnxn.arg0 = adbcpp::protocol::kVersion;
     cnxn.arg1 = adbcpp::protocol::kMaxData;
     cnxn.data_length = *length;
-    cnxn.data_crc32 = adbcpp::protocol::Message::compute_crc32(payload);
+    cnxn.data_check = adbcpp::protocol::Message::compute_checksum(payload);
     cnxn.magic = adbcpp::protocol::Message::compute_magic(cnxn.command);
 
     const auto header = cnxn.encode();
@@ -890,7 +892,7 @@ int main()
     wrte.arg0 = 2;
     wrte.arg1 = 7;
     wrte.data_length = *length;
-    wrte.data_crc32 = adbcpp::protocol::Message::compute_crc32(payload);
+    wrte.data_check = adbcpp::protocol::Message::compute_checksum(payload);
     wrte.magic = adbcpp::protocol::Message::compute_magic(wrte.command);
 
     const auto sent = session.send(wrte, payload);
@@ -1057,7 +1059,7 @@ int main()
 
 ## Pitfalls
 
-- **Nothing is thread-safe.** `Transport`, `Connection`, `Stream`, and `Key` each say so: they share mutable state, so concurrent use of one object must be serialized by the caller. One thread per connection is the supported way to work with several devices at once, because every connection is independent; `UsbTransport::open` cannot yet tell two identical devices apart, so opening several needs a unique USB serial ([`03-roadmap.md`](03-roadmap.md#working-with-several-devices-in-parallel)).
+- **Nothing is thread-safe.** `Transport`, `Connection`, `Stream`, and `Key` each say so: they share mutable state, so concurrent use of one object must be serialized by the caller. One thread per device is the supported way to work with several devices at once, because every connection is independent. Two devices are needed rather than two connections to one, because the WinUSB driver admits a single handle per device, so the same device cannot be opened twice even from two processes (blocker 28); `UsbTransport::open` also cannot yet tell two identical devices apart, so each needs a unique USB serial ([`03-roadmap.md`](03-roadmap.md#working-with-several-devices-in-parallel)).
 - **Keep the key alive.** The signer callback is stored by the `Connection`, so the
   `Key` it captures must outlive the connection. A dangling reference crashes on
   the first AUTH.

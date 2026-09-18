@@ -127,7 +127,7 @@ TEST_CASE("session reads a payload after its header", "[session]")
     Message inbound;
     inbound.command = adbcpp::protocol::kWrte;
     inbound.data_length = payload.size();
-    inbound.data_crc32 = Message::compute_crc32(payload);
+    inbound.data_check = Message::compute_checksum(payload);
     inbound.magic = Message::compute_magic(inbound.command);
 
     transport.feed(inbound.encode());
@@ -153,7 +153,7 @@ TEST_CASE("session accepts a header with no CRC", "[session]")
     inbound.data_length = payload.size();
     // Protocol 0x01000001 and later leave the CRC at zero, which means "not set"
     // rather than "a CRC of zero".
-    inbound.data_crc32 = 0;
+    inbound.data_check = 0;
     inbound.magic = Message::compute_magic(inbound.command);
 
     transport.feed(inbound.encode());
@@ -212,7 +212,7 @@ TEST_CASE("session rejects a payload whose CRC does not match", "[session]")
     Message inbound;
     inbound.command = adbcpp::protocol::kWrte;
     inbound.data_length = payload.size();
-    inbound.data_crc32 = Message::compute_crc32(payload) ^ 1u;
+    inbound.data_check = Message::compute_checksum(payload) ^ 1u;
     inbound.magic = Message::compute_magic(inbound.command);
 
     transport.feed(inbound.encode());

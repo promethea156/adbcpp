@@ -213,9 +213,27 @@ Each entry has the same shape:
 
 ## Protocol Validation
 
-### 27. A modern header's CRC is zero, and the protocol stops checking it
+### 27. The "CRC" is a plain byte sum, and a strict device ignores a real CRC
 
-- **Symptom**: Validating the received header's `data_crc32` would reject every message from a modern device, because the field is `0`.
-- **Cause**: AOSP skips the checksum for protocol `A_VERSION_SKIP_CHECKSUM` (`0x01000001`) and later: `send_packet` sets `data_check = 0`, and the receiver never verifies it, since USB and TCP already provide their own integrity checks. The CNXN negotiates `0x01000001`, so both sides send `0`, and a check for equality would fail.
-- **Resolution**: `Session::receive` always checks `magic` and bounds `data_length`, and checks `data_crc32` only when it is non-zero, which means "set". A framing error closes the transport, matching AOSP's `check_header`/`HandleRead`.
-- **Note**: AOSP's `check_header` checks exactly `magic` and `data_length <= max_payload` and never the CRC, so checking it when present is stricter than adb while still accepting the same traffic. The bound is the protocol's `MAX_PAYLOAD`, which stops a corrupt length from allocating and awaiting gigabytes.
+- **Symptom**: A second test device (a REDMAGIC 9S Pro) ignored every CNXN, so the handshake never started, while the first device accepted it. The CNXN's `data_crc32` field was correct: a CRC-32 of the banner.
+- **Cause**: `docs/dev/protocol.md` names the field `data_crc32`, but AOSP's `calculate_apacket_checksum` is a plain **sum of the payload bytes** and its field is `data_check`. adbd verifies that sum on the CNXN and AUTH messages, so a real CRC-32 fails it and the device does not answer. The first device was lenient and accepted either.
+- **Resolution**: `Message::compute_checksum` adds the payload bytes, matching `calculate_apacket_checksum`, and the field is renamed `data_check` to match AOSP. A capture of adb confirms the value: its 286-byte banner sums to `0x701d`, exactly the CNXN `data_check` adb sends.
+- **Note**: The checksum only matters during the handshake: AOSP's `send_packet` computes it only while the protocol is below `A_VERSION_SKIP_CHECKSUM`, so the CNXN and AUTH carry it and every later message carries zero. `Session::receive` therefore still verifies it only when non-zero. The unit test vector is now the byte sum of "123456789" (`0x1dd`), not the CRC-32 check value.
+
+## Parallel Devices
+
+### 28. WinUSB allows one handle per device, so one device cannot be opened twice
+
+- **Symptom**: Two `UsbTransport`s to the same device, on two threads or in two processes that overlap, fail the second `libusb_open` with `LIBUSB_ERROR_ACCESS` ("Access denied"). Two different devices are fine, and the same device works again once the first handle is closed.
+- **Cause**: The device's ADB interface is bound to the Microsoft WinUSB driver with a single `DeviceInterfaceGUID` registry value (`{F72FE0D4-...}` on the test device). WinUSB admits one handle per device interface unless the INF registers `DeviceInterfaceGUIDs` (plural), so a second `CreateFile` is denied. It is not the `libusb` context (each transport has its own) or a race (the denial is deterministic and happens even when the opens are sequential).
+- **Resolution**: The supported model is one thread per device, and two devices are needed to exercise it. `examples/multi` opens two and, when both selectors name the same single device, reports that a second device is needed.
+- **Note**: This is why `adb` and this library cannot hold the device at the same time either (the `AGENTS.md` rule to stop `adb` first), and it is a driver property rather than a host one: a device whose INF registers multiple interface GUIDs would allow both. Two emulators over TCP are unaffected, since each is its own endpoint.
+
+## USB 3 Devices
+
+### 29. A device resets its USB 3 link around the open and stalls the first write
+
+- **Symptom**: On one device (a REDMAGIC 9S Pro, a USB 3 device) about half of the runs failed the first `libusb_bulk_transfer` with `Pipe error` or `Input/Output Error`, and the device then vanished from enumeration for a moment. The other device (a USB 2 phone) never failed.
+- **Cause**: The device resets its USB 3 link just after `libusb_open`/`libusb_claim_interface` and before the host's first write. The CNXN is written while the link is down and is discarded, so the device never answers and the read finds a stalled endpoint. A USBPcap capture shows USB 3 link-management frames on the device's address immediately before the host's CNXN, and no reply.
+- **Resolution**: Re-opening the transport and re-running `Connection::connect` recovers, so `examples/usb` and `examples/multi` retry the whole open and handshake a few times with a short delay. Clearing the endpoint's halt inside the one transport was not enough, because the CNXN itself had already been lost.
+- **Note**: `adb` sends the CNXN twice, which is the same retry at a lower level. The retry belongs at the open rather than in `Session`, because a device that re-enumerates invalidates the handle, and because `Session::receive` closes the transport on a framing error.

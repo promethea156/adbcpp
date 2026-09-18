@@ -30,23 +30,18 @@ std::uint32_t Message::compute_magic(std::uint32_t command) noexcept
     return command ^ 0xFFFFFFFFu;
 }
 
-std::uint32_t Message::compute_crc32(std::span<const std::byte> data) noexcept
+std::uint32_t Message::compute_checksum(std::span<const std::byte> data) noexcept
 {
-    // Reflected CRC-32 with the zlib polynomial 0xEDB88320 (the reverse of the
-    // 0x04C11DB7 polynomial), seeded and finalized with 0xFFFFFFFF. The `~` at the
-    // end is the final XOR, which is what makes this the "standard" CRC32 that
-    // `adb` and `zlib` produce.
-    std::uint32_t crc = 0xFFFFFFFFu;
+    // Despite the field's name in `docs/dev/protocol.md` (`data_crc32`), AOSP's
+    // `calculate_apacket_checksum` is a plain sum of the payload bytes, not a
+    // CRC-32. adbd verifies it on the CNXN and AUTH messages, so a real CRC-32
+    // makes a strict device ignore the handshake (blocker 29).
+    std::uint32_t sum = 0;
     for (const std::byte value : data)
     {
-        crc ^= std::to_integer<std::uint8_t>(value);
-        for (int bit = 0; bit < 8; ++bit)
-        {
-            const std::uint32_t mask = 0u - (crc & 1u);
-            crc = (crc >> 1) ^ (0xEDB88320u & mask);
-        }
+        sum += std::to_integer<std::uint8_t>(value);
     }
-    return ~crc;
+    return sum;
 }
 
 Result<std::uint32_t> Message::data_length_of(std::span<const std::byte> payload)
@@ -65,7 +60,7 @@ std::array<std::byte, kMessageHeaderSize> Message::encode() const noexcept
     write_u32_le(bytes.data() + 4, arg0);
     write_u32_le(bytes.data() + 8, arg1);
     write_u32_le(bytes.data() + 12, data_length);
-    write_u32_le(bytes.data() + 16, data_crc32);
+    write_u32_le(bytes.data() + 16, data_check);
     write_u32_le(bytes.data() + 20, magic);
     return bytes;
 }
@@ -77,7 +72,7 @@ Message Message::decode(std::span<const std::byte, kMessageHeaderSize> bytes) no
     message.arg0 = read_u32_le(bytes.data() + 4);
     message.arg1 = read_u32_le(bytes.data() + 8);
     message.data_length = read_u32_le(bytes.data() + 12);
-    message.data_crc32 = read_u32_le(bytes.data() + 16);
+    message.data_check = read_u32_le(bytes.data() + 16);
     message.magic = read_u32_le(bytes.data() + 20);
     return message;
 }

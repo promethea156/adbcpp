@@ -142,7 +142,7 @@ the frame is still reassembled. `read_exact` is what makes this work.
 2. [`include/adbcpp/protocol/commands.hpp`](include/adbcpp/protocol/commands.hpp)
    — the command constants and `make_command`.
 3. [`src/protocol/message.cpp`](src/protocol/message.cpp) — the little-endian
-   serialization and the CRC-32.
+   serialization and the payload checksum.
 4. AOSP's protocol document, "protocol overview and basics":
    <https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/docs/dev/protocol.md>
 
@@ -153,14 +153,16 @@ build/tests/Release/adbcpp_tests "[protocol]"
 ```
 
 **Exercise.** Take the bytes `43 4e 58 4e` and decode them as a command. Then
-work out why `magic` is `command ^ 0xFFFFFFFF`. Finally, compute the CRC-32 of
-`"123456789"` and check it against `0xCBF43926`, the standard test vector.
+work out why `magic` is `command ^ 0xFFFFFFFF`. Finally, sum the bytes of
+`"123456789"` and check the result against `0x1dd`, and compare it with the CRC-32
+check value `0xCBF43926` that the field's name suggests.
 
 **Checkpoint.**
 
 - What happens, per the protocol document, if a receiver sees a bad header, a bad
   payload, or an unknown command?
-- Why is the CRC-32 still computed even though `adbd` no longer verifies it?
+- Why does the field's name (`data_crc32`) not match what it holds, and where does
+  the value matter?
 
 ## Module 3 — CNXN and the Device Banner
 
@@ -529,7 +531,7 @@ A few practical notes:
 When you have finished, you should be able to:
 
 - Explain ADB's two protocols and why `adbcpp` implements only the direct one.
-- Decode a 24-byte ADB header by hand, including `magic` and the CRC-32.
+- Decode a 24-byte ADB header by hand, including `magic` and the payload checksum.
 - Describe the CNXN/AUTH handshake, including when the public key is sent.
 - Explain why the AUTH token is signed as the SHA-1 digest and not re-hashed.
 - Describe how a byte channel becomes messages and streams over USB.
