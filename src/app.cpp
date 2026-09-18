@@ -137,4 +137,37 @@ Result<PackageResult> uninstall(Connection &connection, std::string_view package
     return package_result(*result);
 }
 
+Result<CommandResult> launch(Connection &connection, std::string_view package)
+{
+    // `am start` treats a bare positional argument as a package name and turns it
+    // into `ACTION_MAIN`/`CATEGORY_LAUNCHER` with that package, so the device
+    // resolves the package's launcher activity. `-W` waits for the launch, so the
+    // activity is up by the time a caller checks `is_running`.
+    return run(connection, "am start -W " + shell_quote(package));
+}
+
+Status close(Connection &connection, std::string_view package)
+{
+    const auto result = run(connection, "am force-stop " + shell_quote(package));
+    if (!result)
+    {
+        return tl::unexpected(result.error());
+    }
+    // `am force-stop` exits zero even for a package that is not installed and
+    // prints nothing, so its exit code carries no answer to inspect.
+    return {};
+}
+
+Result<bool> is_running(Connection &connection, std::string_view package)
+{
+    const auto result = run(connection, "pidof " + shell_quote(package));
+    if (!result)
+    {
+        return tl::unexpected(result.error());
+    }
+    // `pidof` exits zero with the pids when the process runs, and nonzero with
+    // no output when it does not, so the exit code is the whole answer.
+    return result->success;
+}
+
 } // namespace adbcpp

@@ -411,3 +411,83 @@ TEST_CASE("uninstall reports a package it cannot remove", "[app]")
     REQUIRE(result.exit_code == 1);
     REQUIRE(result.failure_reason() == "DELETE_FAILED_INTERNAL_ERROR");
 }
+
+TEST_CASE("launch reports the started activity", "[app]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,stat_v2");
+    feed_run_on(transport, kDeviceId, kLocalId, "Starting: Intent { act=android.intent.action.MAIN }\n", 0);
+
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    const auto result = unwrap(adbcpp::launch(connection, "com.example.app"));
+
+    REQUIRE(result.success);
+    REQUIRE(result.exit_code == 0);
+    REQUIRE_FALSE(result.output.empty());
+}
+
+TEST_CASE("launch resolves the package as a launcher", "[app]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,stat_v2");
+    feed_run_on(transport, kDeviceId, kLocalId, "Starting: Intent { ... }\n", 0);
+
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::launch(connection, "com.example.app"));
+
+    // A bare positional argument is what makes `am start` set ACTION_MAIN with
+    // CATEGORY_LAUNCHER, so `-W` waits and the package is single-quoted.
+    REQUIRE(contains(transport.written(), "am start -W 'com.example.app'"));
+}
+
+TEST_CASE("launch reports a package that cannot be started", "[app]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,stat_v2");
+    feed_run_on(transport, kDeviceId, kLocalId, "Error: Activity not started, unable to resolve Intent { ... }\n", 1);
+
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    const auto result = unwrap(adbcpp::launch(connection, "com.example.missing"));
+
+    REQUIRE_FALSE(result.success);
+    REQUIRE(result.exit_code == 1);
+    REQUIRE(result.output.find("Error:") != std::string::npos);
+}
+
+TEST_CASE("close force-stops the package", "[app]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,stat_v2");
+    feed_run_on(transport, kDeviceId, kLocalId, "", 0);
+
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    const auto status = adbcpp::close(connection, "com.example.app");
+
+    REQUIRE(status.has_value());
+    REQUIRE(contains(transport.written(), "am force-stop 'com.example.app'"));
+}
+
+TEST_CASE("is_running is true when pidof finds a process", "[app]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,stat_v2");
+    feed_run_on(transport, kDeviceId, kLocalId, "1234\n", 0);
+
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    const auto running = unwrap(adbcpp::is_running(connection, "com.example.app"));
+
+    REQUIRE(running);
+    REQUIRE(contains(transport.written(), "pidof 'com.example.app'"));
+}
+
+TEST_CASE("is_running is false when pidof finds nothing", "[app]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,stat_v2");
+    feed_run_on(transport, kDeviceId, kLocalId, "", 1);
+
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    const auto running = unwrap(adbcpp::is_running(connection, "com.example.app"));
+
+    REQUIRE_FALSE(running);
+}

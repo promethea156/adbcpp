@@ -62,4 +62,45 @@ Result<PackageResult> ADBCPP_API install(Connection &connection, const std::file
  */
 Result<PackageResult> ADBCPP_API uninstall(Connection &connection, std::string_view package, bool keep_data = false);
 
+/**
+ * @brief Launches an application's main activity.
+ *
+ * Runs `am start -W` over the shell service. A bare package name is the one
+ * positional argument `am start` resolves as a launcher: `Intent.parseCommandArgs`
+ * turns it into `ACTION_MAIN` with `CATEGORY_LAUNCHER` and the package, so the
+ * device starts the package's launcher activity. `-W` waits for the launch to
+ * finish, which is what makes a following `is_running` meaningful.
+ *
+ * A package that cannot be started is a normal outcome rather than an error: `am`
+ * exits nonzero and prints `Error:` to its output, so it is returned as
+ * `success == false` with the output. An `Error` means the stream itself failed.
+ */
+Result<CommandResult> ADBCPP_API launch(Connection &connection, std::string_view package);
+
+/**
+ * @brief Force-stops an application.
+ *
+ * Runs `am force-stop` over the shell service, which stops the package's process
+ * and removes its activities from the task stack.
+ *
+ * `am force-stop` exits zero even for a package that is not installed and prints
+ * nothing, so there is no per-command answer to inspect and this returns `Status`.
+ * An `Error` means the stream itself failed.
+ */
+Status ADBCPP_API close(Connection &connection, std::string_view package);
+
+/**
+ * @brief Whether an application is running.
+ *
+ * Runs `pidof` over the shell service. `pidof` answers both cases directly: it
+ * exits zero and prints the process ids when a matching process runs, and exits
+ * nonzero with no output when it does not, so "not running" is a definite `false`
+ * rather than an absence.
+ *
+ * `pidof` matches a process name rather than a package name. A process is named
+ * after its package by default, so the two usually agree, but an application that
+ * renames its process makes this an approximation.
+ */
+Result<bool> ADBCPP_API is_running(Connection &connection, std::string_view package);
+
 } // namespace adbcpp

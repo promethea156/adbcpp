@@ -101,7 +101,7 @@ when libusb itself fails to initialize, which is indistinguishable from "no devi
 
 ## The device's answer is a result
 
-`run`, `install`, `launch`, and `close` return `Result<CommandResult>`; the command worked if
+`run`, `install`, and `launch` return `Result<CommandResult>`; the command worked if
 `CommandResult::success`, which the library sets per command because the device reports success
 differently:
 
@@ -109,7 +109,6 @@ differently:
 | --- | --- | --- |
 | `run` | `exit_code == 0` | The exit code is the whole answer. |
 | `launch` | `exit_code == 0` | `am start` exits nonzero and prints `Error:` when the activity cannot be started. |
-| `close` | `exit_code == 0` | `am force-stop` exits zero even for a package that is not installed, so it reports no failure of its own. |
 | `install`, `uninstall` | `exit_code == 0` **and** the output says `Success` | `pm` reports a rejection in its output, so the exit code alone is not enough. |
 
 `PackageResult` is a `CommandResult` that adds `failure_reason()`, which extracts the reason from
@@ -199,5 +198,5 @@ The core target is no longer dependency-free once this lands, so the "Extra depe
 The conversion is complete. Every layer returns a `Result`, from `Transport` and `Session` up through
 `Stream`, the `sync` and shell services, `app`, and `crypto`; the tests and the examples are converted
 with them, and nothing in the library calls `value()` or `error()` without checking first. `format-check` is
-clean, the 66 unit tests pass, and the device test passes against the test device. Slice 6 is the first work
-that is written in the new shape rather than converted to it.
+clean, the 70 unit tests pass, and the device test passes against the test device. Slice 6 was the first work
+that was written in the new shape rather than converted to it.

@@ -48,7 +48,7 @@ ctest --test-dir build -C Release -E "^device$" --output-on-failure
 
 ### The device test is destructive when it is configured to be
 
-`adbcpp_device_tests` exits with code 77 (a CTest skip) when no matching device is attached. It always checks the install and uninstall failure paths, which touch no package, and it runs the install and uninstall round trip only when `ADBCPP_TEST_APK` and `ADBCPP_TEST_PACKAGE` name a disposable APK. That round trip uninstalls and reinstalls the package and loses its data, so only set those variables for a package the user has agreed to replace.
+`adbcpp_device_tests` exits with code 77 (a CTest skip) when no matching device is attached. It always checks the install and uninstall failure paths, which touch no package, and it runs the install and uninstall round trip only when `ADBCPP_TEST_APK` and `ADBCPP_TEST_PACKAGE` name a disposable APK. That round trip uninstalls and reinstalls the package and loses its data, so only set those variables for a package the user has agreed to replace. It also always launches, checks, and force-stops `com.android.settings`, which loses no data.
 
 ## Commit Messages
 

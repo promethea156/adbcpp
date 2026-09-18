@@ -7,6 +7,7 @@
 #include <iterator>
 #include <span>
 #include <string>
+#include <string_view>
 
 #include "adbcpp/app.hpp"
 #include "adbcpp/connection.hpp"
@@ -168,6 +169,46 @@ int check_install(adbcpp::Connection &connection)
     return 0;
 }
 
+// Slice 6: app control. Launch the device's settings app, prove it is
+// running, and force-stop it. Settings is present on every device and is safe
+// to stop, because the system starts it again on demand.
+int check_app(adbcpp::Connection &connection)
+{
+    constexpr std::string_view package = "com.android.settings";
+
+    const auto launched = adbcpp::launch(connection, package);
+    if (!launched)
+    {
+        report(launched.error());
+        return 1;
+    }
+    if (!launched->success)
+    {
+        std::cerr << "launching " << package << " failed: " << launched->output << '\n';
+        return 1;
+    }
+
+    const auto running = adbcpp::is_running(connection, package);
+    if (!running)
+    {
+        report(running.error());
+        return 1;
+    }
+    if (!*running)
+    {
+        std::cerr << package << " is not running after launch\n";
+        return 1;
+    }
+
+    if (const auto status = adbcpp::close(connection, package); !status)
+    {
+        report(status.error());
+        return 1;
+    }
+
+    return 0;
+}
+
 } // namespace
 
 int main()
@@ -316,11 +357,16 @@ int main()
     std::filesystem::remove(pushed_back);
 
     const int install_result = check_install(*connection);
+    const int app_result = check_app(*connection);
 
     transport->close();
     if (install_result != 0)
     {
         return install_result;
+    }
+    if (app_result != 0)
+    {
+        return app_result;
     }
     if (pushed_contents != "adbcpp-push-test\n")
     {

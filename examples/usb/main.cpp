@@ -31,10 +31,11 @@ namespace
 // with adb, then either list a directory (`--list <path>`), pull a file
 // (`--pull <remote> <local>`), push a file (`--push <local> <remote>`), install
 // an APK (`--install <apk> [options]`), uninstall a package
-// (`--uninstall <package>`), or run a shell command (the default). All of them
-// mirror what `adb` does, so they are interchangeable on the device.
-// `--timeout <ms>` and `--budget <ms>` tune the transfer timing anywhere on the
-// command line.
+// (`--uninstall <package>`), launch an app (`--launch <package>`), stop an app
+// (`--close <package>`), check whether an app runs (`--running <package>`), or run
+// a shell command (the default). All of them mirror what `adb` does, so they are
+// interchangeable on the device. `--timeout <ms>` and `--budget <ms>` tune the
+// transfer timing anywhere on the command line.
 int main(int argc, char **argv)
 {
     // `--timeout <ms>` is the timeout for each bulk transfer and `--budget <ms>`
@@ -186,6 +187,41 @@ int main(int argc, char **argv)
             std::cout << result->output;
             transport->close();
             return result->success ? 0 : 1;
+        }
+
+        if (args.size() > 1 && args[0] == "--launch")
+        {
+            const auto result = adbcpp::launch(*connection, args[1]);
+            if (!result)
+            {
+                fail(result.error());
+            }
+            std::cout << result->output;
+            transport->close();
+            return result->success ? 0 : 1;
+        }
+
+        if (args.size() > 1 && args[0] == "--close")
+        {
+            if (const auto status = adbcpp::close(*connection, args[1]); !status)
+            {
+                fail(status.error());
+            }
+            std::cout << "stopped " << args[1] << '\n';
+            transport->close();
+            return 0;
+        }
+
+        if (args.size() > 1 && args[0] == "--running")
+        {
+            const auto running = adbcpp::is_running(*connection, args[1]);
+            if (!running)
+            {
+                fail(running.error());
+            }
+            std::cout << args[1] << (*running ? " is running" : " is not running") << '\n';
+            transport->close();
+            return 0;
         }
 
         const std::string command = args.empty() ? "echo hello" : args[0];

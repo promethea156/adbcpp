@@ -467,9 +467,9 @@ package's data survives only when the caller keeps it.
 **Goal.** Choose the next slice and apply everything you have learned.
 
 **Read.** [`docs/03-roadmap.md`](docs/03-roadmap.md) — the remaining slices:
-app control, and then TCP, which completes the initial scope. Silent
-authentication is not among them: it shipped with Slice 1, which is why this
-library never shows the on-device approval prompt once the key is authorized.
+TCP, which completes the initial scope. Silent authentication is not among them: it
+shipped with Slice 1, which is why this library never shows the on-device approval
+prompt once the key is authorized.
 
 **Run.** Everything, with a device attached:
 
@@ -477,10 +477,12 @@ library never shows the on-device approval prompt once the key is authorized.
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-**Exercise.** Implement Slice 6. Launching and stopping an app are shell commands
-(`am start` and `am force-stop`), so the slice is composition again, and its work
-is in deciding what the device's output means: `pidof` prints nothing when the app
-is not running, and `dumpsys` prints a paragraph to be searched.
+**Exercise.** Slice 6 was exactly this. Launching and stopping an app are shell
+commands (`am start` and `am force-stop`), so the slice was composition again, and
+its work was in deciding what the device's output means: `am start` exits nonzero
+and prints `Error:` when the launcher cannot start, while `pidof` prints nothing and
+exits nonzero when the app is not running, so `is_running` reads the exit code as a
+definite answer.
 
 **Checkpoint.**
 

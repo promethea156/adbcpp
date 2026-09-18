@@ -42,7 +42,15 @@ Nothing was needed at the protocol layer: the slice is composition, as the roadm
 
 Every slice so far hid at least one non-obvious problem. The record of each — how it showed itself, what caused it, and how it was solved — is in [`04-blockers.md`](04-blockers.md) rather than repeated here.
 
-**Next:** Slice 6 — app control.
+**Slice 6 — complete.** An app is launched, detected, and closed:
+
+- `launch` runs `am start -W <package>`. A bare positional argument is the form `am start` resolves as `ACTION_MAIN` with `CATEGORY_LAUNCHER` and the package, so the device starts the package's launcher activity; `-W` waits for the launch, so a following `is_running` is meaningful.
+- `close` runs `am force-stop <package>`, and `is_running` runs `pidof <package>`, whose exit code answers both cases: zero with the pids when the process runs, nonzero with no output when it does not.
+- Public API: `launch(connection, package)` returning a `Result<CommandResult>`, `close(connection, package)` returning a `Status`, and `is_running(connection, package)` returning a `Result<bool>`.
+
+Nothing was needed at the protocol layer: the slice is composition again, as the roadmap predicted. `am start`, `am force-stop`, and `pidof` are shell commands, so both already existed.
+
+**Next:** Slice 7 — TCP transport.
 
 ## Proposed Order for What Remains
 
@@ -51,7 +59,7 @@ A proposal, not a commitment. Nothing below blocks the next slice, and any of it
 | Order | Work | Why here |
 | --- | --- | --- |
 | 1 | Apply the [error model](07-error-model.md) | **Done.** The whole library returns `Result<T>`, so Slice 6 adds its three functions in the new shape rather than converting them later. |
-| 2 | [Slice 6 — app control](#slice-6--app-control) | Unblocked, and composition again: `am start` and `am force-stop` are shell commands. |
+| 2 | [Slice 6 — app control](#slice-6--app-control) | **Done.** Composition again: `am start`, `am force-stop`, and `pidof` are shell commands. |
 | 3 | Validate the received header | Small, and it belongs with `Session::receive`, which [Slice 7](#slice-7--tcp-transport) reopens: a partial read becomes normal over TCP. |
 | 4 | State thread safety for `Connection`, `Stream`, and `Key` | Small, and the statements belong with the objects Slices 6 and 7 touch. |
 | 5 | [Slice 7 — TCP transport](#slice-7--tcp-transport) | Completes the initial scope. |

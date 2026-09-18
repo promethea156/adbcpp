@@ -2,8 +2,8 @@
 
 Practical, copy-pasteable examples for everything `adbcpp` can do today: connect
 over USB, run a shell command, list a directory, pull and push files, stat a path,
-install and uninstall an application, work with the ADB key, and use the lower-level
-protocol layers directly. Every
+install and uninstall an application, launch, close, and check an application, work
+with the ADB key, and use the lower-level protocol layers directly. Every
 example compiles against the library as it stands now. For the theory behind them, read
 [`LEARNING.md`](../LEARNING.md); for how the `sync` service works, read
 [`06-sync-protocol.md`](06-sync-protocol.md).
@@ -57,7 +57,7 @@ Include what you use:
 
 ```cpp
 #include "adbcpp/adbcpp.hpp"                 // core: Connection, Stream, run, install, protocol
-#include "adbcpp/app.hpp"                     // adbcpp::install, adbcpp::PackageResult
+#include "adbcpp/app.hpp"                     // adbcpp::install, uninstall, launch, close, is_running
 #include "adbcpp/sync.hpp"                    // adbcpp::list, adbcpp::DirEntry
 #include "adbcpp/crypto/adb_key.hpp"          // adbcpp::crypto::Key
 #include "adbcpp/usb/usb_transport.hpp"       // adbcpp::usb::UsbTransport
@@ -562,6 +562,91 @@ both return `success == false` with the device's output instead of an `Error`. A
 device does not always answer in that form, so `output` always holds its answer
 verbatim (blocker 25).
 
+## Launch, Close, and Check an App
+
+`launch` runs `am start -W <package>`, which resolves the package's launcher
+activity; `close` runs `am force-stop <package>`; and `is_running` runs
+`pidof <package>`. All three are shell commands, so they are composition rather
+than a new protocol.
+
+```cpp
+#include <iostream>
+#include <span>
+#include <string>
+
+#include "adbcpp/adbcpp.hpp"
+#include "adbcpp/crypto/adb_key.hpp"
+#include "adbcpp/usb/usb_transport.hpp"
+
+int main()
+{
+    adbcpp::usb::DeviceId id;
+    id.vendor_id = 0x22D9;
+    id.product_id = 0x2769;
+
+    auto transport = adbcpp::usb::UsbTransport::open(id);
+    if (!transport)
+    {
+        std::cerr << "error: " << transport.error().message << '\n';
+        return 1;
+    }
+    const auto key = adbcpp::crypto::Key::load_or_generate();
+    if (!key)
+    {
+        std::cerr << "error: " << key.error().message << '\n';
+        return 1;
+    }
+    const std::string &public_key_string = key->public_key();
+    const auto public_key = std::span(reinterpret_cast<const std::byte *>(public_key_string.data()),
+                                     public_key_string.size());
+
+    auto connection = adbcpp::Connection::connect(*transport, public_key,
+                                  [&key](std::span<const std::byte> token) { return key->sign(token); });
+    if (!connection)
+    {
+        std::cerr << "error: " << connection.error().message << '\n';
+        return 1;
+    }
+
+    const auto launched = adbcpp::launch(*connection, "com.example.app");
+    if (!launched)
+    {
+        std::cerr << "error: " << launched.error().message << '\n';
+        return 1;
+    }
+    if (!launched->success)
+    {
+        std::cerr << "launch failed: " << launched->output << '\n';
+    }
+
+    const auto running = adbcpp::is_running(*connection, "com.example.app");
+    if (!running)
+    {
+        std::cerr << "error: " << running.error().message << '\n';
+        return 1;
+    }
+    std::cout << (*running ? "running\n" : "not running\n");
+
+    if (const auto status = adbcpp::close(*connection, "com.example.app"); !status)
+    {
+        std::cerr << "error: " << status.error().message << '\n';
+        return 1;
+    }
+
+    transport->close();
+    return 0;
+}
+```
+
+`launch` sets `success` from the `am start` exit code, so a package whose
+launcher cannot be started is a normal `success == false` with the device's output.
+`close` returns a `Status` because `am force-stop` exits zero even for a package
+that is not installed and prints nothing, so there is no per-command answer to
+inspect. `is_running` returns a `Result<bool>`: `pidof` exits zero with the pids
+when the process runs and nonzero with no output when it does not, so "not running"
+is a definite `false`. `pidof` matches a process name rather than a package name,
+so an application that renames its process makes the answer an approximation.
+
 ## Inspect the ADB Key
 
 The key lives in `~/.android/adbkey` (PKCS#8 PEM) and `~/.android/adbkey.pub`
@@ -956,6 +1041,9 @@ int main()
 | Install an APK                          | `adbcpp::install(connection, "app.apk", "-r")` → `Result<PackageResult>` |
 | Uninstall a package                     | `adbcpp::uninstall(connection, "com.example.app")` → `Result<PackageResult>` |
 | Read a package manager's failure reason    | `result->failure_reason()`                                |
+| Launch an app                           | `adbcpp::launch(connection, "com.example.app")` → `Result<CommandResult>` |
+| Close an app                            | `adbcpp::close(connection, "com.example.app")` → `Status`  |
+| Check whether an app is running            | `adbcpp::is_running(connection, "com.example.app")` → `Result<bool>` |
 | Open a service manually                | `adbcpp::Stream::open(connection, "shell:echo hello")` → `Result<Stream>` |
 | Read a stream until the device closes    | `stream->read_all()` → `Result<std::vector<std::byte>>`    |
 | Read an exact number of bytes            | `stream->read(buffer)` → `Status`                        |
@@ -983,8 +1071,16 @@ int main()
 - **`run` merges stdout and stderr.** They arrive interleaved, so the order is not
   guaranteed. `CommandResult` does not separate them.
 - **This is not a full `adb` replacement yet.** The shell service, `sync`-based
-  directory listing, file transfer in both directions, and install and uninstall are
-  exposed; app control is still on the roadmap ([`03-roadmap.md`](03-roadmap.md)).
+  directory listing, file transfer in both directions, install and uninstall, and
+  app launch, close, and running checks are exposed; the TCP transport is still on
+  the roadmap ([`03-roadmap.md`](03-roadmap.md)).
+- **`is_running` matches a process name.** `pidof` takes a process name, not a
+  package name. A process is named after its package by default, so the two usually
+  agree, but an application that renames its process makes `is_running` an
+  approximation.
+- **`close` cannot tell whether the package existed.** `am force-stop` exits zero
+  even for a package that is not installed and prints nothing, so `close` returns a
+  `Status` and a caller cannot tell "stopped" from "was not installed".
 - **`value()` and `error()` assert on the wrong alternative.** Check a `Result` with
   `has_value()` or `operator bool` first, then unwrap it with `operator*` or
   `operator->`. The library never calls `value()` or `error()` without checking, and
