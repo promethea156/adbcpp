@@ -198,5 +198,5 @@ The core target is no longer dependency-free once this lands, so the "Extra depe
 The conversion is complete. Every layer returns a `Result`, from `Transport` and `Session` up through
 `Stream`, the `sync` and shell services, `app`, and `crypto`; the tests and the examples are converted
 with them, and nothing in the library calls `value()` or `error()` without checking first. `format-check` is
-clean, the 70 unit tests pass, and the device test passes against the test device. Slice 6 was the first work
+clean, the 74 unit tests pass, and the device test passes against the test device. Slice 6 was the first work
 that was written in the new shape rather than converted to it.

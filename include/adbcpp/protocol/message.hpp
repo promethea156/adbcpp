@@ -50,9 +50,10 @@ struct ADBCPP_API Message
     ///
     /// This is the usual zlib CRC-32 (reflected polynomial `0xEDB88320`, initial
     /// and final value `0xFFFFFFFF`). AOSP's `apacket` computes the same CRC over
-    /// the payload, although a later change made the CRC advisory: the receiving
-    /// side no longer verifies it, since USB and TCP already have their own
-    /// integrity checks (see `docs/dev/delayed_ack.md`).
+    /// the payload. Protocol `0x01000001` and later skip it (AOSP's
+    /// `A_VERSION_SKIP_CHECKSUM`), so a sender that follows the current protocol
+    /// leaves `data_crc32` at zero; `Session::receive` therefore verifies it only
+    /// when it is non-zero.
     static std::uint32_t compute_crc32(std::span<const std::byte> data) noexcept;
 
     /// Returns `payload.size()` as the 32-bit `data_length` field.

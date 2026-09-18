@@ -140,3 +140,88 @@ TEST_CASE("session reads a payload after its header", "[session]")
     REQUIRE(frame.header.data_length == payload.size());
     REQUIRE(frame.payload == payload);
 }
+
+TEST_CASE("session accepts a header with no CRC", "[session]")
+{
+    adbcpp::testing::MockTransport transport;
+
+    const std::vector<std::byte> payload{std::byte{'w'}, std::byte{'o'}, std::byte{'r'}, std::byte{'l'},
+                                         std::byte{'d'}};
+
+    Message inbound;
+    inbound.command = adbcpp::protocol::kWrte;
+    inbound.data_length = payload.size();
+    // Protocol 0x01000001 and later leave the CRC at zero, which means "not set"
+    // rather than "a CRC of zero".
+    inbound.data_crc32 = 0;
+    inbound.magic = Message::compute_magic(inbound.command);
+
+    transport.feed(inbound.encode());
+    transport.feed(payload);
+
+    adbcpp::Session session(transport);
+    const auto frame = unwrap(session.receive());
+
+    REQUIRE(frame.payload == payload);
+    REQUIRE_FALSE(transport.closed());
+}
+
+TEST_CASE("session rejects a header whose magic does not match its command", "[session]")
+{
+    adbcpp::testing::MockTransport transport;
+
+    Message inbound;
+    inbound.command = adbcpp::protocol::kCnxn;
+    inbound.magic = Message::compute_magic(adbcpp::protocol::kOkay);
+    transport.feed(inbound.encode());
+
+    adbcpp::Session session(transport);
+    const auto frame = session.receive();
+
+    REQUIRE_FALSE(frame.has_value());
+    REQUIRE(frame.error().code == adbcpp::ErrorCode::Protocol);
+    // A framing error cannot be recovered from, so the transport is closed.
+    REQUIRE(transport.closed());
+}
+
+TEST_CASE("session rejects a payload longer than the maximum", "[session]")
+{
+    adbcpp::testing::MockTransport transport;
+
+    Message inbound;
+    inbound.command = adbcpp::protocol::kWrte;
+    inbound.data_length = adbcpp::protocol::kMaxData + 1;
+    inbound.magic = Message::compute_magic(inbound.command);
+    transport.feed(inbound.encode());
+
+    adbcpp::Session session(transport);
+    const auto frame = session.receive();
+
+    REQUIRE_FALSE(frame.has_value());
+    REQUIRE(frame.error().code == adbcpp::ErrorCode::Protocol);
+    REQUIRE(transport.closed());
+}
+
+TEST_CASE("session rejects a payload whose CRC does not match", "[session]")
+{
+    adbcpp::testing::MockTransport transport;
+
+    const std::vector<std::byte> payload{std::byte{'w'}, std::byte{'o'}, std::byte{'r'}, std::byte{'l'},
+                                         std::byte{'d'}};
+
+    Message inbound;
+    inbound.command = adbcpp::protocol::kWrte;
+    inbound.data_length = payload.size();
+    inbound.data_crc32 = Message::compute_crc32(payload) ^ 1u;
+    inbound.magic = Message::compute_magic(inbound.command);
+
+    transport.feed(inbound.encode());
+    transport.feed(payload);
+
+    adbcpp::Session session(transport);
+    const auto frame = session.receive();
+
+    REQUIRE_FALSE(frame.has_value());
+    REQUIRE(frame.error().code == adbcpp::ErrorCode::Protocol);
+    REQUIRE(transport.closed());
+}
