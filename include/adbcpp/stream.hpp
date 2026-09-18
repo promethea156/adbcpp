@@ -31,6 +31,10 @@ namespace adbcpp
  * Reads collect WRTE payloads, acknowledging each with OKAY, until the device
  * closes the stream. The window in OPEN's `arg1` is the delayed-acknowledgement
  * "available send bytes"; see `commands.hpp` and blocker 12 in `04-blockers.md`.
+ *
+ * A `Stream` is not thread-safe. It shares its connection's session and frame
+ * routing, and it buffers a partial WRTE across reads, so concurrent calls on one
+ * stream must be serialized by the caller.
  */
 class ADBCPP_API Stream
 {

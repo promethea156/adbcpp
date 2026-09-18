@@ -1057,6 +1057,7 @@ int main()
 
 ## Pitfalls
 
+- **Nothing is thread-safe.** `Transport`, `Connection`, `Stream`, and `Key` each say so: they share mutable state, so concurrent use of one object must be serialized by the caller. A common pattern is one thread per connection, or one connection per thread.
 - **Keep the key alive.** The signer callback is stored by the `Connection`, so the
   `Key` it captures must outlive the connection. A dangling reference crashes on
   the first AUTH.

@@ -60,8 +60,8 @@ A proposal, not a commitment. Nothing below blocks the next slice, and any of it
 | --- | --- | --- |
 | 1 | Apply the [error model](07-error-model.md) | **Done.** The whole library returns `Result<T>`, so Slice 6 adds its three functions in the new shape rather than converting them later. |
 | 2 | [Slice 6 — app control](#slice-6--app-control) | **Done.** Composition again: `am start`, `am force-stop`, and `pidof` are shell commands. |
-| 3 | Validate the received header | Small, and it belongs with `Session::receive`, which [Slice 7](#slice-7--tcp-transport) reopens: a partial read becomes normal over TCP. |
-| 4 | State thread safety for `Connection`, `Stream`, and `Key` | Small, and the statements belong with the objects Slices 6 and 7 touch. |
+| 3 | Validate the received header | **Done.** `Session::receive` checks `magic`, bounds `data_length`, and verifies a non-zero CRC, closing the transport on a framing error. |
+| 4 | State thread safety for `Connection`, `Stream`, and `Key` | **Done.** Each states that it is not thread-safe and must be serialized by the caller, matching `Transport`. |
 | 5 | [Slice 7 — TCP transport](#slice-7--tcp-transport) | Completes the initial scope. |
 | 6 | The rest of [Future Improvements](#future-improvements) | Logging, device selection, the `shell_v2` fallback, and `sendrecv_v2` each matter only once a device or a caller needs them. |
 
@@ -158,7 +158,7 @@ Obligations that run through every slice, with the current state of each.
 - **Error handling**: every operation that can fail returns a `Result<T>`; nothing in the library throws, and third-party exceptions are caught at the boundary. The rule, the types, and the shape of each command's answer are in [`07-error-model.md`](07-error-model.md).
 - **Testing**: unit tests per module, driven by the mock transport, plus one integration test against a real device. Device-dependent tests live in `adbcpp_device_tests`; when no matching USB device is present they exit with code 77 so CTest reports them as skipped rather than failed, and the USB example prints a warning and exits successfully in the same case.
 - **Logging**: not implemented. When it is, it must be optional, configurable, and must never log keys or payloads.
-- **Thread safety**: only `Transport` states it, and only to say that implementations need not be thread-safe. `Connection`, `Stream`, and `Key` need the same statement.
+- **Thread safety**: `Transport`, `Connection`, `Stream`, and `Key` each state that they are not thread-safe, and that a caller must serialize concurrent use.
 - **Documentation**: Doxygen comments on every public declaration, and the reasoning behind each protocol decision written down in [`04-blockers.md`](04-blockers.md).
 
 ## Open Questions
@@ -171,5 +171,4 @@ Obligations that run through every slice, with the current state of each.
 - **Select a device by serial.** `UsbTransport` matches on vendor and product id alone, so two identical devices cannot be told apart, and there is no serial handling anywhere in the library. adb selects by serial, which it reads from the device's banner.
 - **Fall back to `shell:` when `shell_v2` is absent.** `run` requires `shell_v2`, while `list` and `stat` already fall back to their v1 forms.
 - **Use `sendrecv_v2`, or stop advertising it.** The CNXN banner claims `sendrecv_v2` with brotli, lz4, and zstd, but `pull` and `push` always send the v1 forms, so a transfer is never compressed. The rest of the banner is copied from adb byte-for-byte and therefore also claims services that are never opened (`abb`, `apex`, `remount_shell`, `track_app`, `devraw`, `server_status`, ...); it should be trimmed to what the library implements.
-- **Validate what is received.** `Session::receive` takes `data_length` as authoritative and checks neither `magic` nor the CRC, so a desynchronized stream is not detected. The protocol requires a bad header or payload to close the connection, because it cannot recover from a framing error (see blocker 13's note).
 - Replace the dynamically-linked libusb backend with platform-native USB APIs (WinUSB, IOKit, `usbfs`) to remove the third-party dependency and its license obligations. See [USB Backend](01-objective.md#usb-backend).

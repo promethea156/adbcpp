@@ -67,6 +67,11 @@ inline constexpr std::string_view kDelayedAckFeature = "delayed_ack";
  *
  * When `advertise_delayed_ack` is set, `delayed_ack` is added to the advertised
  * feature list and OPEN messages send a non-zero receive window.
+ *
+ * A `Connection` is not thread-safe. `send` and `receive` share the session's
+ * transport and the stream multiplexing state, so concurrent calls must be
+ * serialized by the caller. This matches `Transport`, whose implementations are
+ * not required to be thread-safe either.
  */
 class ADBCPP_API Connection
 {

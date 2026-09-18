@@ -26,6 +26,9 @@ namespace adbcpp::crypto
  * `SubjectPublicKeyInfo`: it is AOSP's custom `RSAPublicKey` structure, which is
  * also what adbd expects in an AUTH type 3 payload. Both formats are described
  * in `adb_key.cpp` and in blockers 8 and 9 of `04-blockers.md`.
+ *
+ * A `Key` is not thread-safe. `sign` and `fingerprint` share the one mbedTLS
+ * context, so concurrent calls must be serialized by the caller.
  */
 class ADBCPP_API Key
 {
