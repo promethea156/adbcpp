@@ -205,6 +205,15 @@ void serve_device(socket_t socket)
     write_frame(socket, adbcpp::protocol::kWrte, kDeviceId, remote, exit_packet);
 
     write_frame(socket, adbcpp::protocol::kClse, kDeviceId, remote);
+
+    // The client acknowledged both WRITEs, and those OKAYs are still unread here.
+    // Closing with them unread makes the OS send a reset instead of a FIN, and a
+    // reset can discard the CLOSE that was just written, so the client's read sees
+    // `ECONNRESET` rather than the CLOSE. Draining first makes the close clean.
+    std::array<std::byte, 1024> scratch{};
+    while (::recv(socket, reinterpret_cast<char *>(scratch.data()), static_cast<int>(scratch.size()), 0) > 0)
+    {
+    }
 }
 
 } // namespace
