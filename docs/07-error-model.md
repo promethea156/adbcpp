@@ -138,6 +138,8 @@ inside the `Result`:
 | `Transport::close` | → `void` (unchanged; it cannot fail) |
 | `Session::send` | → `Status` |
 | `Session::receive` → `Frame` | → `Result<Frame>` |
+| `Session::close` | → `void` (it cannot fail) |
+| `Connection::close` | → `void` (it cannot fail) |
 | `Stream::write` | → `Status` |
 | `Stream::read` | → `Status` |
 | `Stream::read_all` → `std::vector<std::byte>` | → `Result<std::vector<std::byte>>` |

@@ -379,7 +379,7 @@ int main()
     const int install_result = check_install(*connection);
     const int app_result = check_app(*connection);
 
-    transport->close();
+    connection->close();
     if (install_result != 0)
     {
         return install_result;

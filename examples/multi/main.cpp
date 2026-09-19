@@ -134,7 +134,7 @@ adbcpp::Result<std::string> drive(adbcpp::usb::DeviceId id, int index)
     }
     log += "device " + tag + " round-tripped a file\n";
 
-    transport->close();
+    connection->close();
     return log;
 }
 

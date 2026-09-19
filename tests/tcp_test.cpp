@@ -265,6 +265,47 @@ TEST_CASE("tcp transport rejects an endpoint without a port", "[tcp]")
     REQUIRE(transport.error().code == adbcpp::ErrorCode::InvalidArgument);
 }
 
+TEST_CASE("connection reports a transport error after the link is closed", "[tcp]")
+{
+#if defined(_WIN32)
+    const SocketRuntime runtime;
+#endif
+    const Loopback loopback;
+
+    std::thread server(
+        [&loopback]
+        {
+            const socket_t socket = loopback.accept();
+            serve_device(socket);
+            close_socket(socket);
+        });
+
+    auto transport = adbcpp::tcp::TcpTransport::open(loopback.endpoint());
+    REQUIRE(transport.has_value());
+
+    auto connection = adbcpp::Connection::connect(*transport);
+    REQUIRE(connection.has_value());
+
+    const auto result = adbcpp::run(*connection, "echo hello");
+    REQUIRE(result.has_value());
+
+    connection->close();
+    REQUIRE_FALSE(connection->is_open());
+
+    adbcpp::protocol::Message okay;
+    okay.command = adbcpp::protocol::kOkay;
+    okay.magic = adbcpp::protocol::Message::compute_magic(okay.command);
+    const auto sent = connection->send(okay);
+    REQUIRE_FALSE(sent.has_value());
+    REQUIRE(sent.error().code == adbcpp::ErrorCode::Transport);
+
+    const auto received = connection->receive();
+    REQUIRE_FALSE(received.has_value());
+    REQUIRE(received.error().code == adbcpp::ErrorCode::Transport);
+
+    server.join();
+}
+
 TEST_CASE("run works over tcp against a fake device", "[tcp]")
 {
 #if defined(_WIN32)

@@ -204,13 +204,19 @@ int main()
     std::cout << "exit code: " << static_cast<int>(result->exit_code) << '\n';
     std::cout << result->output;
 
-    transport->close();
+    connection->close();
     return result->exit_code;
 }
 ```
 
 `CommandResult::output` is stdout and stderr combined, in the order the device
 produced them, and `exit_code` is the command's status.
+
+`connection->close()` closes the borrowed transport and marks the connection dead. The
+connection does not own the transport, so the transport must outlive it, but a caller
+does not have to close the transport separately: `close()` does that, and a later
+`send` or `receive` reports a `Transport` error instead of touching the closed
+transport. `Connection::is_open()` says whether `close()` has been called.
 
 `run` uses the `shell,v2,raw` service when the device advertised `shell_v2`, and the
 v1 `shell:<command>` service otherwise. The v1 form has no exit packet, so
@@ -310,7 +316,7 @@ int main()
     }
     std::cout << result->output;
 
-    transport->close();
+    connection->close();
     return result->exit_code;
 }
 ```
@@ -320,6 +326,10 @@ The endpoint is `host:port`, where `host` is a name or a literal address and
 `[::1]:5555` all work. The transport has no libusb dependency, so it needs no
 `ADBCPP_BUILD_USB`. Put a device into TCP mode with `adb tcpip 5555`, then connect
 directly with no adb server.
+
+The lifecycle is the same as over USB: the connection borrows the transport, so the
+transport must outlive it, and `connection->close()` closes it and marks the
+connection dead.
 
 ## List a Directory
 
@@ -378,7 +388,7 @@ int main()
         std::cout << (entry.is_directory() ? 'd' : '-') << ' ' << entry.size << ' ' << entry.name << '\n';
     }
 
-    transport->close();
+    connection->close();
     return 0;
 }
 ```
@@ -453,7 +463,7 @@ int main()
         return 1;
     }
 
-    transport->close();
+    connection->close();
     return 0;
 }
 ```
@@ -515,7 +525,7 @@ int main()
         return 1;
     }
 
-    transport->close();
+    connection->close();
     return 0;
 }
 ```
@@ -583,7 +593,7 @@ int main()
         std::cout << "no such path\n";
     }
 
-    transport->close();
+    connection->close();
     return 0;
 }
 ```
@@ -657,7 +667,7 @@ int main()
         std::cerr << "uninstall failed: " << removed->failure_reason() << '\n';
     }
 
-    transport->close();
+    connection->close();
     return 0;
 }
 ```
@@ -745,7 +755,7 @@ int main()
         return 1;
     }
 
-    transport->close();
+    connection->close();
     return 0;
 }
 ```
@@ -1132,7 +1142,7 @@ int main()
         return 1;
     }
     std::cout << result->output;
-    transport->close();
+    connection->close();
     return result->exit_code;
 }
 ```
@@ -1150,6 +1160,7 @@ int main()
 | Sign an AUTH token                     | `key->sign(token)`                                      |
 | Get the key's device fingerprint        | `key->fingerprint()` → `Result<std::string>`              |
 | Handshake and connect                  | `adbcpp::Connection::connect(transport, public_key, signer)` → `Result<Connection>` |
+| Close a connection                     | `connection->close()`                                   |
 | Run a shell command                    | `adbcpp::run(connection, "echo hello")` → `Result<CommandResult>` |
 | Force the v1 shell                     | `adbcpp::run(connection, cmd, adbcpp::ShellProtocol::V1)` |
 | Read a command's output                 | `result->output`                                        |
