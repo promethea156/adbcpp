@@ -234,7 +234,7 @@ processes (blocker 28). Two devices are therefore needed, and `examples/multi` o
 two and reports clearly when only one is present.
 
 A USB 3 device also resets its link around the open and stalls the first write
-(blocker 29), so both examples retry the whole open and handshake; `adb` does the
+(blocker 29), so `connect_with_retry` retries the whole open and handshake; `adb` does the
 same at a lower level by sending the CNXN twice.
 
 Selection by serial was the last gap, and [Slice 8](#slice-8--select-a-device-by-serial)
@@ -249,5 +249,5 @@ own serial, each on its own thread, and both run `echo hello` and a file round t
 
 - **Use `sendrecv_v2` for `pull` and `push`.** The v1 `RECV`/`SEND` forms are sent today, so a transfer is never compressed. [Slice 9](#slice-9--release-10) removed the false `sendrecv_v2` claim from the banner; implementing the v2 forms would let a transfer use brotli, lz4, or zstd. ([issue #1](https://github.com/promethea156/adbcpp/issues/1))
 - **Give `Connection` an explicit `disconnect`.** **Done.** Closing a link is `transport->close()` on the borrowed transport, and a `Connection` records no dead state, so a closed connection still looks live. `Connection::close()` now closes the transport and marks the connection dead, so a later `send`/`receive` reports a `Transport` error, and `Connection::is_open()` reports the state. ([issue #11](https://github.com/promethea156/adbcpp/issues/11))
-- **Reconnect a dropped or reset link.** There is no `reconnect()` and `connect` does not retry, so a dropped TCP link or a USB 3 link reset (blocker 29) needs the same manual close, reopen, and re-handshake that the examples hand-roll. ([issue #12](https://github.com/promethea156/adbcpp/issues/12))
+- **Reconnect a dropped or reset link.** **Done.** There is no `reconnect()` and `connect` does not retry, so a dropped TCP link or a USB 3 link reset (blocker 29) needs the same manual close, reopen, and re-handshake that the examples hand-roll. `adbcpp::connect_with_retry(open, transport, ...)` now owns that loop with a bounded exponential backoff, and the examples call it instead. ([issue #12](https://github.com/promethea156/adbcpp/issues/12))
 - Replace the dynamically-linked libusb backend with platform-native USB APIs (WinUSB, IOKit, `usbfs`) to remove the third-party dependency and its license obligations. See [USB Backend](01-objective.md#usb-backend). ([issue #2](https://github.com/promethea156/adbcpp/issues/2))

@@ -1,11 +1,16 @@
 #pragma once
 
+#include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <type_traits>
 #include <vector>
 
 #include "adbcpp/error.hpp"
@@ -190,5 +195,69 @@ private:
     bool delayed_ack_ = false;
     bool requested_authorization_ = false;
 };
+
+/**
+ * @brief Opens a transport with `open` and connects, retrying the whole open and
+ * handshake with a bounded exponential backoff.
+ *
+ * A device can reset its USB 3 link right after the open and stall the first
+ * write, and a dropped TCP link needs a new transport, so the open and the
+ * handshake are retried together (blocker 29 in `04-blockers.md`). The retry is at
+ * the open rather than in `Session`, because a device that re-enumerates
+ * invalidates the handle. `transport` is where the opened transport lives and is
+ * emplaced before each connect, so the returned connection borrows it and the
+ * transport must outlive the connection; on a failed connect it is reset again.
+ *
+ * `open` is a callable returning `Result<TransportT>`, for example
+ * `[] { return UsbTransport::open(id); }`. The remaining arguments are passed to
+ * `Connection::connect` unchanged.
+ *
+ * The delay before the second attempt is `backoff` and doubles for each later
+ * attempt, so the wait is bounded by `attempts` and the total stays finite. This is
+ * also how a link is reconnected: close the connection, then call this again, which
+ * replaces the transport in `transport` and repeats the handshake.
+ *
+ * @return the connected connection, or the last error once every attempt failed.
+ */
+template <typename TransportT, typename Open>
+Result<Connection> connect_with_retry(Open open, std::optional<TransportT> &transport,
+                                      std::span<const std::byte> public_key = {}, Connection::Signer signer = {},
+                                      bool advertise_delayed_ack = false, int attempts = 5,
+                                      std::chrono::milliseconds backoff = std::chrono::milliseconds{250})
+{
+    static_assert(std::is_same_v<std::invoke_result_t<Open>, Result<TransportT>>,
+                  "open must return a Result<TransportT>");
+
+    Result<Connection> connection = tl::unexpected(Error{ErrorCode::Transport, "the transport was not opened"});
+    for (int attempt = 0; attempt < attempts; ++attempt)
+    {
+        if (attempt > 0)
+        {
+            // A bounded doubling, so the wait grows but cannot overflow.
+            const int shift = std::min(attempt - 1, 20);
+            std::this_thread::sleep_for(backoff * (1 << shift));
+        }
+
+        auto opened = open();
+        if (!opened)
+        {
+            connection = tl::unexpected(opened.error());
+            continue;
+        }
+        // The connection keeps a pointer to the transport, so the transport is
+        // emplaced before `connect` and never moved once it holds a device.
+        transport.emplace(std::move(*opened));
+
+        auto connected = Connection::connect(*transport, public_key, signer, advertise_delayed_ack);
+        if (!connected)
+        {
+            connection = tl::unexpected(connected.error());
+            transport.reset();
+            continue;
+        }
+        return std::move(*connected);
+    }
+    return connection;
+}
 
 } // namespace adbcpp

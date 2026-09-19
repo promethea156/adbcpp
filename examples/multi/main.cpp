@@ -30,9 +30,9 @@ namespace
 {
 
 // Runs the whole exchange on one device and returns what it printed, so the two
-// threads never write to `std::cout` at the same time. The open and the handshake
-// are retried, because a device can reset its USB 3 link around them and stall the
-// first write (blocker 29).
+// threads never write to `std::cout` at the same time. `connect_with_retry` retries
+// the open and the handshake, because a device can reset its USB 3 link around
+// them and stall the first write (blocker 29).
 adbcpp::Result<std::string> drive(adbcpp::usb::DeviceId id, int index)
 {
     const std::string tag = std::to_string(index);
@@ -49,38 +49,17 @@ adbcpp::Result<std::string> drive(adbcpp::usb::DeviceId id, int index)
         std::span(reinterpret_cast<const std::byte *>(public_key_string.data()), public_key_string.size());
 
     std::optional<adbcpp::usb::UsbTransport> transport;
-    adbcpp::Result<adbcpp::Connection> connection =
-        tl::unexpected(adbcpp::Error{adbcpp::ErrorCode::Transport, "the device was not opened"});
-    for (int attempt = 0; attempt < 5; ++attempt)
-    {
-        if (attempt > 0)
+    auto connection = adbcpp::connect_with_retry(
+        [id]
         {
-            std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        }
-        auto opened = adbcpp::usb::UsbTransport::open(id);
-        if (!opened)
+            return adbcpp::usb::UsbTransport::open(id);
+        },
+        transport, public_key,
+        [&key](std::span<const std::byte> token)
         {
-            connection = tl::unexpected(opened.error());
-            continue;
-        }
-        // The connection keeps a pointer to the transport, so the transport is
-        // emplaced into the optional before `connect` and never moved again.
-        transport.emplace(std::move(*opened));
-        auto connected = adbcpp::Connection::connect(*transport, public_key,
-                                                     [&key](std::span<const std::byte> token)
-                                                     {
-                                                         return key->sign(token);
-                                                     });
-        if (!connected)
-        {
-            connection = tl::unexpected(connected.error());
-            transport.reset();
-            continue;
-        }
-        connection = std::move(*connected);
-        break;
-    }
-    if (!transport)
+            return key->sign(token);
+        });
+    if (!connection)
     {
         return tl::unexpected(connection.error());
     }
