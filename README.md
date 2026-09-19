@@ -26,7 +26,7 @@ a green run is just as useful as a red one, and see [Contributing](#contributing
 - **Shell**: run a command and read its combined output and exit code.
 - **Files**: list a directory, `stat` a path, and pull or push a file.
 - **Apps**: install and uninstall a package, launch it, check whether it is running, and close it.
-- **Connect**: reach a device over USB, or over TCP for an emulator or a `tcpip` device, and pick one by its USB serial.
+- **Connect**: reach a device over USB, or over TCP to a `tcpip` device or an emulator, and pick one by its USB serial. The TCP path is verified against a `tcpip` device; an emulator's listener speaks the same plaintext protocol and is expected to work.
 
 ## Build it
 

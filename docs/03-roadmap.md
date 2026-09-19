@@ -50,7 +50,7 @@ Every slice so far hid at least one non-obvious problem. The record of each — 
 
 Nothing was needed at the protocol layer: the slice is composition again, as the roadmap predicted. `am start`, `am force-stop`, and `pidof` are shell commands, so both already existed.
 
-**Slice 7 — complete.** A device is reached over TCP, so an emulator's ADB listener works:
+**Slice 7 — complete.** A device is reached over TCP, so an emulator's ADB listener is expected to work:
 
 - `TcpTransport` connects to a `host:port` endpoint with the platform's sockets, resolves the host with `getaddrinfo`, bounds the connect with `select`, and disables Nagle. Every service works over it unchanged, because `Session` owns the framing.
 - Public API: `TcpTransport::open(endpoint)` returning a `Result<TcpTransport>`, mirroring `UsbTransport::open(id)`.
@@ -167,7 +167,7 @@ The last piece of the [initial scope](01-objective.md#initial-scope), "connectio
 - A `TcpTransport` over a socket, implementing the same `Transport` interface as `UsbTransport`, so every service works over it unchanged. An emulator's ADB listener (`localhost:5555`) is the common case.
 - Public API: `TcpTransport::open(endpoint)`, mirroring `UsbTransport::open(id)`.
 
-**Acceptance:** run `echo hello` and a file round-trip against an emulator over TCP. Met with a `tcpip` device as well, and covered device-free by a loopback listener in `tcp_test`.
+**Acceptance:** run `echo hello` and a file round-trip against a device over TCP. Verified against a real `tcpip` device, and covered device-free by a loopback listener in `tcp_test`. An emulator was not itself run; its ADB listener speaks the same plaintext protocol, so it is expected to behave the same.
 
 The transport uses the platform's sockets, so unlike the USB backend it has no third-party dependency and the core does not pull libusb in. The connect is made non-blocking and bounded by `select`, so an unreachable host is noticed, and the socket uses `TCP_NODELAY`, because the header and its payload are separate writes and Nagle would coalesce them; `adb` disables it for the same reason.
 
