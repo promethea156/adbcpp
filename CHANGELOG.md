@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Connection::close()` and `Connection::is_open()`, so a caller can close a link
   and know it; a later `send`/`receive` reports a `Transport` error instead of
   touching the closed transport.
+- `connect_with_retry(open, transport, ...)`, which opens a transport and performs
+  the handshake with a bounded exponential backoff, and is also how a dropped link
+  is reconnected. The examples use it instead of their own retry loop.
 
 ## [1.0.0] - 2026-09-18
 
