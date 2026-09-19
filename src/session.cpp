@@ -34,23 +34,59 @@ Status read_exact(Transport &transport, std::span<std::byte> buffer)
     return {};
 }
 
+} // namespace
+
 // A framing error desynchronizes the byte stream, and the protocol cannot recover
-// from one, so the connection is closed as well as reported.
-Error framing_error(Transport &transport, std::string message)
+// from one, so the session is closed as well as reported.
+Error Session::framing_error(std::string message)
 {
-    transport.close();
+    close();
     return Error{ErrorCode::Protocol, std::move(message)};
 }
-
-} // namespace
 
 Session::Session(Transport &transport) noexcept
     : transport_(&transport)
 {
 }
 
+Session::Session(Session &&other) noexcept
+    : transport_(other.transport_)
+    , closed_(other.closed_)
+{
+    // The moved-from session no longer owns the transport, so its close() must not
+    // close the transport the moved-to session uses.
+    other.closed_ = true;
+}
+
+Session &Session::operator=(Session &&other) noexcept
+{
+    if (this != &other)
+    {
+        // The transport is borrowed, so the old one is not closed here.
+        transport_ = other.transport_;
+        closed_ = other.closed_;
+        other.closed_ = true;
+    }
+    return *this;
+}
+
+void Session::close() noexcept
+{
+    if (closed_)
+    {
+        return;
+    }
+    closed_ = true;
+    transport_->close();
+}
+
 Status Session::send(const protocol::Message &header, std::span<const std::byte> payload)
 {
+    if (closed_)
+    {
+        return tl::unexpected(Error{ErrorCode::Transport, "the session is closed"});
+    }
+
     // The header is always sent on its own, before the payload. The device's
     // transport reads exactly that way, and `data_length` in the header tells it how
     // many payload bytes to expect. Sending an empty payload as its own transfer
@@ -69,6 +105,11 @@ Status Session::send(const protocol::Message &header, std::span<const std::byte>
 
 Result<Frame> Session::receive()
 {
+    if (closed_)
+    {
+        return tl::unexpected(Error{ErrorCode::Transport, "the session is closed"});
+    }
+
     std::array<std::byte, protocol::kMessageHeaderSize> bytes{};
     if (const auto read = read_exact(*transport_, bytes); !read)
     {
@@ -83,7 +124,7 @@ Result<Frame> Session::receive()
     // `check_header` rejects the same condition.
     if (frame.header.magic != protocol::Message::compute_magic(frame.header.command))
     {
-        return tl::unexpected(framing_error(*transport_, "the header magic does not match its command"));
+        return tl::unexpected(framing_error("the header magic does not match its command"));
     }
 
     // `data_length` is authoritative for how much payload to read, so a value past
@@ -92,7 +133,7 @@ Result<Frame> Session::receive()
     // transport's maximum payload.
     if (frame.header.data_length > protocol::kMaxData)
     {
-        return tl::unexpected(framing_error(*transport_, "the header payload length is past the maximum"));
+        return tl::unexpected(framing_error("the header payload length is past the maximum"));
     }
 
     frame.payload.resize(frame.header.data_length);
@@ -109,7 +150,7 @@ Result<Frame> Session::receive()
         if (frame.header.data_check != 0 &&
             frame.header.data_check != protocol::Message::compute_checksum(frame.payload))
         {
-            return tl::unexpected(framing_error(*transport_, "the header payload checksum does not match the payload"));
+            return tl::unexpected(framing_error("the header payload checksum does not match the payload"));
         }
     }
     return frame;

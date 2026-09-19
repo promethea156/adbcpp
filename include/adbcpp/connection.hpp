@@ -70,6 +70,11 @@ inline constexpr std::string_view kDelayedAckFeature = "delayed_ack";
  * transport and the stream multiplexing state, so concurrent calls must be
  * serialized by the caller. This matches `Transport`, whose implementations are
  * not required to be thread-safe either.
+ *
+ * A `Connection` borrows its `Transport` and does not own it, so the transport
+ * must outlive the connection. `close` closes the transport and marks the
+ * connection dead, after which `send` and `receive` report a `Transport` error
+ * rather than touching the closed transport.
  */
 class ADBCPP_API Connection
 {
@@ -98,6 +103,23 @@ public:
 
     /// Receives the next frame from the connection.
     Result<Frame> receive();
+
+    /// Closes the transport and marks the connection dead. Calling it twice is
+    /// harmless.
+    ///
+    /// The connection borrows the transport and does not own it, so the transport
+    /// must still outlive the connection. After this, `send` and `receive` return
+    /// an `ErrorCode::Transport` error rather than touching the closed transport.
+    void close() noexcept
+    {
+        session_.close();
+    }
+
+    /// Whether @ref close has been called.
+    bool is_open() const noexcept
+    {
+        return session_.is_open();
+    }
 
     /// Allocates a unique, non-zero local stream id.
     std::uint32_t allocate_local_id() noexcept

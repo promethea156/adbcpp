@@ -458,7 +458,7 @@ int main(int argc, char **argv)
         }
         std::cout << "stopped " << package << '\n';
 
-        transport->close();
+        connection.close();
         std::cout << "\ndone\n";
         return 0;
     }

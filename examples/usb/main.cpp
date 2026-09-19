@@ -197,7 +197,7 @@ int main(int argc, char **argv)
             {
                 std::cout << (entry.is_directory() ? 'd' : '-') << ' ' << entry.size << ' ' << entry.name << '\n';
             }
-            transport->close();
+            connection->close();
             return 0;
         }
 
@@ -208,7 +208,7 @@ int main(int argc, char **argv)
                 fail(status.error());
             }
             std::cout << "pulled " << args[1] << " to " << args[2] << '\n';
-            transport->close();
+            connection->close();
             return 0;
         }
 
@@ -219,7 +219,7 @@ int main(int argc, char **argv)
                 fail(status.error());
             }
             std::cout << "pushed " << args[1] << " to " << args[2] << '\n';
-            transport->close();
+            connection->close();
             return 0;
         }
 
@@ -234,7 +234,7 @@ int main(int argc, char **argv)
                 fail(result.error());
             }
             std::cout << result->output;
-            transport->close();
+            connection->close();
             return result->success ? 0 : 1;
         }
 
@@ -246,7 +246,7 @@ int main(int argc, char **argv)
                 fail(result.error());
             }
             std::cout << result->output;
-            transport->close();
+            connection->close();
             return result->success ? 0 : 1;
         }
 
@@ -258,7 +258,7 @@ int main(int argc, char **argv)
                 fail(result.error());
             }
             std::cout << result->output;
-            transport->close();
+            connection->close();
             return result->success ? 0 : 1;
         }
 
@@ -269,7 +269,7 @@ int main(int argc, char **argv)
                 fail(status.error());
             }
             std::cout << "stopped " << args[1] << '\n';
-            transport->close();
+            connection->close();
             return 0;
         }
 
@@ -281,7 +281,7 @@ int main(int argc, char **argv)
                 fail(running.error());
             }
             std::cout << args[1] << (*running ? " is running" : " is not running") << '\n';
-            transport->close();
+            connection->close();
             return 0;
         }
 
@@ -307,7 +307,7 @@ int main(int argc, char **argv)
         }
         std::cout << result->output;
 
-        transport->close();
+        connection->close();
         return result->exit_code;
     }
     catch (const std::exception &error)
