@@ -11,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tl/expected.hpp>
 #include <vector>
 
 #include "adbcpp/connection.hpp"

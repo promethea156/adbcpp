@@ -33,8 +33,7 @@ public:
     {
         const std::size_t available = incoming_.size() - read_position_;
         const std::size_t count = std::min(available, buffer.size());
-        std::copy_n(incoming_.begin() + static_cast<std::ptrdiff_t>(read_position_), static_cast<std::ptrdiff_t>(count),
-                    buffer.begin());
+        std::copy_n(incoming_.data() + read_position_, count, buffer.data());
         read_position_ += count;
         return count;
     }

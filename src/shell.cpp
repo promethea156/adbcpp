@@ -5,6 +5,7 @@
 #include <string>
 
 #include "adbcpp/stream.hpp"
+#include "protocol/byte_order.hpp"
 
 namespace adbcpp
 {
@@ -19,13 +20,7 @@ constexpr std::uint8_t kStderr = 2;
 constexpr std::uint8_t kExit = 3;
 
 // shell_v2 packets use 4-byte little-endian lengths, like the ADB header.
-std::uint32_t read_u32_le(const std::byte *in) noexcept
-{
-    return static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(in[0])) |
-           (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(in[1])) << 8) |
-           (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(in[2])) << 16) |
-           (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(in[3])) << 24);
-}
+using protocol::read_u32_le;
 
 } // namespace
 
