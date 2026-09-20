@@ -35,7 +35,7 @@ std::uint32_t Message::compute_checksum(std::span<const std::byte> data) noexcep
     // Despite the field's name in `docs/dev/protocol.md` (`data_crc32`), AOSP's
     // `calculate_apacket_checksum` is a plain sum of the payload bytes, not a
     // CRC-32. adbd verifies it on the CNXN and AUTH messages, so a real CRC-32
-    // makes a strict device ignore the handshake (blocker 29).
+    // makes a strict device ignore the handshake (blocker 27).
     std::uint32_t sum = 0;
     for (const std::byte value : data)
     {

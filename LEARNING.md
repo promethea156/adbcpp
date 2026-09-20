@@ -25,7 +25,7 @@ apply it. If you get stuck, [`docs/04-blockers.md`](docs/04-blockers.md) is the
 
 ## Prerequisites
 
-- **C++20**, **CMake 3.24+**, and **Git**. See the [README](README.md#building)
+- **C++20**, **CMake 3.24+**, and **Git**. See the [README](README.md#build-it)
   for platform-specific setup.
 - Optional but strongly recommended: an **Android device** with USB debugging, plus
   **USBPcap + Wireshark** to capture a real `adb` session for comparison.
@@ -439,8 +439,9 @@ it makes the device close the stream (blocker 12), so `adbcpp` leaves it off.
 build/tests/Release/adbcpp_tests "[stream]"
 ```
 
-**Exercise.** Re-enable `advertise_delayed_ack` in the USB example, run against a
-real device, and observe the failure. Then explain why the default is off.
+**Exercise.** Pass `advertise_delayed_ack=true` to `Connection::connect` in the USB
+example, run against a real device, and observe the failure. Then explain why the
+default is off.
 
 **Checkpoint.**
 

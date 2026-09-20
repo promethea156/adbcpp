@@ -471,13 +471,13 @@ v2 entry form uses a 64-bit size.
 
 ### List a Directory Without a Device
 
-To run `list` and `pull` with no device attached, see
+To run `list`, `pull`, and `push` with no device attached, see
 [`examples/sync/main.cpp`](../examples/sync/main.cpp). It queues a device's CNXN and
-its `DNT2`, `DATA`, and `DONE` responses on the mock transport, calls the real
-`list` and `pull`, prints the entries and the pulled contents, and then prints the
-`LIS2` and `RECV` request headers that they wrote. It is registered with CTest as
-`example_sync` and runs in CI. The wire format itself is explained in
-[`06-sync-protocol.md`](06-sync-protocol.md).
+its `DNT2`, `DATA`, `DONE`, `STA2`, and `OKAY` responses on the mock transport,
+calls the real `list`, `pull`, and `push`, prints the entries and the pulled
+contents, and then prints the `LIS2`, `RECV`, and `SEND` request headers that they
+wrote. It is registered with CTest as `example_sync` and runs in CI. The wire format
+itself is explained in [`06-sync-protocol.md`](06-sync-protocol.md).
 
 ## Pull a File
 
@@ -1280,9 +1280,9 @@ int main()
   guaranteed. `CommandResult` does not separate them.
 - **This is not a full `adb` replacement yet.** The shell service, `sync`-based
   directory listing, file transfer in both directions, install and uninstall, app
-  launch, close, and running checks, and the USB and TCP transports are exposed.
-  There is no adb *server* protocol, so `host:connect`/`host:disconnect` and
-  device selection by serial are not
+  launch, close, and running checks, the USB and TCP transports, and selection by
+  USB serial are exposed. There is no adb *server* protocol, so
+  `host:connect`/`host:disconnect` are not
   ([`03-roadmap.md`](03-roadmap.md)).
 - **`is_running` matches a process name.** `pidof` takes a process name, not a
   package name. A process is named after its package by default, so the two usually
