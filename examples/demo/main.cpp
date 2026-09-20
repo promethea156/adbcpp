@@ -9,6 +9,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tl/expected.hpp>
 #include <vector>
 
 #include "adbcpp/app.hpp"
@@ -73,8 +74,9 @@ void set_power(adbcpp::Connection &connection, std::string_view action, std::str
 
 // Opens the transport and connects, retrying the whole open and handshake because a
 // USB 3 device can reset its link right after the open and stall the first write
-// (blocker 29). `transport` lives in the caller and is never moved once it holds a
-// device, because the connection keeps a pointer to it.
+// (blocker 29). `connect_with_retry` owns the retry loop; `transport` lives in the
+// caller and is never moved once it holds a device, because the connection keeps a
+// pointer to it.
 adbcpp::Result<adbcpp::Connection> connect(adbcpp::usb::DeviceId id, const adbcpp::crypto::Key &key,
                                            std::optional<adbcpp::usb::UsbTransport> &transport)
 {
@@ -82,35 +84,16 @@ adbcpp::Result<adbcpp::Connection> connect(adbcpp::usb::DeviceId id, const adbcp
     const auto public_key =
         std::span(reinterpret_cast<const std::byte *>(public_key_string.data()), public_key_string.size());
 
-    adbcpp::Result<adbcpp::Connection> connection =
-        tl::unexpected(adbcpp::Error{adbcpp::ErrorCode::Transport, "the device was not opened"});
-    for (int attempt = 0; attempt < 5; ++attempt)
-    {
-        if (attempt > 0)
+    return adbcpp::connect_with_retry(
+        [id]
         {
-            std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        }
-        auto opened = adbcpp::usb::UsbTransport::open(id);
-        if (!opened)
+            return adbcpp::usb::UsbTransport::open(id);
+        },
+        transport, public_key,
+        [&key](std::span<const std::byte> token)
         {
-            connection = tl::unexpected(opened.error());
-            continue;
-        }
-        transport.emplace(std::move(*opened));
-        auto connected = adbcpp::Connection::connect(*transport, public_key,
-                                                     [&key](std::span<const std::byte> token)
-                                                     {
-                                                         return key.sign(token);
-                                                     });
-        if (!connected)
-        {
-            connection = tl::unexpected(connected.error());
-            transport.reset();
-            continue;
-        }
-        return std::move(*connected);
-    }
-    return tl::unexpected(connection.error());
+            return key.sign(token);
+        });
 }
 
 // Installs the app from one or more APKs. A single APK is `install`; a split app

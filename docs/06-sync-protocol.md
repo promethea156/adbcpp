@@ -44,7 +44,7 @@ many bytes of data:
 ```
 
 The id is the little-endian encoding of four ASCII characters, exactly like an ADB
-command, so `sync` reuses `protocol::make_command` (`src/sync.cpp:29`).
+command, so `sync` reuses `protocol::make_command` (`src/sync.cpp:38`).
 
 Requests:
 
@@ -240,16 +240,16 @@ directly, so a missing path can be told from a real one.
 `list`:
 
 1. Reject a path longer than 1024 bytes up front, because the daemon would reject
-   it anyway (`src/sync.cpp:126`).
+   it anyway (`src/sync.cpp:227`).
 2. Choose the v1 or v2 form from `connection.supports_feature("ls_v2")`
-   (`src/sync.cpp:133`). The match is exact, like adb's.
+   (`src/sync.cpp:235`). The match is exact, like adb's.
 3. Open the `sync:` stream. This is the same `Stream` that `shell:` uses
-   (`src/sync.cpp:136`).
-4. Write the `LIST`/`LIS2` request as one write (`src/sync.cpp:139`).
+   (`src/sync.cpp:238`).
+4. Write the `LIST`/`LIS2` request as one write (`src/sync.cpp:245`).
 5. Loop: read a four-byte id, then the body, then the name, and build a
-   `DirEntry`. `FAIL` is an `Error`, `DONE` ends the loop (`src/sync.cpp:145`).
+   `DirEntry`. `FAIL` is an `Error`, `DONE` ends the loop (`src/sync.cpp:254`).
 6. Write `QUIT` to leave sync mode, after which the daemon closes the stream
-   (`src/sync.cpp:207`).
+   (`src/sync.cpp:325`).
 
 The loop reads the body **before** it checks the id, so that every path consumes
 exactly the bytes the daemon sent. That is what keeps the stream aligned for the
@@ -258,45 +258,45 @@ next response; a short read here would desynchronize the whole listing.
 `pull`:
 
 1. Reject a path longer than 1024 bytes, the same check as `list`
-   (`src/sync.cpp:308`).
+   (`src/sync.cpp:335`).
 2. Open the `sync:` stream and write the `RECV` request
-   (`src/sync.cpp:312`, `src/sync.cpp:317`).
+   (`src/sync.cpp:342`, `src/sync.cpp:351`).
 3. Open the local file before the transfer starts, so a failure leaves a partial
-   file rather than a missing one (`src/sync.cpp:321`).
+   file rather than a missing one (`src/sync.cpp:358`).
 4. Loop: read the id and the chunk size, write each `DATA` chunk to the file as it
-   arrives, and stop at `DONE` (`src/sync.cpp:327`). A chunk larger than 64 KiB is
-   rejected rather than trusted (`src/sync.cpp:357`).
-5. Write `QUIT` (`src/sync.cpp:373`).
+   arrives, and stop at `DONE` (`src/sync.cpp:364`). A chunk larger than 64 KiB is
+   rejected rather than trusted (`src/sync.cpp:400`).
+5. Write `QUIT` (`src/sync.cpp:419`).
 
 Because each chunk is written as it arrives, the file is never held in memory whole,
 so pulling a large file costs no more memory than pulling a small one.
 
 `stat`:
 
-1. Reject a path longer than 1024 bytes (`src/sync.cpp:380`).
+1. Reject a path longer than 1024 bytes (`src/sync.cpp:424`).
 2. Choose the v1 or v2 form from `connection.supports_feature("stat_v2")`
-   (`src/sync.cpp:385`).
+   (`src/sync.cpp:432`).
 3. Open the `sync:` stream and write the `STAT`/`STA2` request
-   (`src/sync.cpp:387`, `src/sync.cpp:388`).
+   (`src/sync.cpp:434`, `src/sync.cpp:439`).
 4. Read the id and the body. The v2 form's leading error field, or the v1 form's
    all-zero body, means the path does not exist, which is an empty `optional` rather
-   than an `Error` (`src/sync.cpp:405`).
-5. Write `QUIT` (`src/sync.cpp:428`).
+   than an `Error` (`src/sync.cpp:463`).
+5. Write `QUIT` (`src/sync.cpp:497`).
 
 `push`:
 
-1. Reject a local path that is not a regular file (`src/sync.cpp:435`).
+1. Reject a local path that is not a regular file (`src/sync.cpp:507`).
 2. Stat the destination, so that an existing directory receives the file under the
-   local file's name (`src/sync.cpp:443`).
+   local file's name (`src/sync.cpp:515`).
 3. Build the `"<path>,<mode>"` spec from the local file's permissions
-   (`src/sync.cpp:453`).
+   (`src/sync.cpp:529`).
 4. Open the `sync:` stream and write the `SEND` request
-   (`src/sync.cpp:455`, `src/sync.cpp:456`).
+   (`src/sync.cpp:531`, `src/sync.cpp:536`).
 5. Read the local file in 64 KiB chunks, write each as a `DATA` chunk, and finish
    with a `DONE` that carries the local file's modification time
-   (`src/sync.cpp:494`).
+   (`src/sync.cpp:578`).
 6. Read the device's reply, which is the only `OKAY` in the sync service
-   (`src/sync.cpp:499`), and write `QUIT` (`src/sync.cpp:501`).
+   (`src/sync.cpp:588`), and write `QUIT` (`src/sync.cpp:593`).
 
 ## Measured transfer performance
 

@@ -13,6 +13,12 @@ release, and `hotfix` carries an urgent fix from `main` back to `main` and `deve
 short-lived branch is `<type>/<slug>`. See `docs/01-objective.md` for the full model. Do not
 switch the current branch or create a branch without saying so.
 
+Work on an issue happens on a short-lived branch cut from `development`, named `<type>/<slug>`
+and named after the issue (for example `feat/connection-close` for issue #11), one issue per
+branch. Commit there, push it, and open a pull request into `development`; do not commit issue
+work directly on `development`. The pull request is squash-merged into `development` and the branch
+is deleted.
+
 Squash-merge a short-lived branch into its target, but merge two long-lived branches with a
 merge commit, not a squash; a squash between long-lived branches makes them diverge, so the target
 must be merged back immediately if it happens. See `docs/01-objective.md#merging`.
@@ -76,6 +82,14 @@ build\examples\Release\adbcpp_demo_example.exe <package> <apk> [<split-apk>...]
 ```
 
 `am start <package>` only resolves for an app with a `MAIN`/`LAUNCHER` activity, which not every app has; the demo retries the launch for a few seconds because the package manager can still be indexing a fresh install.
+
+### The demo_multi example runs the tour on every device at once
+
+`adbcpp_demo_multi_example` is the same tour as `adbcpp_demo_example`, but on every attached device at once, one thread per device, so the install, launch, and uninstall steps run concurrently. It takes the package and the APK (and any split APKs), buffers each device's output, and prints the logs together at the end. Like the single-device demo, it uninstalls the package on each device first, so it loses that package's data on every device; it also uninstalls it again at the end, so it does not leave the app installed.
+
+```powershell
+build\examples\Release\adbcpp_demo_multi_example.exe <package> <apk> [<split-apk>...]
+```
 
 ### The device test is destructive when it is configured to be
 

@@ -48,7 +48,7 @@ Every slice so far hid at least one non-obvious problem. The record of each — 
 - `close` runs `am force-stop <package>`, and `is_running` runs `pidof <package>`, whose exit code answers both cases: zero with the pids when the process runs, nonzero with no output when it does not.
 - Public API: `launch(connection, package)` returning a `Result<CommandResult>`, `close(connection, package)` returning a `Status`, and `is_running(connection, package)` returning a `Result<bool>`.
 
-Nothing was needed at the protocol layer: the slice is composition again, as the roadmap predicted. `am start`, `am force-stop`, and `pidof` are shell commands, so both already existed.
+Nothing was needed at the protocol layer: the slice is composition again, as the roadmap predicted. `am start`, `am force-stop`, and `pidof` are shell commands, so all three already existed.
 
 **Slice 7 — complete.** A device is reached over TCP, so an emulator's ADB listener is expected to work:
 
@@ -192,8 +192,8 @@ The `serialno` field of the system identity string, `<systemtype>::<serialno>::<
 
 The initial scope is complete, so this slice is not new capability: it closes the API and compatibility gaps that would be expensive or misleading to change once the version is fixed at 1.0, and then performs the release itself.
 
-- **The `adb devices` serial on the transport.** `Connection::device_serial` currently returns the banner `serialno`, which is empty on current devices, so a caller reading it gets nothing. Add `Transport::serial()`, returning the transport's identity (the USB `iSerial` descriptor, or the TCP endpoint), and have `device_serial` prefer it and fall back to the banner field. This is the one change here that alters a public type's layout, so it belongs before 1.0.
-- **Fall back to `shell:` when `shell_v2` is absent.** `run` opens `shell,v2,raw:` and requires the feature, while `list` and `stat` already fall back to their v1 forms. Open `shell:<command>` when the device did not advertise `shell_v2`, take the combined output as the raw bytes, and read the exit code from the `CLSE` message's `arg1` where the device provides it (the v1 shell has no exit packet; AOSP's own v1 path reports 0). The v1 path can be exercised on a current device by forcing the service string, so it needs no old device to test.
+- **The `adb devices` serial on the transport.** `Connection::device_serial` returns the banner `serialno`, which is empty on current devices, so a caller reading it gets nothing. Add `Transport::serial()`, returning the transport's identity (the USB `iSerial` descriptor, or the TCP endpoint), and have `device_serial` prefer it and fall back to the banner field. This is the one change here that alters a public type's layout, so it belongs before 1.0.
+- **Fall back to `shell:` when `shell_v2` is absent.** `run` opens `shell,v2,raw:` and requires the feature, while `list` and `stat` already fall back to their v1 forms. Open `shell:<command>` when the device did not advertise `shell_v2`, take the combined output as the raw bytes, and report exit code 0, matching adb (the v1 shell has no exit packet; AOSP's own v1 path reports 0). The v1 path can be exercised on a current device by forcing the service string, so it needs no old device to test.
 - **Advertise only what is implemented.** The host banner claims `sendrecv_v2` with brotli, lz4, and zstd, and services that are never opened (`abb`, `apex`, `remount_shell`, `track_app`, `devraw`, `server_status`, ...). Either implement `sendrecv_v2` for `pull`/`push` or trim the list to the features the library acts on, so a peer cannot rely on a claim that is not honored.
 - **Release chores.** Bump `project(VERSION)` to `1.0.0` (`SOVERSION` follows to 1), add a `CHANGELOG.md` generated from the Conventional Commits history, and tag `v1.0.0`. ([issue #7](https://github.com/promethea156/adbcpp/issues/7))
 
@@ -208,11 +208,11 @@ Obligations that run through every slice, with the current state of each.
 - **Logging**: not implemented. When it is, it must be optional, configurable, and must never log keys or payloads. ([issue #3](https://github.com/promethea156/adbcpp/issues/3))
 - **Thread safety**: `Transport`, `Connection`, `Stream`, and `Key` each state that they are not thread-safe, and that a caller must serialize concurrent use. Independent objects share no state, so the model for several devices is one thread per device (see [Working with Several Devices in Parallel](#working-with-several-devices-in-parallel)).
 - **Documentation**: Doxygen comments on every public declaration, and the reasoning behind each protocol decision written down in [`04-blockers.md`](04-blockers.md).
+- **Compatibility**: the minimum supported Android is **7.0 (API 24)** and the minimum ADB protocol version is `0x01000001`. The v2 `shell`, `LIST`, and `STAT` forms are used when the device advertises them, with their v1 forms as the fallback. ([issue #4](https://github.com/promethea156/adbcpp/issues/4))
 
 ## Open Questions
 
 - **Does a target need ADB's TLS handshake?** Modern ADB encrypts the host-to-server link on port 5037; over USB the direct protocol has none, and an emulator's ADB listener and a `tcpip` device both accept plaintext. So this only matters for a target that demands the handshake, which is a [future improvement](#other-improvements). mbedTLS can provide it if so. ([issue #5](https://github.com/promethea156/adbcpp/issues/5))
-- **What is the minimum supported Android version?** `run` now falls back to `shell:` when the device did not advertise `shell_v2` (blocker 31), so it runs, but it reports exit code 0 as adb does. The floor is otherwise set by the v1 `LIST`/`STAT` forms, which are used when the device does not advertise `ls_v2`/`stat_v2`. The floor should be stated once a device without `shell_v2` has been tried. ([issue #4](https://github.com/promethea156/adbcpp/issues/4))
 
 ## Future Improvements
 
@@ -234,7 +234,7 @@ processes (blocker 28). Two devices are therefore needed, and `examples/multi` o
 two and reports clearly when only one is present.
 
 A USB 3 device also resets its link around the open and stalls the first write
-(blocker 29), so both examples retry the whole open and handshake; `adb` does the
+(blocker 29), so `connect_with_retry` retries the whole open and handshake; `adb` does the
 same at a lower level by sending the CNXN twice.
 
 Selection by serial was the last gap, and [Slice 8](#slice-8--select-a-device-by-serial)
@@ -249,5 +249,5 @@ own serial, each on its own thread, and both run `echo hello` and a file round t
 
 - **Use `sendrecv_v2` for `pull` and `push`.** The v1 `RECV`/`SEND` forms are sent today, so a transfer is never compressed. [Slice 9](#slice-9--release-10) removed the false `sendrecv_v2` claim from the banner; implementing the v2 forms would let a transfer use brotli, lz4, or zstd. ([issue #1](https://github.com/promethea156/adbcpp/issues/1))
 - **Give `Connection` an explicit `disconnect`.** **Done.** Closing a link is `transport->close()` on the borrowed transport, and a `Connection` records no dead state, so a closed connection still looks live. `Connection::close()` now closes the transport and marks the connection dead, so a later `send`/`receive` reports a `Transport` error, and `Connection::is_open()` reports the state. ([issue #11](https://github.com/promethea156/adbcpp/issues/11))
-- **Reconnect a dropped or reset link.** There is no `reconnect()` and `connect` does not retry, so a dropped TCP link or a USB 3 link reset (blocker 29) needs the same manual close, reopen, and re-handshake that the examples hand-roll. ([issue #12](https://github.com/promethea156/adbcpp/issues/12))
+- **Reconnect a dropped or reset link.** **Done.** There is no `reconnect()` and `connect` does not retry, so a dropped TCP link or a USB 3 link reset (blocker 29) needs the same manual close, reopen, and re-handshake that the examples hand-roll. `adbcpp::connect_with_retry(open, transport, ...)` now owns that loop with a bounded exponential backoff, and the examples call it instead. ([issue #12](https://github.com/promethea156/adbcpp/issues/12))
 - Replace the dynamically-linked libusb backend with platform-native USB APIs (WinUSB, IOKit, `usbfs`) to remove the third-party dependency and its license obligations. See [USB Backend](01-objective.md#usb-backend). ([issue #2](https://github.com/promethea156/adbcpp/issues/2))

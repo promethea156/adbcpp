@@ -243,8 +243,7 @@ Status Stream::read(std::span<std::byte> buffer)
 
         const std::size_t available = incoming_.size() - incoming_offset_;
         const std::size_t count = std::min(available, buffer.size() - total);
-        std::copy_n(incoming_.begin() + static_cast<std::ptrdiff_t>(incoming_offset_),
-                    static_cast<std::ptrdiff_t>(count), buffer.begin() + static_cast<std::ptrdiff_t>(total));
+        std::copy_n(incoming_.data() + incoming_offset_, count, buffer.data() + total);
         incoming_offset_ += count;
         total += count;
     }
@@ -254,7 +253,7 @@ Status Stream::read(std::span<std::byte> buffer)
 Result<std::vector<std::byte>> Stream::read_all()
 {
     // A previous read may have left part of a WRTE buffered, so drain it first.
-    std::vector<std::byte> output(incoming_.begin() + static_cast<std::ptrdiff_t>(incoming_offset_), incoming_.end());
+    std::vector<std::byte> output(incoming_.data() + incoming_offset_, incoming_.data() + incoming_.size());
     incoming_.clear();
     incoming_offset_ = 0;
 

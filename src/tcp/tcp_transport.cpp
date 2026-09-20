@@ -99,6 +99,15 @@ Status ensure_sockets()
     return {};
 }
 
+// Builds a `timeval` for `timeout_ms`. Its field types are not the same
+// everywhere (`tv_sec` is `time_t` and `tv_usec` is `suseconds_t` on POSIX, both
+// `long` on Winsock), so they are taken from `timeval` itself rather than assumed.
+timeval make_timeval(unsigned int timeout_ms)
+{
+    return timeval{static_cast<decltype(timeval::tv_sec)>(timeout_ms / 1000),
+                   static_cast<decltype(timeval::tv_usec)>((timeout_ms % 1000) * 1000)};
+}
+
 // Connects `socket` to `address`, bounded by `timeout_ms`. A blocking connect
 // cannot be bounded, so the socket is put in non-blocking mode for the connect and
 // restored afterwards.
@@ -128,8 +137,8 @@ bool connect_with_timeout(socket_t socket, const sockaddr *address, int address_
         fd_set writable;
         FD_ZERO(&writable);
         FD_SET(socket, &writable);
-        timeval timeout{static_cast<decltype(timeval::tv_sec)>(timeout_ms / 1000),
-                        static_cast<decltype(timeval::tv_usec)>((timeout_ms % 1000) * 1000)};
+        // `select` takes a non-const `timeval*` on POSIX, so this one is mutable.
+        timeval timeout = make_timeval(timeout_ms);
         if (::select(static_cast<int>(socket) + 1, nullptr, &writable, nullptr, &timeout) <= 0)
         {
             return false;
@@ -156,8 +165,7 @@ void set_timeout(socket_t socket, int option, unsigned int timeout_ms)
     const DWORD timeout = timeout_ms;
     (void)::setsockopt(socket, SOL_SOCKET, option, reinterpret_cast<const char *>(&timeout), sizeof(timeout));
 #else
-    const timeval timeout{static_cast<decltype(timeval::tv_sec)>(timeout_ms / 1000),
-                          static_cast<decltype(timeval::tv_usec)>((timeout_ms % 1000) * 1000)};
+    const timeval timeout = make_timeval(timeout_ms);
     (void)::setsockopt(socket, SOL_SOCKET, option, &timeout, sizeof(timeout));
 #endif
 }
