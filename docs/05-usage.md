@@ -138,6 +138,7 @@ without an `adb` server or the `adb` binary.
 
 ```cpp
 #include <iostream>
+#include <optional>
 #include <span>
 #include <string>
 
@@ -166,13 +167,6 @@ int main()
         return 1;
     }
 
-    auto transport = adbcpp::usb::UsbTransport::open(id);
-    if (!transport)
-    {
-        std::cerr << "error: " << transport.error().message << '\n';
-        return 1;
-    }
-
     // Reuse adb's key, so the device does not show the approval prompt. The key
     // must outlive the connection, because the signer below captures it.
     const auto key = adbcpp::crypto::Key::load_or_generate();
@@ -185,9 +179,15 @@ int main()
     const auto public_key = std::span(reinterpret_cast<const std::byte *>(public_key_string.data()),
                                      public_key_string.size());
 
-    // The connection performs the CNXN/AUTH handshake in `connect`.
-    auto connection = adbcpp::Connection::connect(*transport, public_key,
-                                  [&key](std::span<const std::byte> token) { return key->sign(token); });
+    // `connect_with_retry` opens the transport and performs the CNXN/AUTH
+    // handshake, retrying the whole open and handshake because a USB 3 device can
+    // reset its link right after the open (blocker 29). The opened transport
+    // lives in `transport`, which the connection borrows, so it must outlive the
+    // connection.
+    std::optional<adbcpp::usb::UsbTransport> transport;
+    auto connection = adbcpp::connect_with_retry([&id] { return adbcpp::usb::UsbTransport::open(id); }, transport,
+                                              public_key,
+                                              [&key](std::span<const std::byte> token) { return key->sign(token); });
     if (!connection)
     {
         std::cerr << "error: " << connection.error().message << '\n';
@@ -204,13 +204,19 @@ int main()
     std::cout << "exit code: " << static_cast<int>(result->exit_code) << '\n';
     std::cout << result->output;
 
-    transport->close();
+    connection->close();
     return result->exit_code;
 }
 ```
 
 `CommandResult::output` is stdout and stderr combined, in the order the device
 produced them, and `exit_code` is the command's status.
+
+`connection->close()` closes the borrowed transport and marks the connection dead. The
+connection does not own the transport, so the transport must outlive it, but a caller
+does not have to close the transport separately: `close()` does that, and a later
+`send` or `receive` reports a `Transport` error instead of touching the closed
+transport. `Connection::is_open()` says whether `close()` has been called.
 
 `run` uses the `shell,v2,raw` service when the device advertised `shell_v2`, and the
 v1 `shell:<command>` service otherwise. The v1 form has no exit packet, so
@@ -310,7 +316,7 @@ int main()
     }
     std::cout << result->output;
 
-    transport->close();
+    connection->close();
     return result->exit_code;
 }
 ```
@@ -320,6 +326,81 @@ The endpoint is `host:port`, where `host` is a name or a literal address and
 `[::1]:5555` all work. The transport has no libusb dependency, so it needs no
 `ADBCPP_BUILD_USB`. Put a device into TCP mode with `adb tcpip 5555`, then connect
 directly with no adb server.
+
+The lifecycle is the same as over USB: the connection borrows the transport, so the
+transport must outlive it, and `connection->close()` closes it and marks the
+connection dead.
+
+## Reconnect a Dropped Link
+
+A dropped TCP link, a USB 3 link reset, or a replug leaves a connection whose
+transport is dead. `adbcpp::connect_with_retry` opens a transport with a callable
+and performs the handshake, retrying the whole open and handshake with a bounded
+exponential backoff (blocker 29), so the recovery is not hand-rolled at each call
+site:
+
+```cpp
+#include <iostream>
+#include <optional>
+#include <span>
+#include <string>
+
+#include "adbcpp/adbcpp.hpp"
+#include "adbcpp/crypto/adb_key.hpp"
+#include "adbcpp/tcp/tcp_transport.hpp"
+
+int main()
+{
+    const auto key = adbcpp::crypto::Key::load_or_generate();
+    if (!key)
+    {
+        std::cerr << "error: " << key.error().message << '\n';
+        return 1;
+    }
+    const std::string &public_key_string = key->public_key();
+    const auto public_key = std::span(reinterpret_cast<const std::byte *>(public_key_string.data()),
+                                     public_key_string.size());
+
+    // `open` is called before each attempt and returns a fresh transport.
+    const auto open = [] { return adbcpp::tcp::TcpTransport::open("localhost:5555"); };
+
+    std::optional<adbcpp::tcp::TcpTransport> transport;
+    auto connection = adbcpp::connect_with_retry(open, transport, public_key,
+                                              [&key](std::span<const std::byte> token) { return key->sign(token); });
+    if (!connection)
+    {
+        std::cerr << "error: " << connection.error().message << '\n';
+        return 1;
+    }
+
+    const auto result = adbcpp::run(*connection, "echo hello");
+    if (!result)
+    {
+        std::cerr << "error: " << result.error().message << '\n';
+        return 1;
+    }
+    std::cout << result->output;
+
+    // The link dropped. Close the connection and call the helper again: it
+    // replaces the transport in `transport` and repeats the handshake.
+    connection->close();
+    connection = adbcpp::connect_with_retry(open, transport, public_key,
+                                           [&key](std::span<const std::byte> token) { return key->sign(token); });
+    if (!connection)
+    {
+        std::cerr << "error: " << connection.error().message << '\n';
+        return 1;
+    }
+
+    connection->close();
+    return 0;
+}
+```
+
+The second attempt waits `250 ms`, and each later attempt doubles the wait, so
+five attempts span about four seconds and stay finite. `transport` is where the
+opened transport lives and must outlive the connection, so it is the caller's, not
+the helper's.
 
 ## List a Directory
 
@@ -378,7 +459,7 @@ int main()
         std::cout << (entry.is_directory() ? 'd' : '-') << ' ' << entry.size << ' ' << entry.name << '\n';
     }
 
-    transport->close();
+    connection->close();
     return 0;
 }
 ```
@@ -390,13 +471,13 @@ v2 entry form uses a 64-bit size.
 
 ### List a Directory Without a Device
 
-To run `list` and `pull` with no device attached, see
+To run `list`, `pull`, and `push` with no device attached, see
 [`examples/sync/main.cpp`](../examples/sync/main.cpp). It queues a device's CNXN and
-its `DNT2`, `DATA`, and `DONE` responses on the mock transport, calls the real
-`list` and `pull`, prints the entries and the pulled contents, and then prints the
-`LIS2` and `RECV` request headers that they wrote. It is registered with CTest as
-`example_sync` and runs in CI. The wire format itself is explained in
-[`06-sync-protocol.md`](06-sync-protocol.md).
+its `DNT2`, `DATA`, `DONE`, `STA2`, and `OKAY` responses on the mock transport,
+calls the real `list`, `pull`, and `push`, prints the entries and the pulled
+contents, and then prints the `LIS2`, `RECV`, and `SEND` request headers that they
+wrote. It is registered with CTest as `example_sync` and runs in CI. The wire format
+itself is explained in [`06-sync-protocol.md`](06-sync-protocol.md).
 
 ## Pull a File
 
@@ -453,7 +534,7 @@ int main()
         return 1;
     }
 
-    transport->close();
+    connection->close();
     return 0;
 }
 ```
@@ -515,7 +596,7 @@ int main()
         return 1;
     }
 
-    transport->close();
+    connection->close();
     return 0;
 }
 ```
@@ -583,7 +664,7 @@ int main()
         std::cout << "no such path\n";
     }
 
-    transport->close();
+    connection->close();
     return 0;
 }
 ```
@@ -657,7 +738,7 @@ int main()
         std::cerr << "uninstall failed: " << removed->failure_reason() << '\n';
     }
 
-    transport->close();
+    connection->close();
     return 0;
 }
 ```
@@ -745,7 +826,7 @@ int main()
         return 1;
     }
 
-    transport->close();
+    connection->close();
     return 0;
 }
 ```
@@ -1132,7 +1213,7 @@ int main()
         return 1;
     }
     std::cout << result->output;
-    transport->close();
+    connection->close();
     return result->exit_code;
 }
 ```
@@ -1150,6 +1231,8 @@ int main()
 | Sign an AUTH token                     | `key->sign(token)`                                      |
 | Get the key's device fingerprint        | `key->fingerprint()` → `Result<std::string>`              |
 | Handshake and connect                  | `adbcpp::Connection::connect(transport, public_key, signer)` → `Result<Connection>` |
+| Connect with a retry, or reconnect        | `adbcpp::connect_with_retry(open, transport, public_key, signer)` → `Result<Connection>` |
+| Close a connection                     | `connection->close()`                                   |
 | Run a shell command                    | `adbcpp::run(connection, "echo hello")` → `Result<CommandResult>` |
 | Force the v1 shell                     | `adbcpp::run(connection, cmd, adbcpp::ShellProtocol::V1)` |
 | Read a command's output                 | `result->output`                                        |
@@ -1197,9 +1280,9 @@ int main()
   guaranteed. `CommandResult` does not separate them.
 - **This is not a full `adb` replacement yet.** The shell service, `sync`-based
   directory listing, file transfer in both directions, install and uninstall, app
-  launch, close, and running checks, and the USB and TCP transports are exposed.
-  There is no adb *server* protocol, so `host:connect`/`host:disconnect` and
-  device selection by serial are not
+  launch, close, and running checks, the USB and TCP transports, and selection by
+  USB serial are exposed. There is no adb *server* protocol, so
+  `host:connect`/`host:disconnect` are not
   ([`03-roadmap.md`](03-roadmap.md)).
 - **`is_running` matches a process name.** `pidof` takes a process name, not a
   package name. A process is named after its package by default, so the two usually

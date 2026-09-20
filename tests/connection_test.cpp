@@ -205,3 +205,30 @@ TEST_CASE("connection fails when a key is required but not provided", "[connecti
     REQUIRE_FALSE(connection.has_value());
     REQUIRE(connection.error().code == adbcpp::ErrorCode::Crypto);
 }
+
+TEST_CASE("connection reports a transport error after it is closed", "[connection]")
+{
+    adbcpp::testing::MockTransport transport;
+
+    const auto device = make_message(adbcpp::protocol::kCnxn, 0x01000001u, 4096u);
+    transport.feed(device.encode());
+
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    REQUIRE(connection.is_open());
+
+    connection.close();
+    REQUIRE_FALSE(connection.is_open());
+    // The connection borrows the transport, so closing the connection closes it.
+    REQUIRE(transport.closed());
+
+    // Closing twice is harmless.
+    connection.close();
+
+    const auto sent = connection.send(make_message(adbcpp::protocol::kOkay, 0, 0));
+    REQUIRE_FALSE(sent.has_value());
+    REQUIRE(sent.error().code == adbcpp::ErrorCode::Transport);
+
+    const auto received = connection.receive();
+    REQUIRE_FALSE(received.has_value());
+    REQUIRE(received.error().code == adbcpp::ErrorCode::Transport);
+}

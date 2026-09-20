@@ -25,6 +25,10 @@ The first iteration targets a minimal but practical feature set:
 - Support for every Android version or device vendor.
 - Serving as a drop-in replacement for the official ADB tooling.
 
+## Compatibility
+
+The minimum supported Android version is **7.0 (API 24)**, and the minimum ADB protocol version is `0x01000001`. The v2 `shell`, `LIST`, and `STAT` forms are used when the device advertises them, with their v1 forms as the fallback. The floor is stated but not yet verified on a device without `shell_v2`; see [issue #4](https://github.com/promethea156/adbcpp/issues/4).
+
 ## Technical Requirements
 
 - **Cross-platform**: Linux, Windows, and macOS.
@@ -85,6 +89,23 @@ what it is for:
 
 A short-lived branch is named `<type>/<slug>`, using the same types as the commit convention
 below, for example `feat/push` or `fix/usb-short-transfer`. It is deleted once it merges.
+
+### Merging
+
+How a branch is merged depends on whether it is long-lived, because a squash gives the target a
+**new commit** rather than the source's history:
+
+- A short-lived branch **SHOULD** be squash-merged into its target. The branch is deleted, so the
+  rewritten history costs nothing and the target keeps one clean commit per change.
+- A merge between two long-lived branches (`development` → `release_candidate` → `main`, and `hotfix`
+  back to both) **MUST** be a **merge commit**, not a squash. A squash leaves the source branch
+  holding commits that the target does not have, so the two diverge, the next pull request shows
+  commits that are already released, and a conflict is guaranteed on the next touch of a shared file.
+- If a long-lived branch is nonetheless squash-merged, the target **MUST** be merged back into the
+  source immediately afterwards, so the source regains the target's history and the divergence is closed.
+
+The rule in one line: never squash a long-lived branch into another long-lived branch without a
+back-merge.
 
 ## Releasing
 

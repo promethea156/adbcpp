@@ -122,8 +122,7 @@ std::vector<std::byte> dent_v2(std::uint32_t mode, std::uint64_t size, const std
     write_u32_le(dent.data() + 24, mode);
     write_u64_le(dent.data() + 40, size);
     write_u32_le(dent.data() + 72, static_cast<std::uint32_t>(name.size()));
-    std::copy_n(reinterpret_cast<const std::byte *>(name.data()), static_cast<std::ptrdiff_t>(name.size()),
-                dent.begin() + 76);
+    std::copy_n(reinterpret_cast<const std::byte *>(name.data()), name.size(), dent.data() + 76);
     return dent;
 }
 
@@ -141,8 +140,7 @@ std::vector<std::byte> data_chunk(const std::string &text)
     std::vector<std::byte> chunk(8 + text.size());
     write_u32_le(chunk.data(), sync_id("DATA"));
     write_u32_le(chunk.data() + 4, static_cast<std::uint32_t>(text.size()));
-    std::copy_n(reinterpret_cast<const std::byte *>(text.data()), static_cast<std::ptrdiff_t>(text.size()),
-                chunk.begin() + 8);
+    std::copy_n(reinterpret_cast<const std::byte *>(text.data()), text.size(), chunk.data() + 8);
     return chunk;
 }
 

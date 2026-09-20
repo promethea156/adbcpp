@@ -27,8 +27,11 @@ namespace
 constexpr std::uint8_t kAdbInterfaceClass = 0xFF;
 constexpr std::uint8_t kAdbInterfaceSubClass = 0x42;
 constexpr std::uint8_t kAdbInterfaceProtocol = 0x01;
-// One bulk transfer holds at most one message header or payload. This must be at
-// least as large as the maximum payload the peer may send.
+// The buffer for one bulk transfer. A header and its payload arrive as separate
+// transfers, so the buffer holds one of them. It is smaller than the maximum
+// payload the peer may send, which is fine: a larger message is read across
+// several transfers by `Session`'s read loop, and a smaller buffer keeps every
+// transport from holding a full `kMaxData` allocation.
 constexpr std::size_t kReadBufferSize = 256 * 1024;
 
 // libusb is a C API, so it reports a failure as a code rather than throwing;
@@ -468,8 +471,7 @@ Result<std::size_t> UsbTransport::read(std::span<std::byte> buffer)
 
     const std::size_t available = impl_->incoming.size() - impl_->incoming_offset;
     const std::size_t count = std::min(available, buffer.size());
-    std::copy_n(impl_->incoming.begin() + static_cast<std::ptrdiff_t>(impl_->incoming_offset),
-                static_cast<std::ptrdiff_t>(count), buffer.begin());
+    std::copy_n(impl_->incoming.data() + impl_->incoming_offset, count, buffer.data());
     impl_->incoming_offset += count;
     return count;
 }

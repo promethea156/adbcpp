@@ -98,6 +98,6 @@ int main(int argc, char **argv)
     }
     std::cout << "round-tripped a file over TCP\n";
 
-    transport->close();
+    connection->close();
     return 0;
 }

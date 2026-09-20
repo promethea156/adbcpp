@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <thread>
@@ -263,6 +264,96 @@ TEST_CASE("tcp transport rejects an endpoint without a port", "[tcp]")
     const auto transport = adbcpp::tcp::TcpTransport::open("localhost");
     REQUIRE_FALSE(transport.has_value());
     REQUIRE(transport.error().code == adbcpp::ErrorCode::InvalidArgument);
+}
+
+TEST_CASE("connection reports a transport error after the link is closed", "[tcp]")
+{
+#if defined(_WIN32)
+    const SocketRuntime runtime;
+#endif
+    const Loopback loopback;
+
+    std::thread server(
+        [&loopback]
+        {
+            const socket_t socket = loopback.accept();
+            serve_device(socket);
+            close_socket(socket);
+        });
+
+    auto transport = adbcpp::tcp::TcpTransport::open(loopback.endpoint());
+    REQUIRE(transport.has_value());
+
+    auto connection = adbcpp::Connection::connect(*transport);
+    REQUIRE(connection.has_value());
+
+    const auto result = adbcpp::run(*connection, "echo hello");
+    REQUIRE(result.has_value());
+
+    connection->close();
+    REQUIRE_FALSE(connection->is_open());
+
+    adbcpp::protocol::Message okay;
+    okay.command = adbcpp::protocol::kOkay;
+    okay.magic = adbcpp::protocol::Message::compute_magic(okay.command);
+    const auto sent = connection->send(okay);
+    REQUIRE_FALSE(sent.has_value());
+    REQUIRE(sent.error().code == adbcpp::ErrorCode::Transport);
+
+    const auto received = connection->receive();
+    REQUIRE_FALSE(received.has_value());
+    REQUIRE(received.error().code == adbcpp::ErrorCode::Transport);
+
+    server.join();
+}
+
+TEST_CASE("connect_with_retry reconnects after a close", "[tcp]")
+{
+#if defined(_WIN32)
+    const SocketRuntime runtime;
+#endif
+    const Loopback loopback;
+
+    // The listener stands in for a device that is reachable again after the link
+    // drops, so it accepts and serves twice.
+    std::thread server(
+        [&loopback]
+        {
+            for (int i = 0; i < 2; ++i)
+            {
+                const socket_t socket = loopback.accept();
+                serve_device(socket);
+                close_socket(socket);
+            }
+        });
+
+    const auto open = [&loopback]
+    {
+        return adbcpp::tcp::TcpTransport::open(loopback.endpoint());
+    };
+
+    std::optional<adbcpp::tcp::TcpTransport> transport;
+    auto connection = adbcpp::connect_with_retry(open, transport);
+    REQUIRE(connection.has_value());
+
+    const auto first = adbcpp::run(*connection, "echo hello");
+    REQUIRE(first.has_value());
+    REQUIRE(first->output == "hello\n");
+
+    // A dropped link is re-established by closing and calling the helper again,
+    // which opens a new transport and repeats the handshake.
+    connection->close();
+    REQUIRE_FALSE(connection->is_open());
+
+    connection = adbcpp::connect_with_retry(open, transport);
+    REQUIRE(connection.has_value());
+
+    const auto second = adbcpp::run(*connection, "echo hello");
+    REQUIRE(second.has_value());
+    REQUIRE(second->output == "hello\n");
+
+    connection->close();
+    server.join();
 }
 
 TEST_CASE("run works over tcp against a fake device", "[tcp]")

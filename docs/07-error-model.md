@@ -96,8 +96,8 @@ afterwards, so a transport is fully configured before it exists. `Connection` an
 constructor to be returned by value; `Stream`'s move constructor marks the moved-from object closed, so
 it does not send a second `CLOSE` when it is destroyed.
 
-`UsbTransport::is_present` returns `Result<bool>` rather than `bool`. It currently returns `false`
-when libusb itself fails to initialize, which is indistinguishable from "no device is attached".
+`UsbTransport::is_present` returns `Result<bool>` rather than `bool`, so a failure to initialize
+libusb is an `Error` rather than a `false` that is indistinguishable from "no device is attached".
 
 ## The device's answer is a result
 
@@ -138,6 +138,8 @@ inside the `Result`:
 | `Transport::close` | → `void` (unchanged; it cannot fail) |
 | `Session::send` | → `Status` |
 | `Session::receive` → `Frame` | → `Result<Frame>` |
+| `Session::close` | → `void` (it cannot fail) |
+| `Connection::close` | → `void` (it cannot fail) |
 | `Stream::write` | → `Status` |
 | `Stream::read` | → `Status` |
 | `Stream::read_all` → `std::vector<std::byte>` | → `Result<std::vector<std::byte>>` |
@@ -189,8 +191,8 @@ The two options have to be set before `FetchContent_MakeAvailable`, for the same
 `tl::expected` **publicly**, because `<tl/expected.hpp>` appears in the public `error.hpp`, and the
 install rules export it so a `find_package` consumer gets it too.
 
-The core target is no longer dependency-free once this lands, so the "Extra dependency" column for
-`adbcpp::adbcpp` in [`05-usage.md`](05-usage.md) gains `tl::expected`, and the claim in
+The core target is no longer dependency-free, so the "Extra dependency" column for
+`adbcpp::adbcpp` in [`05-usage.md`](05-usage.md) lists `tl::expected`, and the claim in
 [`01-objective.md`](01-objective.md) is narrowed to the crypto and USB backends.
 
 ## The state of the conversion
@@ -198,5 +200,5 @@ The core target is no longer dependency-free once this lands, so the "Extra depe
 The conversion is complete. Every layer returns a `Result`, from `Transport` and `Session` up through
 `Stream`, the `sync` and shell services, `app`, `crypto`, and the `usb` and `tcp` transports; the tests and the
 examples are converted with them, and nothing in the library calls `value()` or `error()` without checking first.
-`format-check` is clean, the 89 unit tests pass, and the device test passes against the test device. Slices 6 to 9
+`format-check` is clean, the 92 unit tests pass, and the device test passes against the test device. Slices 6 to 9
 were the first work that was written in the new shape rather than converted to it.
