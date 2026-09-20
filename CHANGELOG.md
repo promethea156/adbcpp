@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-09-21
+
 ### Added
 
 - `Connection::close()` and `Connection::is_open()`, so a caller can close a link
@@ -18,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `connect_with_retry(open, transport, ...)`, which opens a transport and performs
   the handshake with a bounded exponential backoff, and is also how a dropped link
   is reconnected. The examples use it instead of their own retry loop.
+
+### Changed
+
+- **BREAKING**: `Session` is now move-only and records whether it is closed, so a
+  moved-from session does not close the transport its successor uses.
+- The examples use `connect_with_retry` and `connection->close()`.
+- The README states the minimum supported Android (7.0, API 24) and ADB protocol
+  version (`0x01000001`), and the platform support section distinguishes CI
+  coverage from hand verification.
 
 ## [1.0.0] - 2026-09-18
 
@@ -66,4 +77,6 @@ over USB and TCP, with no dependency on the ADB server or the `adb` binary.
 
 - A `push` chunk is written as one message.
 
+[Unreleased]: https://github.com/promethea156/adbcpp/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/promethea156/adbcpp/releases/tag/v2.0.0
 [1.0.0]: https://github.com/promethea156/adbcpp/releases/tag/v1.0.0
