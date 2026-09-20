@@ -169,6 +169,9 @@ public:
     /// A USB device's serial is its `iSerial` descriptor, and a TCP transport's is
     /// its endpoint, both reported by the transport. This falls back to the CNXN
     /// banner's `serialno` field for a device whose transport has none.
+    ///
+    /// The view points into the transport or the parsed banner, so it is valid only
+    /// for as long as this connection.
     std::string_view device_serial() const noexcept
     {
         if (!session_.serial().empty())

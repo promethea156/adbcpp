@@ -88,7 +88,7 @@ TEST_CASE("stream opens with a zero send buffer when delayed ack is off", "[stre
         auto stream = unwrap(adbcpp::Stream::open(connection, service));
         const auto &written = transport.written();
         REQUIRE(written.size() == before + expected.size());
-        REQUIRE(std::equal(written.begin() + static_cast<std::ptrdiff_t>(before), written.end(), expected.begin()));
+        REQUIRE(std::equal(written.data() + before, written.data() + written.size(), expected.data()));
     }
 }
 
@@ -122,7 +122,7 @@ TEST_CASE("stream sends the delayed ack window when negotiated", "[stream]")
         auto stream = unwrap(adbcpp::Stream::open(connection, service));
         const auto &written = transport.written();
         REQUIRE(written.size() == before + expected.size());
-        REQUIRE(std::equal(written.begin() + static_cast<std::ptrdiff_t>(before), written.end(), expected.begin()));
+        REQUIRE(std::equal(written.data() + before, written.data() + written.size(), expected.data()));
     }
 }
 
@@ -168,10 +168,7 @@ TEST_CASE("stream sends OKAY for each WRTE", "[stream]")
     const auto &written = transport.written();
 
     REQUIRE(written.size() >= before + expected.size());
-    REQUIRE(
-        std::equal(written.begin() + static_cast<std::ptrdiff_t>(before),
-                   written.begin() + static_cast<std::ptrdiff_t>(before) + static_cast<std::ptrdiff_t>(expected.size()),
-                   expected.begin()));
+    REQUIRE(std::equal(written.data() + before, written.data() + before + expected.size(), expected.data()));
 }
 
 TEST_CASE("stream rejects a write larger than the negotiated maximum payload", "[stream]")

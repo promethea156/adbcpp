@@ -141,8 +141,7 @@ void feed_dent_v1(adbcpp::testing::MockTransport &transport, std::uint32_t mode,
     write_u32_le(dent.data() + 8, size);
     write_u32_le(dent.data() + 12, mtime);
     write_u32_le(dent.data() + 16, static_cast<std::uint32_t>(name.size()));
-    std::copy_n(reinterpret_cast<const std::byte *>(name.data()), static_cast<std::ptrdiff_t>(name.size()),
-                dent.begin() + static_cast<std::ptrdiff_t>(20));
+    std::copy_n(reinterpret_cast<const std::byte *>(name.data()), name.size(), dent.data() + 20);
     feed_sync(transport, dent);
 }
 
@@ -165,8 +164,7 @@ void feed_dent_v2(adbcpp::testing::MockTransport &transport, std::uint32_t error
     write_u64_le(dent.data() + 56, static_cast<std::uint64_t>(mtime));
     write_u64_le(dent.data() + 64, 0); // ctime
     write_u32_le(dent.data() + 72, static_cast<std::uint32_t>(name.size()));
-    std::copy_n(reinterpret_cast<const std::byte *>(name.data()), static_cast<std::ptrdiff_t>(name.size()),
-                dent.begin() + static_cast<std::ptrdiff_t>(76));
+    std::copy_n(reinterpret_cast<const std::byte *>(name.data()), name.size(), dent.data() + 76);
     feed_sync(transport, dent);
 }
 
@@ -185,7 +183,7 @@ void feed_data(adbcpp::testing::MockTransport &transport, std::span<const std::b
     std::vector<std::byte> chunk(8 + data.size());
     write_u32_le(chunk.data(), adbcpp::protocol::make_command('D', 'A', 'T', 'A'));
     write_u32_le(chunk.data() + 4, static_cast<std::uint32_t>(data.size()));
-    std::copy_n(data.begin(), static_cast<std::ptrdiff_t>(data.size()), chunk.begin() + static_cast<std::ptrdiff_t>(8));
+    std::copy_n(data.data(), data.size(), chunk.data() + 8);
     feed_sync(transport, chunk);
 }
 
@@ -283,8 +281,7 @@ void feed_fail_on(adbcpp::testing::MockTransport &transport, std::uint32_t arg0,
     std::vector<std::byte> fail(8 + reason.size());
     write_u32_le(fail.data(), adbcpp::protocol::make_command('F', 'A', 'I', 'L'));
     write_u32_le(fail.data() + 4, static_cast<std::uint32_t>(reason.size()));
-    std::copy_n(reinterpret_cast<const std::byte *>(reason.data()), static_cast<std::ptrdiff_t>(reason.size()),
-                fail.begin() + static_cast<std::ptrdiff_t>(8));
+    std::copy_n(reinterpret_cast<const std::byte *>(reason.data()), reason.size(), fail.data() + 8);
     feed_sync_on(transport, arg0, arg1, fail);
 }
 
@@ -345,7 +342,7 @@ TEST_CASE("list sends the LIST request with the v2 id when ls_v2 is advertised",
     std::vector<std::byte> request(8 + 7);
     write_u32_le(request.data(), adbcpp::protocol::make_command('L', 'I', 'S', '2'));
     write_u32_le(request.data() + 4, 7u);
-    std::copy_n(reinterpret_cast<const std::byte *>("/sdcard"), 7, request.begin() + static_cast<std::ptrdiff_t>(8));
+    std::copy_n(reinterpret_cast<const std::byte *>("/sdcard"), 7, request.data() + 8);
 
     const auto &written = transport.written();
     REQUIRE(std::search(written.begin(), written.end(), request.begin(), request.end()) != written.end());
@@ -442,8 +439,7 @@ TEST_CASE("pull sends the RECV request with the path", "[sync]")
     std::vector<std::byte> request(8 + path.size());
     write_u32_le(request.data(), adbcpp::protocol::make_command('R', 'E', 'C', 'V'));
     write_u32_le(request.data() + 4, static_cast<std::uint32_t>(path.size()));
-    std::copy_n(reinterpret_cast<const std::byte *>(path.data()), static_cast<std::ptrdiff_t>(path.size()),
-                request.begin() + static_cast<std::ptrdiff_t>(8));
+    std::copy_n(reinterpret_cast<const std::byte *>(path.data()), path.size(), request.data() + 8);
 
     const auto &written = transport.written();
     REQUIRE(std::search(written.begin(), written.end(), request.begin(), request.end()) != written.end());
