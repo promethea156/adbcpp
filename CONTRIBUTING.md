@@ -44,7 +44,6 @@ need little context; those labelled
 Reasonable starting points today:
 
 - **Optional logging** ([#3](https://github.com/promethea156/adbcpp/issues/3)) — must never log keys or payloads.
-- **State the minimum supported Android version** ([#4](https://github.com/promethea156/adbcpp/issues/4)).
 - **`sendrecv_v2` for `pull`/`push`** ([#1](https://github.com/promethea156/adbcpp/issues/1)) — would let a transfer be compressed.
 
 If an issue looks stale or already done, say so in it rather than guessing.
