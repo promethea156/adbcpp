@@ -48,7 +48,7 @@ Every slice so far hid at least one non-obvious problem. The record of each — 
 - `close` runs `am force-stop <package>`, and `is_running` runs `pidof <package>`, whose exit code answers both cases: zero with the pids when the process runs, nonzero with no output when it does not.
 - Public API: `launch(connection, package)` returning a `Result<CommandResult>`, `close(connection, package)` returning a `Status`, and `is_running(connection, package)` returning a `Result<bool>`.
 
-Nothing was needed at the protocol layer: the slice is composition again, as the roadmap predicted. `am start`, `am force-stop`, and `pidof` are shell commands, so both already existed.
+Nothing was needed at the protocol layer: the slice is composition again, as the roadmap predicted. `am start`, `am force-stop`, and `pidof` are shell commands, so all three already existed.
 
 **Slice 7 — complete.** A device is reached over TCP, so an emulator's ADB listener is expected to work:
 
@@ -192,8 +192,8 @@ The `serialno` field of the system identity string, `<systemtype>::<serialno>::<
 
 The initial scope is complete, so this slice is not new capability: it closes the API and compatibility gaps that would be expensive or misleading to change once the version is fixed at 1.0, and then performs the release itself.
 
-- **The `adb devices` serial on the transport.** `Connection::device_serial` currently returns the banner `serialno`, which is empty on current devices, so a caller reading it gets nothing. Add `Transport::serial()`, returning the transport's identity (the USB `iSerial` descriptor, or the TCP endpoint), and have `device_serial` prefer it and fall back to the banner field. This is the one change here that alters a public type's layout, so it belongs before 1.0.
-- **Fall back to `shell:` when `shell_v2` is absent.** `run` opens `shell,v2,raw:` and requires the feature, while `list` and `stat` already fall back to their v1 forms. Open `shell:<command>` when the device did not advertise `shell_v2`, take the combined output as the raw bytes, and read the exit code from the `CLSE` message's `arg1` where the device provides it (the v1 shell has no exit packet; AOSP's own v1 path reports 0). The v1 path can be exercised on a current device by forcing the service string, so it needs no old device to test.
+- **The `adb devices` serial on the transport.** `Connection::device_serial` returns the banner `serialno`, which is empty on current devices, so a caller reading it gets nothing. Add `Transport::serial()`, returning the transport's identity (the USB `iSerial` descriptor, or the TCP endpoint), and have `device_serial` prefer it and fall back to the banner field. This is the one change here that alters a public type's layout, so it belongs before 1.0.
+- **Fall back to `shell:` when `shell_v2` is absent.** `run` opens `shell,v2,raw:` and requires the feature, while `list` and `stat` already fall back to their v1 forms. Open `shell:<command>` when the device did not advertise `shell_v2`, take the combined output as the raw bytes, and report exit code 0, matching adb (the v1 shell has no exit packet; AOSP's own v1 path reports 0). The v1 path can be exercised on a current device by forcing the service string, so it needs no old device to test.
 - **Advertise only what is implemented.** The host banner claims `sendrecv_v2` with brotli, lz4, and zstd, and services that are never opened (`abb`, `apex`, `remount_shell`, `track_app`, `devraw`, `server_status`, ...). Either implement `sendrecv_v2` for `pull`/`push` or trim the list to the features the library acts on, so a peer cannot rely on a claim that is not honored.
 - **Release chores.** Bump `project(VERSION)` to `1.0.0` (`SOVERSION` follows to 1), add a `CHANGELOG.md` generated from the Conventional Commits history, and tag `v1.0.0`. ([issue #7](https://github.com/promethea156/adbcpp/issues/7))
 
