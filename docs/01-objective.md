@@ -25,6 +25,10 @@ The first iteration targets a minimal but practical feature set:
 - Support for every Android version or device vendor.
 - Serving as a drop-in replacement for the official ADB tooling.
 
+## Compatibility
+
+The minimum supported Android version is **7.0 (API 24)**, and the minimum ADB protocol version is `0x01000001`. The v2 `shell`, `LIST`, and `STAT` forms are used when the device advertises them, with their v1 forms as the fallback. The floor is stated but not yet verified on a device without `shell_v2`; see [issue #4](https://github.com/promethea156/adbcpp/issues/4).
+
 ## Technical Requirements
 
 - **Cross-platform**: Linux, Windows, and macOS.

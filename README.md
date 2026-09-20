@@ -185,6 +185,7 @@ cmake/                  CMake package configuration
 
 ## Where to go next
 
+- [`docs/00-start-here.md`](docs/00-start-here.md) — a plain-language tour, if ADB is new to you.
 - [`examples/demo/main.cpp`](examples/demo/main.cpp) — the guided tour, step by step in its comments.
 - [`examples/demo_multi/main.cpp`](examples/demo_multi/main.cpp) — the same tour on every attached device at once.
 - [`LEARNING.md`](LEARNING.md) — the theory: a guided curriculum, module by module.
@@ -194,6 +195,7 @@ cmake/                  CMake package configuration
 
 ## Design documents
 
+- [`docs/00-start-here.md`](docs/00-start-here.md) — a plain-language tour for a first-time reader
 - [`docs/01-objective.md`](docs/01-objective.md) — objective, technical requirements, versioning, and commit conventions
 - [`docs/02-references.md`](docs/02-references.md) — reference material on the ADB protocol
 - [`docs/03-roadmap.md`](docs/03-roadmap.md) — vertical-slice implementation roadmap
