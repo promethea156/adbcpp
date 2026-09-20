@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `Connection::close()` and `Connection::is_open()`, so a caller can close a link
+  and know it; a later `send`/`receive` reports a `Transport` error instead of
+  touching the closed transport.
+- `adbcpp_demo_multi_example`, which runs the guided tour on every attached
+  device at once, one thread per device, so the install, launch, and uninstall steps
+  overlap. It uninstalls the package on each device first and again at the end.
+- `connect_with_retry(open, transport, ...)`, which opens a transport and performs
+  the handshake with a bounded exponential backoff, and is also how a dropped link
+  is reconnected. The examples use it instead of their own retry loop.
+
 ## [1.0.0] - 2026-09-18
 
 The initial release: the whole [initial scope](docs/01-objective.md#initial-scope)

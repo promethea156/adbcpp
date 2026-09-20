@@ -18,6 +18,7 @@
 
 #include "adbcpp/protocol/commands.hpp"
 #include "adbcpp/stream.hpp"
+#include "protocol/byte_order.hpp"
 
 namespace adbcpp
 {
@@ -68,6 +69,17 @@ constexpr std::size_t kMaxNameLength = 255;
 constexpr std::size_t kStatV1BodySize = 12;
 constexpr std::size_t kStatV2BodySize = 68;
 
+// Field offsets within a DENT or STAT body, named after the layouts above so the
+// parsing reads as fields rather than numbers. The v2 offsets are shared by the v2
+// DENT and STAT forms, which differ only in the trailing name.
+constexpr std::size_t kErrorOffset = 0;
+constexpr std::size_t kDentV1ModeOffset = 0;
+constexpr std::size_t kDentV1SizeOffset = 4;
+constexpr std::size_t kDentV1MtimeOffset = 8;
+constexpr std::size_t kDentV2ModeOffset = 20;
+constexpr std::size_t kDentV2SizeOffset = 36;
+constexpr std::size_t kDentV2MtimeOffset = 52;
+
 // The `ls_v2` feature selects the v2 DENT form and `stat_v2` the v2 STAT form,
 // exactly like adb.
 constexpr std::string_view kLsV2Feature = "ls_v2";
@@ -78,22 +90,9 @@ constexpr std::string_view kStatV2Feature = "stat_v2";
 // larger size means the stream is not what it claims to be.
 constexpr std::uint32_t kMaxChunkSize = 64 * 1024;
 
-// Every binary integer in sync mode is little-endian, like the ADB header.
-void write_u32_le(std::byte *out, std::uint32_t value) noexcept
-{
-    out[0] = static_cast<std::byte>(value & 0xFFu);
-    out[1] = static_cast<std::byte>((value >> 8) & 0xFFu);
-    out[2] = static_cast<std::byte>((value >> 16) & 0xFFu);
-    out[3] = static_cast<std::byte>((value >> 24) & 0xFFu);
-}
-
-std::uint32_t read_u32_le(const std::byte *in) noexcept
-{
-    return static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(in[0])) |
-           (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(in[1])) << 8) |
-           (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(in[2])) << 16) |
-           (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(in[3])) << 24);
-}
+// The 32-bit little-endian helpers are shared with the ADB header and shell_v2.
+using protocol::read_u32_le;
+using protocol::write_u32_le;
 
 std::uint64_t read_u64_le(const std::byte *in) noexcept
 {
@@ -108,8 +107,7 @@ Status write_path_request(Stream &stream, std::uint32_t id, std::string_view pat
     std::vector<std::byte> request(kRequestSize + path.size());
     write_u32_le(request.data(), id);
     write_u32_le(request.data() + 4, static_cast<std::uint32_t>(path.size()));
-    std::copy_n(reinterpret_cast<const std::byte *>(path.data()), static_cast<std::ptrdiff_t>(path.size()),
-                request.begin() + static_cast<std::ptrdiff_t>(kRequestSize));
+    std::copy_n(reinterpret_cast<const std::byte *>(path.data()), path.size(), request.data() + kRequestSize);
     return stream.write(request);
 }
 
@@ -300,7 +298,7 @@ Result<std::vector<DirEntry>> list(Connection &connection, std::string_view path
 
         // v2 reports a failed `lstat` per entry instead of dropping it. The
         // error is the first field of the body.
-        if (v2 && read_u32_le(body.data()) != 0)
+        if (v2 && read_u32_le(body.data() + kErrorOffset) != 0)
         {
             continue;
         }
@@ -309,15 +307,15 @@ Result<std::vector<DirEntry>> list(Connection &connection, std::string_view path
         entry.name.assign(reinterpret_cast<const char *>(name.data()), name.size());
         if (v2)
         {
-            entry.mode = read_u32_le(body.data() + 20);
-            entry.size = read_u64_le(body.data() + 36);
-            entry.mtime = static_cast<std::int64_t>(read_u64_le(body.data() + 52));
+            entry.mode = read_u32_le(body.data() + kDentV2ModeOffset);
+            entry.size = read_u64_le(body.data() + kDentV2SizeOffset);
+            entry.mtime = static_cast<std::int64_t>(read_u64_le(body.data() + kDentV2MtimeOffset));
         }
         else
         {
-            entry.mode = read_u32_le(body.data() + 0);
-            entry.size = read_u32_le(body.data() + 4);
-            entry.mtime = read_u32_le(body.data() + 8);
+            entry.mode = read_u32_le(body.data() + kDentV1ModeOffset);
+            entry.size = read_u32_le(body.data() + kDentV1SizeOffset);
+            entry.mtime = read_u32_le(body.data() + kDentV1MtimeOffset);
         }
         entries.push_back(std::move(entry));
     }
@@ -460,7 +458,7 @@ Result<std::optional<FileStat>> stat(Connection &connection, std::string_view pa
         }
 
         // The device reports a missing path here rather than failing the request.
-        if (read_u32_le(body.data()) != 0)
+        if (read_u32_le(body.data() + kErrorOffset) != 0)
         {
             if (const auto quit = write_quit(*stream); !quit)
             {
@@ -468,9 +466,9 @@ Result<std::optional<FileStat>> stat(Connection &connection, std::string_view pa
             }
             return std::optional<FileStat>{};
         }
-        result.mode = read_u32_le(body.data() + 20);
-        result.size = read_u64_le(body.data() + 36);
-        result.mtime = static_cast<std::int64_t>(read_u64_le(body.data() + 52));
+        result.mode = read_u32_le(body.data() + kDentV2ModeOffset);
+        result.size = read_u64_le(body.data() + kDentV2SizeOffset);
+        result.mtime = static_cast<std::int64_t>(read_u64_le(body.data() + kDentV2MtimeOffset));
     }
     else
     {
@@ -481,7 +479,8 @@ Result<std::optional<FileStat>> stat(Connection &connection, std::string_view pa
         {
             return tl::unexpected(read.error());
         }
-        if (read_u32_le(body.data()) == 0 && read_u32_le(body.data() + 4) == 0 && read_u32_le(body.data() + 8) == 0)
+        if (read_u32_le(body.data() + kDentV1ModeOffset) == 0 && read_u32_le(body.data() + kDentV1SizeOffset) == 0 &&
+            read_u32_le(body.data() + kDentV1MtimeOffset) == 0)
         {
             if (const auto quit = write_quit(*stream); !quit)
             {
@@ -489,9 +488,9 @@ Result<std::optional<FileStat>> stat(Connection &connection, std::string_view pa
             }
             return std::optional<FileStat>{};
         }
-        result.mode = read_u32_le(body.data());
-        result.size = read_u32_le(body.data() + 4);
-        result.mtime = read_u32_le(body.data() + 8);
+        result.mode = read_u32_le(body.data() + kDentV1ModeOffset);
+        result.size = read_u32_le(body.data() + kDentV1SizeOffset);
+        result.mtime = read_u32_le(body.data() + kDentV1MtimeOffset);
     }
 
     if (const auto quit = write_quit(*stream); !quit)
@@ -562,8 +561,8 @@ Status push(Connection &connection, const std::filesystem::path &local_path, std
         std::vector<std::byte> block(8 + static_cast<std::size_t>(count));
         write_u32_le(block.data(), kData);
         write_u32_le(block.data() + 4, static_cast<std::uint32_t>(count));
-        std::copy_n(reinterpret_cast<const std::byte *>(buffer.data()), static_cast<std::ptrdiff_t>(count),
-                    block.begin() + 8);
+        std::copy_n(reinterpret_cast<const std::byte *>(buffer.data()), static_cast<std::size_t>(count),
+                    block.data() + 8);
         if (const auto written = stream->write(block); !written)
         {
             return tl::unexpected(written.error());

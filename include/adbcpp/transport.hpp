@@ -20,6 +20,11 @@ namespace adbcpp
  * Implementations are not required to be thread-safe: concurrent use of one
  * transport must be serialized. Different transports are independent, so one
  * transport per thread is how several devices are driven at once.
+ *
+ * A transport is opened by a concrete factory (for example `UsbTransport::open` or
+ * `TcpTransport::open`). The open and the CNXN handshake are retried together by
+ * `adbcpp::connect_with_retry` in `connection.hpp`, which is also how a dropped
+ * link is reconnected.
  */
 class ADBCPP_API Transport
 {

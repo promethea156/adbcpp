@@ -133,41 +133,20 @@ int main(int argc, char **argv)
                      "if it appears\n";
 
         // A device can reset its USB 3 link right after the open and stall the
-        // first write. Re-opening and re-handshaking recovers, so a run does not
-        // need a manual retry (blocker 29).
+        // first write. `connect_with_retry` re-opens and re-handshakes, so a run
+        // does not need a manual retry (blocker 29).
         std::optional<adbcpp::usb::UsbTransport> transport;
-        adbcpp::Result<adbcpp::Connection> connection =
-            tl::unexpected(adbcpp::Error{adbcpp::ErrorCode::Transport, "the device was not opened"});
-        for (int attempt = 0; attempt < 5; ++attempt)
-        {
-            if (attempt > 0)
+        auto connection = adbcpp::connect_with_retry(
+            [&id, transfer_timeout_ms, transfer_budget_ms]
             {
-                std::this_thread::sleep_for(std::chrono::milliseconds(250));
-            }
-            auto opened = adbcpp::usb::UsbTransport::open(id, transfer_timeout_ms, transfer_budget_ms);
-            if (!opened)
+                return adbcpp::usb::UsbTransport::open(id, transfer_timeout_ms, transfer_budget_ms);
+            },
+            transport, public_key,
+            [&key](std::span<const std::byte> token)
             {
-                connection = tl::unexpected(opened.error());
-                continue;
-            }
-            // The connection keeps a pointer to the transport, so the transport is
-            // emplaced into the optional before `connect` and never moved again.
-            transport.emplace(std::move(*opened));
-            auto connected = adbcpp::Connection::connect(*transport, public_key,
-                                                         [&key](std::span<const std::byte> token)
-                                                         {
-                                                             return key->sign(token);
-                                                         });
-            if (!connected)
-            {
-                connection = tl::unexpected(connected.error());
-                transport.reset();
-                continue;
-            }
-            connection = std::move(*connected);
-            break;
-        }
-        if (!transport)
+                return key->sign(token);
+            });
+        if (!connection)
         {
             fail(connection.error());
         }
@@ -197,7 +176,7 @@ int main(int argc, char **argv)
             {
                 std::cout << (entry.is_directory() ? 'd' : '-') << ' ' << entry.size << ' ' << entry.name << '\n';
             }
-            transport->close();
+            connection->close();
             return 0;
         }
 
@@ -208,7 +187,7 @@ int main(int argc, char **argv)
                 fail(status.error());
             }
             std::cout << "pulled " << args[1] << " to " << args[2] << '\n';
-            transport->close();
+            connection->close();
             return 0;
         }
 
@@ -219,7 +198,7 @@ int main(int argc, char **argv)
                 fail(status.error());
             }
             std::cout << "pushed " << args[1] << " to " << args[2] << '\n';
-            transport->close();
+            connection->close();
             return 0;
         }
 
@@ -234,7 +213,7 @@ int main(int argc, char **argv)
                 fail(result.error());
             }
             std::cout << result->output;
-            transport->close();
+            connection->close();
             return result->success ? 0 : 1;
         }
 
@@ -246,7 +225,7 @@ int main(int argc, char **argv)
                 fail(result.error());
             }
             std::cout << result->output;
-            transport->close();
+            connection->close();
             return result->success ? 0 : 1;
         }
 
@@ -258,7 +237,7 @@ int main(int argc, char **argv)
                 fail(result.error());
             }
             std::cout << result->output;
-            transport->close();
+            connection->close();
             return result->success ? 0 : 1;
         }
 
@@ -269,7 +248,7 @@ int main(int argc, char **argv)
                 fail(status.error());
             }
             std::cout << "stopped " << args[1] << '\n';
-            transport->close();
+            connection->close();
             return 0;
         }
 
@@ -281,7 +260,7 @@ int main(int argc, char **argv)
                 fail(running.error());
             }
             std::cout << args[1] << (*running ? " is running" : " is not running") << '\n';
-            transport->close();
+            connection->close();
             return 0;
         }
 
@@ -307,7 +286,7 @@ int main(int argc, char **argv)
         }
         std::cout << result->output;
 
-        transport->close();
+        connection->close();
         return result->exit_code;
     }
     catch (const std::exception &error)

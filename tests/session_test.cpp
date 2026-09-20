@@ -225,3 +225,68 @@ TEST_CASE("session rejects a payload whose CRC does not match", "[session]")
     REQUIRE(frame.error().code == adbcpp::ErrorCode::Protocol);
     REQUIRE(transport.closed());
 }
+
+TEST_CASE("session close closes the transport and marks the session closed", "[session]")
+{
+    adbcpp::testing::MockTransport transport;
+    adbcpp::Session session(transport);
+    REQUIRE(session.is_open());
+
+    session.close();
+    REQUIRE_FALSE(session.is_open());
+    REQUIRE(transport.closed());
+
+    // Closing twice is harmless.
+    session.close();
+
+    Message outbound;
+    outbound.command = adbcpp::protocol::kOkay;
+    outbound.magic = Message::compute_magic(outbound.command);
+    const auto sent = session.send(outbound);
+    REQUIRE_FALSE(sent.has_value());
+    REQUIRE(sent.error().code == adbcpp::ErrorCode::Transport);
+
+    const auto frame = session.receive();
+    REQUIRE_FALSE(frame.has_value());
+    REQUIRE(frame.error().code == adbcpp::ErrorCode::Transport);
+}
+
+TEST_CASE("session reports a closed session after a framing error", "[session]")
+{
+    adbcpp::testing::MockTransport transport;
+
+    Message inbound;
+    inbound.command = adbcpp::protocol::kCnxn;
+    inbound.magic = Message::compute_magic(adbcpp::protocol::kOkay);
+    transport.feed(inbound.encode());
+
+    adbcpp::Session session(transport);
+    REQUIRE_FALSE(session.receive().has_value());
+    REQUIRE_FALSE(session.is_open());
+
+    Message outbound;
+    outbound.command = adbcpp::protocol::kOkay;
+    outbound.magic = Message::compute_magic(outbound.command);
+    const auto sent = session.send(outbound);
+    REQUIRE_FALSE(sent.has_value());
+    REQUIRE(sent.error().code == adbcpp::ErrorCode::Transport);
+}
+
+TEST_CASE("moving a session leaves the moved-from one not owning the transport", "[session]")
+{
+    adbcpp::testing::MockTransport transport;
+    adbcpp::Session session(transport);
+
+    adbcpp::Session moved(std::move(session));
+    REQUIRE_FALSE(session.is_open());
+    REQUIRE(moved.is_open());
+
+    // The moved-from session is closed, so closing it must not close the
+    // transport the moved-to session still uses.
+    session.close();
+    REQUIRE_FALSE(transport.closed());
+    REQUIRE(moved.is_open());
+
+    moved.close();
+    REQUIRE(transport.closed());
+}
