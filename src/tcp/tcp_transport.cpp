@@ -137,7 +137,8 @@ bool connect_with_timeout(socket_t socket, const sockaddr *address, int address_
         fd_set writable;
         FD_ZERO(&writable);
         FD_SET(socket, &writable);
-        const timeval timeout = make_timeval(timeout_ms);
+        // `select` takes a non-const `timeval*` on POSIX, so this one is mutable.
+        timeval timeout = make_timeval(timeout_ms);
         if (::select(static_cast<int>(socket) + 1, nullptr, &writable, nullptr, &timeout) <= 0)
         {
             return false;
