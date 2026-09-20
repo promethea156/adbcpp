@@ -111,8 +111,9 @@ and around the empty `TARGET_RUNTIME_DLLS` on a non-DLL platform
 
 ## Prepare a device
 
-A device is only needed for `adbcpp_device_tests`, `adbcpp_demo_example`, `adbcpp_usb_example`,
-and `adbcpp_multi_example`; everything else runs against the mock or a TCP loopback.
+A device is only needed for `adbcpp_device_tests`, `adbcpp_demo_example`,
+`adbcpp_demo_multi_example`, `adbcpp_usb_example`, and `adbcpp_multi_example`;
+everything else runs against the mock or a TCP loopback.
 
 1. Enable **USB debugging** in Developer Options and connect the device by USB.
 2. Approve the on-device **RSA fingerprint prompt** the first time. The key is
