@@ -4,6 +4,10 @@ A small, self-contained **ADB (Android Debug Bridge) client, as a C++20 library*
 
 `adbcpp` talks to an Android device directly, over USB or TCP, with **no `adb.exe`, no server on port 5037, and no external binary**. Embed it in a C++ program and it runs shell commands, lists and transfers files, installs apps, and starts and stops them.
 
+**Minimum supported Android: 7.0 (API 24).** The device side uses the `shell_v2` service and the v2 `LIST`/`STAT` forms when it advertises them, and the library falls back to their v1 forms otherwise.
+
+**Minimum ADB protocol version: `0x01000001`.** The library advertises this version in its CNXN message (`kVersion` in `include/adbcpp/protocol/commands.hpp`), which matches AOSP's `A_VERSION`.
+
 > **Status: 1.0.0.** The [initial scope](docs/01-objective.md#initial-scope) is complete, and every fallible operation returns a `Result<T>` instead of throwing. See [`CHANGELOG.md`](CHANGELOG.md) and [`docs/03-roadmap.md`](docs/03-roadmap.md).
 
 ## How this was built
@@ -31,14 +35,16 @@ responsible for what ships.
 
 | Platform | Status | Notes |
 |----------|--------|-------|
-| Windows  | ![Windows: tested](https://img.shields.io/badge/Windows-tested-brightgreen) | Developed and exercised here. |
-| Linux    | ![Linux: untested](https://img.shields.io/badge/Linux-untested-yellow) | Expected to work; not yet verified. |
-| macOS    | ![macOS: untested](https://img.shields.io/badge/macOS-untested-yellow) | Expected to work; not yet verified. |
+| Windows  | ![Windows: tested](https://img.shields.io/badge/Windows-tested-brightgreen) | Built, tested, and exercised against real devices, including USB. |
+| Linux    | ![Linux: CI tested](https://img.shields.io/badge/Linux-CI%20tested-yellow) | CI builds it and runs the device-free suite; the USB path is unverified. |
+| macOS    | ![macOS: CI tested](https://img.shields.io/badge/macOS-CI%20tested-yellow) | CI builds it and runs the device-free suite; the USB path is unverified. |
 
-**`Windows` is the only platform this project has been built and run on so far.** The
-Linux and macOS instructions below are written from the toolchain and standard-library
-APIs the code targets, but no one has confirmed them on a real machine yet — expect
-rough edges. If you have either, please build it and
+CI builds and runs the device-free test suite on **all three** platforms, so Linux
+and macOS are known to compile and pass it. **Windows is the only platform exercised by
+hand against real devices**, including the USB transport, so the Linux and macOS USB path
+is unverified and may have rough edges. The platform steps below are written from the
+toolchain and standard-library APIs the code targets. If you have a device on either, please
+build it and
 [report the result](https://github.com/promethea156/adbcpp/issues/new?template=platform_verification.yml);
 a green run is just as useful as a red one, and see [Contributing](#contributing).
 
@@ -48,10 +54,11 @@ a green run is just as useful as a red one, and see [Contributing](#contributing
 - **Files**: list a directory, `stat` a path, and pull or push a file.
 - **Apps**: install and uninstall a package, launch it, check whether it is running, and close it.
 - **Connect**: reach a device over USB, or over TCP to a `tcpip` device or an emulator, and pick one by its USB serial. The TCP path is verified against a `tcpip` device; an emulator's listener speaks the same plaintext protocol and is expected to work.
+- **Several devices**: drive every attached device at once, one thread per device, because the objects share no state.
 
 ## Build it
 
-You need a **C++20 compiler**, **CMake 3.24 or newer**, and **Git** (the test framework is fetched automatically at configure time). The build is the same everywhere; only the toolchain setup differs. Only **Windows** is known to work so far — see [Platform support](#platform-support).
+You need a **C++20 compiler**, **CMake 3.24 or newer**, and **Git** (the test framework is fetched automatically at configure time). The build is the same everywhere; only the toolchain setup differs. CI builds and tests all three platforms; only **Windows** has been exercised against real hardware — see [Platform support](#platform-support).
 
 Every dependency is fetched by CMake, so there is nothing else to install. The compiler, USB driver, and device steps for each platform are in [`docs/08-platform-setup.md`](docs/08-platform-setup.md).
 
@@ -124,7 +131,7 @@ protocol it speaks, so the source is the walkthrough. It:
 
 To run it, you need a device with **USB debugging enabled**, and an APK to install
 (the package and its split APKs, base first). It uninstalls the package first, so it
-loses that package's data.
+loses that package's data, and leaves it installed at the end.
 
 ```
 # adb holds the device's USB interface, so stop its server first
@@ -147,11 +154,12 @@ thread per device, and overlaps the install, launch, and uninstall steps. It uni
 package on each device first (losing its data) and again at the end, so it does not leave the
 app installed; each device's output is buffered and printed together at the end.
 
-**No APK handy?** Pull one off the device first:
+**No APK handy?** Pull one off the device first. A split app prints several paths,
+and all of them are needed, base first:
 
 ```
-adb shell pm path <package>     # prints the APK path(s)
-adb pull <path> app.apk
+adb shell pm path <package>     # prints the APK path(s), base first
+adb pull <path> app.apk         # repeat for each path
 ```
 
 When you are ready for the theory behind what the tour did, [`LEARNING.md`](LEARNING.md) is
@@ -161,15 +169,15 @@ channels to a full shell session. The tour is its hands-on counterpart.
 ## Project Layout
 
 ```
-include/adbcpp/         Public headers (transport, protocol, session, stream,
-                        shell, sync, app)
+include/adbcpp/         Public headers (connection, transport, protocol,
+                        session, stream, shell, sync, app)
 include/adbcpp/crypto/  The ADB key pair, backed by mbedTLS
 include/adbcpp/tcp/      The TCP transport, over the platform's sockets
 include/adbcpp/usb/      The USB transport, backed by libusb
-include/adbcpp/testing/  The in-memory transport used by the tests
+include/adbcpp/testing/  The in-memory transport used by the tests and examples
 src/                    Library sources, mirroring the public headers
 tests/                  Catch2 unit tests and the device integration test
-examples/               Runnable examples, including the guided tour in demo/
+examples/               Runnable examples, including the guided tours in demo/ and demo_multi/
 tools/                  Developer scripts (adb wrapper, transfer benchmark)
 docs/                   Design documents and Doxygen configuration
 cmake/                  CMake package configuration
@@ -178,6 +186,7 @@ cmake/                  CMake package configuration
 ## Where to go next
 
 - [`examples/demo/main.cpp`](examples/demo/main.cpp) — the guided tour, step by step in its comments.
+- [`examples/demo_multi/main.cpp`](examples/demo_multi/main.cpp) — the same tour on every attached device at once.
 - [`LEARNING.md`](LEARNING.md) — the theory: a guided curriculum, module by module.
 - [`docs/05-usage.md`](docs/05-usage.md) — copy-pasteable snippets for one feature at a time.
 - [`docs/06-sync-protocol.md`](docs/06-sync-protocol.md) — how the `sync` service and file transfer work, byte by byte.

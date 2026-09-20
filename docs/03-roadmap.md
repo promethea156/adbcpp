@@ -208,11 +208,11 @@ Obligations that run through every slice, with the current state of each.
 - **Logging**: not implemented. When it is, it must be optional, configurable, and must never log keys or payloads. ([issue #3](https://github.com/promethea156/adbcpp/issues/3))
 - **Thread safety**: `Transport`, `Connection`, `Stream`, and `Key` each state that they are not thread-safe, and that a caller must serialize concurrent use. Independent objects share no state, so the model for several devices is one thread per device (see [Working with Several Devices in Parallel](#working-with-several-devices-in-parallel)).
 - **Documentation**: Doxygen comments on every public declaration, and the reasoning behind each protocol decision written down in [`04-blockers.md`](04-blockers.md).
+- **Compatibility**: the minimum supported Android is **7.0 (API 24)** and the minimum ADB protocol version is `0x01000001`. The v2 `shell`, `LIST`, and `STAT` forms are used when the device advertises them, with their v1 forms as the fallback. ([issue #4](https://github.com/promethea156/adbcpp/issues/4))
 
 ## Open Questions
 
 - **Does a target need ADB's TLS handshake?** Modern ADB encrypts the host-to-server link on port 5037; over USB the direct protocol has none, and an emulator's ADB listener and a `tcpip` device both accept plaintext. So this only matters for a target that demands the handshake, which is a [future improvement](#other-improvements). mbedTLS can provide it if so. ([issue #5](https://github.com/promethea156/adbcpp/issues/5))
-- **What is the minimum supported Android version?** `run` now falls back to `shell:` when the device did not advertise `shell_v2` (blocker 31), so it runs, but it reports exit code 0 as adb does. The floor is otherwise set by the v1 `LIST`/`STAT` forms, which are used when the device does not advertise `ls_v2`/`stat_v2`. The floor should be stated once a device without `shell_v2` has been tried. ([issue #4](https://github.com/promethea156/adbcpp/issues/4))
 
 ## Future Improvements
 
