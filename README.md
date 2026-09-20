@@ -140,6 +140,13 @@ With no `--serial`, it prints the attached devices and uses the first. When it f
 open the source and read it next to the output: each `step(...)` in the source is one of
 the ten steps above.
 
+For the same tour on **every attached device at once**, run
+[`examples/demo_multi/main.cpp`](examples/demo_multi/main.cpp)
+(`adbcpp_demo_multi_example`). It takes the same arguments without `--serial`, drives one
+thread per device, and overlaps the install, launch, and uninstall steps. It uninstalls the
+package on each device first (losing its data) and again at the end, so it does not leave the
+app installed; each device's output is buffered and printed together at the end.
+
 **No APK handy?** Pull one off the device first:
 
 ```

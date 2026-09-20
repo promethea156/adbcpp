@@ -36,6 +36,13 @@ if(ADBCPP_BUILD_USB)
     PRIVATE adbcpp::usb adbcpp::crypto
   )
 
+  # Walks every feature once on every attached device, one thread each, so the
+  # install, launch, and uninstall steps run concurrently. It needs a device.
+  add_executable(adbcpp_demo_multi_example demo_multi/main.cpp)
+  target_link_libraries(adbcpp_demo_multi_example
+    PRIVATE adbcpp::usb adbcpp::crypto
+  )
+
   # `$<TARGET_RUNTIME_DLLS:...>` is always empty on non-DLL platforms, and
   # `cmake -E copy_if_different` then fails because it is left with a single
   # argument, so the copy is Windows-only (blocker 21).
@@ -56,6 +63,12 @@ if(ADBCPP_BUILD_USB)
       COMMAND ${CMAKE_COMMAND} -E copy_if_different
               $<TARGET_RUNTIME_DLLS:adbcpp_demo_example>
               $<TARGET_FILE_DIR:adbcpp_demo_example>
+      COMMAND_EXPAND_LISTS
+    )
+    add_custom_command(TARGET adbcpp_demo_multi_example POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              $<TARGET_RUNTIME_DLLS:adbcpp_demo_multi_example>
+              $<TARGET_FILE_DIR:adbcpp_demo_multi_example>
       COMMAND_EXPAND_LISTS
     )
   endif()
