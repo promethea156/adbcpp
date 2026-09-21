@@ -61,12 +61,13 @@ inline constexpr std::string_view kSendRecvV2Feature = ",sendrecv_v2";
 
 /// Codec features appended to @ref kSendRecvV2Feature when each codec is built in.
 ///
-/// `sendrecv_v2_zstd` and `sendrecv_v2_lz4` select the codecs, the same names
-/// adb looks for in the device's banner. Each is appended only when its codec is
-/// built, so the banner never names a codec the build does not have. See
-/// `docs/09-sendrecv-v2.md`.
+/// `sendrecv_v2_zstd`, `sendrecv_v2_lz4`, and `sendrecv_v2_brotli` select the
+/// codecs, the same names adb looks for in the device's banner. Each is appended
+/// only when its codec is built, so the banner never names a codec the build does
+/// not have. See `docs/09-sendrecv-v2.md`.
 inline constexpr std::string_view kSendRecvV2ZstdFeature = ",sendrecv_v2_zstd";
 inline constexpr std::string_view kSendRecvV2Lz4Feature = ",sendrecv_v2_lz4";
+inline constexpr std::string_view kSendRecvV2BrotliFeature = ",sendrecv_v2_brotli";
 
 /**
  * @brief An authenticated ADB connection to a device.

@@ -63,6 +63,7 @@ constexpr std::uint32_t kRecvV2 = protocol::make_command('R', 'C', 'V', '2');
 constexpr std::uint32_t kSendV2 = protocol::make_command('S', 'N', 'D', '2');
 // The `SyncFlag` codec bits from `file_sync_protocol.h`, of which one is set per
 // transfer.
+constexpr std::uint32_t kSyncFlagBrotli = 1;
 constexpr std::uint32_t kSyncFlagLz4 = 2;
 constexpr std::uint32_t kSyncFlagZstd = 4;
 
@@ -71,6 +72,7 @@ constexpr std::uint32_t kSyncFlagZstd = 4;
 // `ls_v2`, because a substring search would treat `sendrecv_v2` as matching
 // `recv_v2`.
 constexpr std::string_view kSendRecvV2Feature = "sendrecv_v2";
+constexpr std::string_view kSendRecvV2BrotliFeature = "sendrecv_v2_brotli";
 constexpr std::string_view kSendRecvV2Lz4Feature = "sendrecv_v2_lz4";
 constexpr std::string_view kSendRecvV2ZstdFeature = "sendrecv_v2_zstd";
 
@@ -199,19 +201,28 @@ Status write_send_v2(Stream &stream, std::string_view path, std::uint32_t mode, 
 enum class CompressionCodec
 {
     Zstd,
-    Lz4
+    Lz4,
+    Brotli
 };
 
 // The `SyncFlag` bit that selects `codec`.
 constexpr std::uint32_t sync_flag_of(CompressionCodec codec)
 {
-    return codec == CompressionCodec::Zstd ? kSyncFlagZstd : kSyncFlagLz4;
+    if (codec == CompressionCodec::Zstd)
+    {
+        return kSyncFlagZstd;
+    }
+    if (codec == CompressionCodec::Lz4)
+    {
+        return kSyncFlagLz4;
+    }
+    return kSyncFlagBrotli;
 }
 
-// The codec to use, in adb's order (`zstd`, then `lz4`), or `nullopt` for the
-// v1 forms. `None` forces the v1 forms; an explicit codec the build or device
-// does not have is an error rather than a silent fallback, so the caller is not
-// misled.
+// The codec to use, in adb's order (`zstd`, then `lz4`, then `brotli`), or
+// `nullopt` for the v1 forms. `None` forces the v1 forms; an explicit codec the
+// build or device does not have is an error rather than a silent fallback, so the
+// caller is not misled.
 Result<std::optional<CompressionCodec>> choose_codec(const Connection &connection, SyncCompression compression)
 {
     if (compression == SyncCompression::None)
@@ -232,6 +243,11 @@ Result<std::optional<CompressionCodec>> choose_codec(const Connection &connectio
 #    else
     const bool lz4 = false;
 #    endif
+#    if defined(ADBCPP_HAS_BROTLI)
+    const bool brotli = v2 && connection.supports_feature(kSendRecvV2BrotliFeature);
+#    else
+    const bool brotli = false;
+#    endif
 
     if (compression == SyncCompression::Zstd && !zstd)
     {
@@ -243,6 +259,11 @@ Result<std::optional<CompressionCodec>> choose_codec(const Connection &connectio
         return tl::unexpected(
             Error{ErrorCode::InvalidArgument, "lz4 compression is not available for this device or build"});
     }
+    if (compression == SyncCompression::Brotli && !brotli)
+    {
+        return tl::unexpected(
+            Error{ErrorCode::InvalidArgument, "brotli compression is not available for this device or build"});
+    }
 
     if (zstd)
     {
@@ -252,8 +273,84 @@ Result<std::optional<CompressionCodec>> choose_codec(const Connection &connectio
     {
         return std::optional<CompressionCodec>{CompressionCodec::Lz4};
     }
+    if (brotli)
+    {
+        return std::optional<CompressionCodec>{CompressionCodec::Brotli};
+    }
     return std::optional<CompressionCodec>{};
 }
+
+// Compresses one `DATA` chunk with the chosen codec. Only a built-in codec is ever
+// chosen, so the branches for the others are compiled out.
+Result<std::vector<std::byte>> compress_chunk(CompressionCodec codec, std::span<const std::byte> input)
+{
+#    if defined(ADBCPP_HAS_ZSTD)
+    if (codec == CompressionCodec::Zstd)
+    {
+        return compress_zstd(input);
+    }
+#    endif
+#    if defined(ADBCPP_HAS_LZ4)
+    if (codec == CompressionCodec::Lz4)
+    {
+        return compress_lz4(input);
+    }
+#    endif
+#    if defined(ADBCPP_HAS_BROTLI)
+    if (codec == CompressionCodec::Brotli)
+    {
+        return compress_brotli(input);
+    }
+#    endif
+    return tl::unexpected(Error{ErrorCode::Protocol, "the sync codec is not built in"});
+}
+
+// The decoder for a v2 transfer. It owns one decoder per built-in codec and
+// dispatches to the chosen one, so a build with any subset of the codecs works
+// without a nested `#if` at the call site.
+class ChunkDecoder
+{
+public:
+    explicit ChunkDecoder(CompressionCodec codec)
+        : codec_(codec)
+    {
+    }
+
+    Result<std::vector<std::byte>> decode(std::span<const std::byte> input)
+    {
+#    if defined(ADBCPP_HAS_ZSTD)
+        if (codec_ == CompressionCodec::Zstd)
+        {
+            return zstd_.decode(input);
+        }
+#    endif
+#    if defined(ADBCPP_HAS_LZ4)
+        if (codec_ == CompressionCodec::Lz4)
+        {
+            return lz4_.decode(input);
+        }
+#    endif
+#    if defined(ADBCPP_HAS_BROTLI)
+        if (codec_ == CompressionCodec::Brotli)
+        {
+            return brotli_.decode(input);
+        }
+#    endif
+        return tl::unexpected(Error{ErrorCode::Protocol, "the sync codec is not built in"});
+    }
+
+private:
+    CompressionCodec codec_;
+#    if defined(ADBCPP_HAS_ZSTD)
+    ZstdDecoder zstd_;
+#    endif
+#    if defined(ADBCPP_HAS_LZ4)
+    Lz4Decoder lz4_;
+#    endif
+#    if defined(ADBCPP_HAS_BROTLI)
+    BrotliDecoder brotli_;
+#    endif
+};
 #endif
 
 // Reads the device's reply to a request it acknowledges with `OKAY`, or rejects
@@ -334,22 +431,30 @@ std::uint32_t local_mode(const std::filesystem::path &path)
 }
 
 #if defined(ADBCPP_HAS_COMPRESSION)
-// The compressed form of a `SYNC_DATA_MAX` chunk is at most `ZSTD_compressBound`,
+// The compressed form of a `SYNC_DATA_MAX` chunk is at most the codec's own bound,
 // which is what the encoder cannot exceed. It is larger than the chunk itself
 // because a frame adds its own header, so the compressed size is checked against
 // this and not against `kMaxChunkSize`.
-#    if defined(ADBCPP_HAS_ZSTD) && defined(ADBCPP_HAS_LZ4)
-const std::size_t kMaxCompressedChunkSize =
-    std::max(ZSTD_compressBound(kMaxChunkSize), LZ4F_compressFrameBound(kMaxChunkSize, nullptr));
-#    elif defined(ADBCPP_HAS_ZSTD)
-const std::size_t kMaxCompressedChunkSize = ZSTD_compressBound(kMaxChunkSize);
-#    else
-const std::size_t kMaxCompressedChunkSize = LZ4F_compressFrameBound(kMaxChunkSize, nullptr);
+std::size_t max_compressed_chunk_size()
+{
+    std::size_t bound = 0;
+#    if defined(ADBCPP_HAS_ZSTD)
+    bound = std::max(bound, ZSTD_compressBound(kMaxChunkSize));
 #    endif
+#    if defined(ADBCPP_HAS_LZ4)
+    bound = std::max(bound, LZ4F_compressFrameBound(kMaxChunkSize, nullptr));
+#    endif
+#    if defined(ADBCPP_HAS_BROTLI)
+    bound = std::max(bound, BrotliEncoderMaxCompressedSize(kMaxChunkSize));
+#    endif
+    return bound;
+}
 
-// The v2 RECV form: the device streams one zstd frame across `DATA` chunks, so a
-// chunk boundary is not a frame boundary and each chunk is fed to the decoder
-// rather than written as it arrives.
+const std::size_t kMaxCompressedChunkSize = max_compressed_chunk_size();
+
+// The v2 RECV form: the device streams one compressed frame across `DATA`
+// chunks, so a chunk boundary is not a frame boundary and each chunk is fed to the
+// decoder rather than written as it arrives.
 Status pull_v2(Connection &connection, std::string_view remote_path, const std::filesystem::path &local_path,
                CompressionCodec codec)
 {
@@ -370,36 +475,8 @@ Status pull_v2(Connection &connection, std::string_view remote_path, const std::
         return tl::unexpected(Error{ErrorCode::Io, "cannot open the local file for writing"});
     }
 
-    // The decoder for the chosen codec. A build can have one codec without the
-    // other, so only the chosen one is constructed.
-#    if defined(ADBCPP_HAS_ZSTD) && defined(ADBCPP_HAS_LZ4)
-    std::optional<ZstdDecoder> zstd;
-    std::optional<Lz4Decoder> lz4;
-    if (codec == CompressionCodec::Zstd)
-    {
-        zstd.emplace();
-    }
-    else
-    {
-        lz4.emplace();
-    }
-    const auto decode = [&](std::span<const std::byte> chunk)
-    {
-        return codec == CompressionCodec::Zstd ? zstd->decode(chunk) : lz4->decode(chunk);
-    };
-#    elif defined(ADBCPP_HAS_ZSTD)
-    ZstdDecoder zstd;
-    const auto decode = [&](std::span<const std::byte> chunk)
-    {
-        return zstd.decode(chunk);
-    };
-#    else
-    Lz4Decoder lz4;
-    const auto decode = [&](std::span<const std::byte> chunk)
-    {
-        return lz4.decode(chunk);
-    };
-#    endif
+    // The decoder for the chosen codec.
+    ChunkDecoder decoder(codec);
 
     while (true)
     {
@@ -446,7 +523,7 @@ Status pull_v2(Connection &connection, std::string_view remote_path, const std::
 
         // The decoded bytes are written as they arrive, so the file is never held
         // in memory whole.
-        auto decoded = decode(chunk);
+        auto decoded = decoder.decode(chunk);
         if (!decoded)
         {
             return tl::unexpected(decoded.error());
@@ -494,13 +571,7 @@ Status push_v2(Connection &connection, const std::filesystem::path &local_path, 
 
         const auto bytes =
             std::span(reinterpret_cast<const std::byte *>(buffer.data()), static_cast<std::size_t>(count));
-#    if defined(ADBCPP_HAS_ZSTD) && defined(ADBCPP_HAS_LZ4)
-        auto compressed = codec == CompressionCodec::Zstd ? compress_zstd(bytes) : compress_lz4(bytes);
-#    elif defined(ADBCPP_HAS_ZSTD)
-        auto compressed = compress_zstd(bytes);
-#    else
-        auto compressed = compress_lz4(bytes);
-#    endif
+        auto compressed = compress_chunk(codec, bytes);
         if (!compressed)
         {
             return tl::unexpected(compressed.error());
@@ -673,7 +744,8 @@ Status pull(Connection &connection, std::string_view remote_path, const std::fil
         return pull_v2(connection, remote_path, local_path, **codec);
     }
 #endif
-    if (compression == SyncCompression::Zstd || compression == SyncCompression::Lz4)
+    if (compression == SyncCompression::Zstd || compression == SyncCompression::Lz4 ||
+        compression == SyncCompression::Brotli)
     {
         return tl::unexpected(
             Error{ErrorCode::InvalidArgument, "compression is not available for this device or build"});
@@ -880,7 +952,8 @@ Status push(Connection &connection, const std::filesystem::path &local_path, std
         return push_v2(connection, local_path, destination, mode, **codec);
     }
 #endif
-    if (compression == SyncCompression::Zstd || compression == SyncCompression::Lz4)
+    if (compression == SyncCompression::Zstd || compression == SyncCompression::Lz4 ||
+        compression == SyncCompression::Brotli)
     {
         return tl::unexpected(
             Error{ErrorCode::InvalidArgument, "compression is not available for this device or build"});

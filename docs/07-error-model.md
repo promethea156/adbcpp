@@ -171,6 +171,7 @@ boundary, and what it catches becomes an `Error`.
 | libusb | A C API that returns codes. No catch is needed. |
 | zstd | A C API that returns codes. No catch is needed. |
 | lz4 | A C API that returns codes. No catch is needed. |
+| brotli | A C API that returns codes. No catch is needed. |
 | `tl::expected` | `.value()` and `.error()` assert on the wrong alternative. The library never calls them without checking, so nothing is thrown; `operator*`, `operator->`, and `value_or` are used instead. |
 | `std::bad_alloc` | Not caught. It comes from the allocator rather than the library, and there is no way to report it without allocating, so it is documented here instead of handled. |
 
@@ -196,17 +197,19 @@ The two options have to be set before `FetchContent_MakeAvailable`, for the same
 `tl::expected` **publicly**, because `<tl/expected.hpp>` appears in the public `error.hpp`, and the
 install rules export it so a `find_package` consumer gets it too.
 
-zstd and lz4 are also acquired with `FetchContent` in the root `CMakeLists.txt`,
-each behind its own option, and linked **privately** to `adbcpp`, because `<zstd.h>`
-and `<lz4frame.h>` appear only in `src/compression.cpp` and never in a public header.
-Both are permissive, so they carry no copyleft obligation, and they join the install
-rules for the same reason mbedcrypto does: a static library propagates its private
-dependencies to the final link.
+zstd, lz4, and brotli are also acquired with `FetchContent` in the root
+`CMakeLists.txt`, each behind its own option, and linked **privately** to `adbcpp`,
+because `<zstd.h>`, `<lz4frame.h>`, and the brotli headers appear only in
+`src/compression.cpp` and never in a public header. All three are permissive, so they
+carry no copyleft obligation, and they join the install rules for the same reason
+mbedcrypto does: a static library propagates its private dependencies to the final link.
+Brotli declares its own `BUILD_SHARED_LIBS` option, so its value is saved and restored
+around its `FetchContent_MakeAvailable` rather than allowed to change this project's.
 
 The core target is no longer dependency-free, so the "Extra dependency" column for
-`adbcpp::adbcpp` in [`05-usage.md`](05-usage.md) lists `tl::expected`, zstd, and lz4,
-and the claim in [`01-objective.md`](01-objective.md) is narrowed to the crypto and USB
-backends.
+`adbcpp::adbcpp` in [`05-usage.md`](05-usage.md) lists `tl::expected`, zstd, lz4, and
+brotli, and the claim in [`01-objective.md`](01-objective.md) is narrowed to the crypto
+and USB backends.
 
 ## The state of the conversion
 

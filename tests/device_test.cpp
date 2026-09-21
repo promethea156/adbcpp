@@ -511,6 +511,45 @@ int main()
     }
 #endif
 
+#if defined(ADBCPP_HAS_BROTLI)
+    // The same round trip with brotli, forced so it is exercised even when the
+    // device also advertises zstd or lz4, which `Auto` would prefer.
+    if (connection->supports_feature("sendrecv_v2_brotli"))
+    {
+        const std::string brotli_remote = "/data/local/tmp/adbcpp_device_brotli_test.txt";
+        if (const auto status = adbcpp::run(*connection, "echo adbcpp-brotli-test > " + brotli_remote); !status)
+        {
+            report(status.error());
+            return 1;
+        }
+
+        const auto brotli_local = std::filesystem::temp_directory_path() / "adbcpp_device_brotli_test.txt";
+        if (const auto status = adbcpp::pull(*connection, brotli_remote, brotli_local, adbcpp::SyncCompression::Brotli);
+            !status)
+        {
+            report(status.error());
+            return 1;
+        }
+
+        std::string brotli_contents;
+        {
+            std::ifstream pulled(brotli_local, std::ios::binary);
+            brotli_contents.assign(std::istreambuf_iterator<char>(pulled), std::istreambuf_iterator<char>());
+        }
+        if (const auto status = adbcpp::run(*connection, "rm -f " + brotli_remote); !status)
+        {
+            report(status.error());
+            return 1;
+        }
+        std::filesystem::remove(brotli_local);
+        if (brotli_contents != "adbcpp-brotli-test\n")
+        {
+            std::cerr << "unexpected brotli pulled contents: " << brotli_contents << '\n';
+            return 1;
+        }
+    }
+#endif
+
     const int install_result = check_install(*connection);
     const int app_result = check_app(*connection);
 

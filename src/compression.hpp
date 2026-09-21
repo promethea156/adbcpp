@@ -15,6 +15,11 @@
 #    include <zstd.h>
 #endif
 
+#if defined(ADBCPP_HAS_BROTLI)
+#    include <brotli/decode.h>
+#    include <brotli/encode.h>
+#endif
+
 namespace adbcpp
 {
 
@@ -100,6 +105,50 @@ private:
     };
 
     std::unique_ptr<LZ4F_dctx, Deleter> decoder_;
+};
+#endif
+
+#if defined(ADBCPP_HAS_BROTLI)
+/// Compresses one sync chunk as a complete brotli stream.
+///
+/// A complete stream per chunk is a valid brotli sequence, exactly as with zstd
+/// and lz4: the device decodes with `BrotliDecoderDecompressStream`, which
+/// starts the next stream when it reaches the end of one. This is why the encoder
+/// is not a stream: its output would span chunks, which the per-chunk framing here
+/// cannot express. AOSP's `BrotliEncoder` streams the whole transfer, so its
+/// output is larger; both are decodable by the other side.
+Result<std::vector<std::byte>> compress_brotli(std::span<const std::byte> input);
+
+/// Decompresses a brotli stream incrementally, across `DATA` chunks.
+///
+/// The device's encoder streams the whole transfer as one stream and splits its
+/// output into `DATA` chunks at arbitrary points, so a chunk boundary is not
+/// necessarily a stream boundary. `BrotliDecoderDecompressStream` is therefore
+/// called per chunk and its output is appended, exactly like AOSP's
+/// `BrotliDecoder`.
+class BrotliDecoder
+{
+public:
+    BrotliDecoder();
+    ~BrotliDecoder() = default;
+    BrotliDecoder(BrotliDecoder &&) noexcept = default;
+    BrotliDecoder &operator=(BrotliDecoder &&) noexcept = default;
+    BrotliDecoder(const BrotliDecoder &) = delete;
+    BrotliDecoder &operator=(const BrotliDecoder &) = delete;
+
+    /// Feeds the next `DATA` chunk and returns the bytes it decompresses to.
+    Result<std::vector<std::byte>> decode(std::span<const std::byte> input);
+
+private:
+    struct Deleter
+    {
+        void operator()(BrotliDecoderState *state) const noexcept
+        {
+            BrotliDecoderDestroyInstance(state);
+        }
+    };
+
+    std::unique_ptr<BrotliDecoderState, Deleter> decoder_;
 };
 #endif
 

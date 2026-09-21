@@ -24,11 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one thread.
 - `pull` and `push` use the v2 `RECV`/`SEND` forms with a codec when the build
   has one and the device advertised it, so a transfer can compress.
-  `SyncCompression` selects the codec per call (`Auto` prefers zstd, then lz4), and
-  `Auto` falls back to the v1 forms, which still work for a device without the
-  feature. zstd (`ADBCPP_BUILD_COMPRESSION`) and lz4 (`ADBCPP_BUILD_LZ4`) are each
-  fetched with `FetchContent` and linked privately, and the banner names only the
-  codecs that are built in. `docs/09-sendrecv-v2.md` is the plan.
+  `SyncCompression` selects the codec per call (`Auto` prefers zstd, then lz4, then
+  brotli), and `Auto` falls back to the v1 forms, which still work for a device
+  without the feature. zstd (`ADBCPP_BUILD_COMPRESSION`), lz4 (`ADBCPP_BUILD_LZ4`),
+  and brotli (`ADBCPP_BUILD_BROTLI`) are each fetched with `FetchContent` and linked
+  privately, and the banner names only the codecs that are built in.
+  `docs/09-sendrecv-v2.md` is the plan.
 
 ## [2.1.0] - 2026-09-21
 

@@ -1,4 +1,4 @@
-#if defined(ADBCPP_HAS_ZSTD) || defined(ADBCPP_HAS_LZ4)
+#if defined(ADBCPP_HAS_ZSTD) || defined(ADBCPP_HAS_LZ4) || defined(ADBCPP_HAS_BROTLI)
 
 #    include "compression.hpp"
 
@@ -111,6 +111,46 @@ TEST_CASE("lz4 decoder reads a frame split across chunks", "[compression]")
     // boundary, exactly like the device's streaming encoder.
     const auto middle = compressed->size() / 2;
     adbcpp::Lz4Decoder decoder;
+    const auto first = decoder.decode(std::span(compressed->data(), middle));
+    REQUIRE(first.has_value());
+    const auto second = decoder.decode(std::span(compressed->data() + middle, compressed->size() - middle));
+    REQUIRE(second.has_value());
+
+    std::string decoded = text_of(*first);
+    decoded += text_of(*second);
+    REQUIRE(decoded == text);
+}
+#    endif
+
+#    if defined(ADBCPP_HAS_BROTLI)
+TEST_CASE("brotli round-trips a compressible buffer", "[compression]")
+{
+    std::string text;
+    for (int i = 0; i < 1024; ++i)
+    {
+        text += "hello world ";
+    }
+
+    const auto compressed = adbcpp::compress_brotli(bytes_of(text));
+    REQUIRE(compressed.has_value());
+    REQUIRE(compressed->size() < text.size());
+
+    adbcpp::BrotliDecoder decoder;
+    const auto decoded = decoder.decode(*compressed);
+    REQUIRE(decoded.has_value());
+    REQUIRE(text_of(*decoded) == text);
+}
+
+TEST_CASE("brotli decoder reads a stream split across chunks", "[compression]")
+{
+    std::string text(4096, 'a');
+    const auto compressed = adbcpp::compress_brotli(bytes_of(text));
+    REQUIRE(compressed.has_value());
+
+    // The stream is fed in two pieces, so a chunk boundary is not a stream
+    // boundary, exactly like the device's streaming encoder.
+    const auto middle = compressed->size() / 2;
+    adbcpp::BrotliDecoder decoder;
     const auto first = decoder.decode(std::span(compressed->data(), middle));
     REQUIRE(first.has_value());
     const auto second = decoder.decode(std::span(compressed->data() + middle, compressed->size() - middle));

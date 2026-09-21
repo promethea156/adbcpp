@@ -183,14 +183,15 @@ The device then answers with the file's chunks and `DONE`:
 followed by an extra 8-byte setup packet, `sync_recv_v2 { id, flags }`, that selects a
 compression codec (`kSyncFlagBrotli`, `kSyncFlagLz4`, or `kSyncFlagZstd`). With
 `flags = 0` the transfer is byte-for-byte the v1 form. `pull` uses the v2 form with
-the best codec both sides have, in adb's order, and the v1 form otherwise, so a device
-without the feature still works. `sendrecv_v2_zstd` is
-the codecs implemented, in adb's order; `kSyncFlagBrotli` is not.
+the best codec both sides have, in adb's order (`zstd`, then `lz4`, then `brotli`), and
+the v1 form otherwise, so a device without the feature still works. All three codecs are
+implemented.
 
 The `DATA` payload is the only thing compressed: its `sync_data { id, size }` header is
 unchanged and `size` is the compressed size, which a frame can make larger than the chunk
-itself. The device streams one zstd frame across the chunks, so the decoder is a stream and a
-chunk boundary is not a frame boundary. See [`09-sendrecv-v2.md`](09-sendrecv-v2.md).
+itself. The device streams one compressed frame across the chunks, so the decoder is a stream
+and a chunk boundary is not a frame boundary. See
+[`09-sendrecv-v2.md`](09-sendrecv-v2.md).
 
 ## Pushing a file
 
@@ -227,8 +228,7 @@ user permission bits to the group and other bits, so a `0644` local file becomes
 `SND2` is the v2 form. Like `RCV2` it takes the `id` + `path_length` + `path`
 request, but the path is no longer a spec: the mode moves into the setup packet,
 `sync_send_v2 { id, mode, flags }`, which follows the request. The flags select the
-same codecs, and `push` uses zstd when the device advertised `sendrecv_v2_zstd`,
-exactly as `pull` does.
+same codecs, and `push` uses the best codec both sides have, exactly as `pull` does.
 
 ## STAT
 
@@ -273,8 +273,8 @@ next response; a short read here would desynchronize the whole listing.
 
 1. Reject a path longer than 1024 bytes, the same check as `list`
    (`src/sync.cpp:550`).
-2. Choose the v2 form with zstd when `compression` selects it and the device
-   advertised it, and the v1 form otherwise (`src/sync.cpp:560`).
+2. Choose the v2 form with the best codec both sides have when `compression`
+   selects it, and the v1 form otherwise (`src/sync.cpp:560`).
 3. Open the `sync:` stream and write the `RECV` request
    (`src/sync.cpp:570`, `src/sync.cpp:579`).
 4. Open the local file before the transfer starts, so a failure leaves a partial
@@ -286,7 +286,7 @@ next response; a short read here would desynchronize the whole listing.
 
 Because each chunk is written as it arrives, the file is never held in memory whole,
 so pulling a large file costs no more memory than pulling a small one. The v2 form
-feeds each compressed chunk to a streaming zstd decoder instead, because the device's
+feeds each compressed chunk to a streaming decoder instead, because the device's
 frame can span chunks.
 
 `stat`:
@@ -306,8 +306,8 @@ frame can span chunks.
 1. Reject a local path that is not a regular file (`src/sync.cpp:737`).
 2. Stat the destination, so that an existing directory receives the file under the
    local file's name (`src/sync.cpp:745`).
-3. Choose the v2 form with zstd when `compression` selects it and the device
-   advertised it, and the v1 form otherwise (`src/sync.cpp:763`).
+3. Choose the v2 form with the best codec both sides have when `compression`
+   selects it, and the v1 form otherwise (`src/sync.cpp:763`).
 4. Build the `"<path>,<mode>"` spec from the local file's permissions
    (`src/sync.cpp:775`).
 5. Open the `sync:` stream and write the `SEND` request
