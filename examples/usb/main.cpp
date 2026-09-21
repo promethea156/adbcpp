@@ -39,8 +39,10 @@ namespace
 // (`--close <package>`), check whether an app runs (`--running <package>`), or run
 // a shell command (the default). All of them mirror what `adb` does, so they are
 // interchangeable on the device. `--timeout <ms>` and `--budget <ms>` tune the
-// transfer timing, and `--device <VID:PID>` (hex) or `--serial <serial>` picks the
-// target device; both may appear anywhere on the command line, and the last one wins.
+// transfer timing, `--compression <auto|none|zstd|lz4|brotli>` picks the form
+// `--pull` and `--push` use, and `--device <VID:PID>` (hex) or
+// `--serial <serial>` picks the target device; all may appear anywhere on the
+// command line, and the last one wins.
 int main(int argc, char **argv)
 {
     // `--timeout <ms>` is the timeout for each bulk transfer and `--budget <ms>`
@@ -54,6 +56,9 @@ int main(int argc, char **argv)
     adbcpp::usb::DeviceId id;
     id.vendor_id = 0x22D9;
     id.product_id = 0x2769;
+    // The form `--pull` and `--push` use. `auto` is the default, so a caller who
+    // does not pass the option gets the v2 form when the device supports it.
+    adbcpp::SyncCompression compression = adbcpp::SyncCompression::Auto;
     std::vector<std::string> args;
     for (int i = 1; i < argc; ++i)
     {
@@ -81,6 +86,35 @@ int main(int argc, char **argv)
             // cleared; `--device` after it would set them again.
             id = adbcpp::usb::DeviceId{};
             id.serial = argv[++i];
+        }
+        else if (std::string_view(argv[i]) == "--compression" && i + 1 < argc)
+        {
+            const std::string_view value(argv[++i]);
+            if (value == "auto")
+            {
+                compression = adbcpp::SyncCompression::Auto;
+            }
+            else if (value == "none")
+            {
+                compression = adbcpp::SyncCompression::None;
+            }
+            else if (value == "zstd")
+            {
+                compression = adbcpp::SyncCompression::Zstd;
+            }
+            else if (value == "lz4")
+            {
+                compression = adbcpp::SyncCompression::Lz4;
+            }
+            else if (value == "brotli")
+            {
+                compression = adbcpp::SyncCompression::Brotli;
+            }
+            else
+            {
+                std::cerr << "error: unknown compression: " << value << '\n';
+                return 1;
+            }
         }
         else
         {
@@ -182,7 +216,7 @@ int main(int argc, char **argv)
 
         if (args.size() > 2 && args[0] == "--pull")
         {
-            if (const auto status = adbcpp::pull(*connection, args[1], args[2]); !status)
+            if (const auto status = adbcpp::pull(*connection, args[1], args[2], compression); !status)
             {
                 fail(status.error());
             }
@@ -193,7 +227,7 @@ int main(int argc, char **argv)
 
         if (args.size() > 2 && args[0] == "--push")
         {
-            if (const auto status = adbcpp::push(*connection, args[1], args[2]); !status)
+            if (const auto status = adbcpp::push(*connection, args[1], args[2], compression); !status)
             {
                 fail(status.error());
             }

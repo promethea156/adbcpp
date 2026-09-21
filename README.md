@@ -57,6 +57,25 @@ a green run is just as useful as a red one, and see [Contributing](#contributing
 - **Several devices**: drive every attached device at once, one thread per device, because the objects share no state, or drive several from one thread with `adbcpp::wait_readable`.
 - **Log**: opt in to a process-wide logger, configurable per level, that reports frames, retries, and state changes and never logs keys or payloads.
 
+## Compression that pays off
+
+`pull` and `push` use the `sendrecv_v2` forms with zstd, lz4, or brotli when the
+device advertises one, and the v1 forms otherwise, so a file transfer is compressed
+when it can be. The gain is real only when the file compresses: on a Windows host over
+USB, a 64 MiB text file moves about twenty times faster each way, while 64 MiB of random
+bytes moves at the same speed with or without a codec.
+
+| 64 MiB text file | push | pull |
+| --- | --- | --- |
+| v1 (no compression) | 8.8 s (7.3 MB/s) | 5.2 s (12.4 MB/s) |
+| zstd (the default) | 0.4 s (146.7 MB/s) | 0.2 s (416 MB/s) |
+
+`SyncCompression` selects the form per call: `Auto` picks the best codec both sides
+have, `None` forces the v1 forms, and `Zstd`, `Lz4`, or `Brotli` requires that
+codec. The full table, including lz4, brotli, and the incompressible case, is in
+[`docs/06-sync-protocol.md`](docs/06-sync-protocol.md#measured-compression-performance),
+and `tools/bench-compression.ps1` reproduces it on any attached device.
+
 ## Build it
 
 You need a **C++20 compiler**, **CMake 3.24 or newer**, and **Git** (the test framework is fetched automatically at configure time). The build is the same everywhere; only the toolchain setup differs. CI builds and tests all three platforms; only **Windows** has been exercised against real hardware — see [Platform support](#platform-support).
@@ -179,7 +198,7 @@ include/adbcpp/testing/  The in-memory transport used by the tests and examples
 src/                    Library sources, mirroring the public headers
 tests/                  Catch2 unit tests and the device integration test
 examples/               Runnable examples, including the guided tours in demo/ and demo_multi/
-tools/                  Developer scripts (adb wrapper, transfer benchmark)
+tools/                  Developer scripts (adb wrapper, transfer and compression benchmarks)
 docs/                   Design documents and Doxygen configuration
 cmake/                  CMake package configuration
 ```
