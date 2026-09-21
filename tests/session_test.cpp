@@ -93,6 +93,29 @@ TEST_CASE("session writes a payload as a separate transport write", "[session]")
     REQUIRE(std::equal(payload.begin(), payload.end(), written.begin() + header.size()));
 }
 
+TEST_CASE("session rejects a header whose data_length does not match the payload", "[session]")
+{
+    adbcpp::testing::MockTransport transport;
+    adbcpp::Session session(transport);
+
+    const std::array<std::byte, 5> payload{std::byte{'h'}, std::byte{'e'}, std::byte{'l'}, std::byte{'l'},
+                                           std::byte{'o'}};
+
+    Message outbound;
+    outbound.command = adbcpp::protocol::kWrte;
+    // The header advertises one byte more than the payload, which is the shape
+    // blocker 13 had: the device would wait for a byte that never arrives.
+    outbound.data_length = payload.size() + 1;
+    outbound.magic = Message::compute_magic(outbound.command);
+
+    const auto sent = session.send(outbound, payload);
+    REQUIRE_FALSE(sent.has_value());
+    REQUIRE(sent.error().code == adbcpp::ErrorCode::InvalidArgument);
+
+    // Nothing was written, so the stream is not desynchronized.
+    REQUIRE(transport.written().empty());
+}
+
 TEST_CASE("session reassembles a message split across reads", "[session]")
 {
     adbcpp::testing::MockTransport transport;

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Session::send` checks that `header.data_length` equals `payload.size()` and
+  reports a mismatch as an `InvalidArgument` before writing anything, so a header
+  cannot leave the device waiting for bytes that never arrive (blocker 13).
 - `adbcpp::wait_readable(transports, timeout)`, which waits on several
   transports at once and returns the readable one, and
   `Transport::wait_readable(timeout)`, which each transport implements:

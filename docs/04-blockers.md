@@ -106,7 +106,7 @@ Each entry has the same shape:
 - **Symptom**: The device never answered `OPEN`, so `shell,v2,raw:<command>` never ran. The handshake and the `AUTH` exchange completed.
 - **Cause**: `Stream`'s constructor passed the service payload to `make_message` but **not** to `Connection::send`. The `OPEN` header therefore advertised `data_length=24`, but the 24 payload bytes were never written. The device waited for bytes that never arrived. Comparing against a real adb connection had pointed at the `OPEN` local id and send buffer, which were red herrings; instrumenting the session showed the header advertised a payload the transport never sent.
 - **Resolution**: Pass the payload to `Connection::send` as well (`src/stream.cpp`). This was the real blocker for Slice 1.
-- **Note**: This class of bug (a header that disagrees with what is actually written) is easy to introduce because `Message` and `Session::send` take the payload separately. A defensive check that `header.data_length` matches the payload span would catch it.
+- **Note**: This class of bug (a header that disagrees with what is actually written) is easy to introduce because `Message` and `Session::send` take the payload separately. The check the note called for is now in `Session::send`, which reports a mismatch as an `InvalidArgument` before it writes anything ([issue #23](https://github.com/promethea156/adbcpp/issues/23)).
 
 ### 14. Use the `shell_v2` service and parse its packets
 

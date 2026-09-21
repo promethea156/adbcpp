@@ -36,6 +36,11 @@ struct ADBCPP_API Message
     std::uint32_t command = 0;
     std::uint32_t arg0 = 0;
     std::uint32_t arg1 = 0;
+    /// The payload length. It must equal the size of the payload sent with this
+    /// header, because the device trusts it to know how many bytes follow.
+    /// `Session::send` checks the two agree before it writes anything; a header
+    /// that disagrees would otherwise leave the device waiting for bytes that
+    /// never arrive (blocker 13 in `04-blockers.md`).
     std::uint32_t data_length = 0;
     /// The payload checksum. `docs/dev/protocol.md` calls this field
     /// `data_crc32`, but AOSP's `amessage` calls it `data_check` and computes a

@@ -1448,6 +1448,10 @@ int main()
   physical replug.
 - **A transport read may be partial.** `Transport::read` may return fewer bytes than
   requested, and `Session` handles that; do not assume one read is one message.
+- **`data_length` must match the payload.** `Session::send` takes the header and the
+  payload separately, so a hand-built header whose `data_length` disagrees with the
+  payload is an `InvalidArgument` and nothing is written, rather than a header that
+  leaves the device waiting for bytes that never arrive (blocker 13).
 - **`run` merges stdout and stderr.** They arrive interleaved, so the order is not
   guaranteed. `CommandResult` does not separate them.
 - **This is not a full `adb` replacement yet.** The shell service, `sync`-based
