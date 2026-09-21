@@ -473,6 +473,44 @@ int main()
     }
 #endif
 
+#if defined(ADBCPP_HAS_LZ4)
+    // The same round trip with lz4, forced so it is exercised even when the
+    // device also advertises zstd, which `Auto` would prefer.
+    if (connection->supports_feature("sendrecv_v2_lz4"))
+    {
+        const std::string lz4_remote = "/data/local/tmp/adbcpp_device_lz4_test.txt";
+        if (const auto status = adbcpp::run(*connection, "echo adbcpp-lz4-test > " + lz4_remote); !status)
+        {
+            report(status.error());
+            return 1;
+        }
+
+        const auto lz4_local = std::filesystem::temp_directory_path() / "adbcpp_device_lz4_test.txt";
+        if (const auto status = adbcpp::pull(*connection, lz4_remote, lz4_local, adbcpp::SyncCompression::Lz4); !status)
+        {
+            report(status.error());
+            return 1;
+        }
+
+        std::string lz4_contents;
+        {
+            std::ifstream pulled(lz4_local, std::ios::binary);
+            lz4_contents.assign(std::istreambuf_iterator<char>(pulled), std::istreambuf_iterator<char>());
+        }
+        if (const auto status = adbcpp::run(*connection, "rm -f " + lz4_remote); !status)
+        {
+            report(status.error());
+            return 1;
+        }
+        std::filesystem::remove(lz4_local);
+        if (lz4_contents != "adbcpp-lz4-test\n")
+        {
+            std::cerr << "unexpected lz4 pulled contents: " << lz4_contents << '\n';
+            return 1;
+        }
+    }
+#endif
+
     const int install_result = check_install(*connection);
     const int app_result = check_app(*connection);
 

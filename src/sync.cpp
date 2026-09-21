@@ -61,14 +61,17 @@ constexpr std::uint32_t kQuit = protocol::make_command('Q', 'U', 'I', 'T');
 // are the little-endian encoding of four ASCII characters, like the v1 ids above.
 constexpr std::uint32_t kRecvV2 = protocol::make_command('R', 'C', 'V', '2');
 constexpr std::uint32_t kSendV2 = protocol::make_command('S', 'N', 'D', '2');
-// `kSyncFlagZstd` selects zstd, from `SyncFlag` in `file_sync_protocol.h`.
+// The `SyncFlag` codec bits from `file_sync_protocol.h`, of which one is set per
+// transfer.
+constexpr std::uint32_t kSyncFlagLz4 = 2;
 constexpr std::uint32_t kSyncFlagZstd = 4;
 
 // The device's `features=` names for the v2 forms. `sendrecv_v2` selects the v2
-// requests and `sendrecv_v2_zstd` the codec, exactly like adb. The match is
-// exact, like `ls_v2`, because a substring search would treat `sendrecv_v2` as
-// matching `recv_v2`.
+// requests and the others the codecs, exactly like adb. The match is exact, like
+// `ls_v2`, because a substring search would treat `sendrecv_v2` as matching
+// `recv_v2`.
 constexpr std::string_view kSendRecvV2Feature = "sendrecv_v2";
+constexpr std::string_view kSendRecvV2Lz4Feature = "sendrecv_v2_lz4";
 constexpr std::string_view kSendRecvV2ZstdFeature = "sendrecv_v2_zstd";
 
 // A sync request is an id followed by a path length; the path itself is not
@@ -167,18 +170,18 @@ Status write_quit(Stream &stream)
 // both in one write. RECV's setup is `sync_recv_v2 { id, flags }`; SEND's is
 // `sync_send_v2 { id, mode, flags }`, where the mode is the value the v1 form
 // would carry after the path's comma.
-Status write_recv_v2(Stream &stream, std::string_view path)
+Status write_recv_v2(Stream &stream, std::string_view path, std::uint32_t flags)
 {
     std::vector<std::byte> request(kRequestSize + path.size() + 8);
     write_u32_le(request.data(), kRecvV2);
     write_u32_le(request.data() + 4, static_cast<std::uint32_t>(path.size()));
     std::copy_n(reinterpret_cast<const std::byte *>(path.data()), path.size(), request.data() + kRequestSize);
     write_u32_le(request.data() + kRequestSize + path.size(), kRecvV2);
-    write_u32_le(request.data() + kRequestSize + path.size() + 4, kSyncFlagZstd);
+    write_u32_le(request.data() + kRequestSize + path.size() + 4, flags);
     return stream.write(request);
 }
 
-Status write_send_v2(Stream &stream, std::string_view path, std::uint32_t mode)
+Status write_send_v2(Stream &stream, std::string_view path, std::uint32_t mode, std::uint32_t flags)
 {
     std::vector<std::byte> request(kRequestSize + path.size() + 12);
     write_u32_le(request.data(), kSendV2);
@@ -187,8 +190,69 @@ Status write_send_v2(Stream &stream, std::string_view path, std::uint32_t mode)
     std::byte *setup = request.data() + kRequestSize + path.size();
     write_u32_le(setup, kSendV2);
     write_u32_le(setup + 4, mode);
-    write_u32_le(setup + 8, kSyncFlagZstd);
+    write_u32_le(setup + 8, flags);
     return stream.write(request);
+}
+
+// The codec a v2 transfer uses. It is an internal name for `SyncCompression`,
+// narrowed to the codecs the build has and the device advertised.
+enum class CompressionCodec
+{
+    Zstd,
+    Lz4
+};
+
+// The `SyncFlag` bit that selects `codec`.
+constexpr std::uint32_t sync_flag_of(CompressionCodec codec)
+{
+    return codec == CompressionCodec::Zstd ? kSyncFlagZstd : kSyncFlagLz4;
+}
+
+// The codec to use, in adb's order (`zstd`, then `lz4`), or `nullopt` for the
+// v1 forms. `None` forces the v1 forms; an explicit codec the build or device
+// does not have is an error rather than a silent fallback, so the caller is not
+// misled.
+Result<std::optional<CompressionCodec>> choose_codec(const Connection &connection, SyncCompression compression)
+{
+    if (compression == SyncCompression::None)
+    {
+        return std::optional<CompressionCodec>{};
+    }
+
+    // The v2 requests need the feature, and each codec needs its own, so a codec
+    // the build does not have is never chosen.
+    const bool v2 = connection.supports_feature(kSendRecvV2Feature);
+#    if defined(ADBCPP_HAS_ZSTD)
+    const bool zstd = v2 && connection.supports_feature(kSendRecvV2ZstdFeature);
+#    else
+    const bool zstd = false;
+#    endif
+#    if defined(ADBCPP_HAS_LZ4)
+    const bool lz4 = v2 && connection.supports_feature(kSendRecvV2Lz4Feature);
+#    else
+    const bool lz4 = false;
+#    endif
+
+    if (compression == SyncCompression::Zstd && !zstd)
+    {
+        return tl::unexpected(
+            Error{ErrorCode::InvalidArgument, "zstd compression is not available for this device or build"});
+    }
+    if (compression == SyncCompression::Lz4 && !lz4)
+    {
+        return tl::unexpected(
+            Error{ErrorCode::InvalidArgument, "lz4 compression is not available for this device or build"});
+    }
+
+    if (zstd)
+    {
+        return std::optional<CompressionCodec>{CompressionCodec::Zstd};
+    }
+    if (lz4)
+    {
+        return std::optional<CompressionCodec>{CompressionCodec::Lz4};
+    }
+    return std::optional<CompressionCodec>{};
 }
 #endif
 
@@ -274,12 +338,20 @@ std::uint32_t local_mode(const std::filesystem::path &path)
 // which is what the encoder cannot exceed. It is larger than the chunk itself
 // because a frame adds its own header, so the compressed size is checked against
 // this and not against `kMaxChunkSize`.
+#    if defined(ADBCPP_HAS_ZSTD) && defined(ADBCPP_HAS_LZ4)
+const std::size_t kMaxCompressedChunkSize =
+    std::max(ZSTD_compressBound(kMaxChunkSize), LZ4F_compressFrameBound(kMaxChunkSize, nullptr));
+#    elif defined(ADBCPP_HAS_ZSTD)
 const std::size_t kMaxCompressedChunkSize = ZSTD_compressBound(kMaxChunkSize);
+#    else
+const std::size_t kMaxCompressedChunkSize = LZ4F_compressFrameBound(kMaxChunkSize, nullptr);
+#    endif
 
 // The v2 RECV form: the device streams one zstd frame across `DATA` chunks, so a
 // chunk boundary is not a frame boundary and each chunk is fed to the decoder
 // rather than written as it arrives.
-Status pull_v2(Connection &connection, std::string_view remote_path, const std::filesystem::path &local_path)
+Status pull_v2(Connection &connection, std::string_view remote_path, const std::filesystem::path &local_path,
+               CompressionCodec codec)
 {
     auto stream = Stream::open(connection, "sync:");
     if (!stream)
@@ -287,7 +359,7 @@ Status pull_v2(Connection &connection, std::string_view remote_path, const std::
         return tl::unexpected(stream.error());
     }
 
-    if (const auto written = write_recv_v2(*stream, remote_path); !written)
+    if (const auto written = write_recv_v2(*stream, remote_path, sync_flag_of(codec)); !written)
     {
         return tl::unexpected(written.error());
     }
@@ -298,7 +370,37 @@ Status pull_v2(Connection &connection, std::string_view remote_path, const std::
         return tl::unexpected(Error{ErrorCode::Io, "cannot open the local file for writing"});
     }
 
-    ZstdDecoder decoder;
+    // The decoder for the chosen codec. A build can have one codec without the
+    // other, so only the chosen one is constructed.
+#    if defined(ADBCPP_HAS_ZSTD) && defined(ADBCPP_HAS_LZ4)
+    std::optional<ZstdDecoder> zstd;
+    std::optional<Lz4Decoder> lz4;
+    if (codec == CompressionCodec::Zstd)
+    {
+        zstd.emplace();
+    }
+    else
+    {
+        lz4.emplace();
+    }
+    const auto decode = [&](std::span<const std::byte> chunk)
+    {
+        return codec == CompressionCodec::Zstd ? zstd->decode(chunk) : lz4->decode(chunk);
+    };
+#    elif defined(ADBCPP_HAS_ZSTD)
+    ZstdDecoder zstd;
+    const auto decode = [&](std::span<const std::byte> chunk)
+    {
+        return zstd.decode(chunk);
+    };
+#    else
+    Lz4Decoder lz4;
+    const auto decode = [&](std::span<const std::byte> chunk)
+    {
+        return lz4.decode(chunk);
+    };
+#    endif
+
     while (true)
     {
         // Every response starts with a four-byte id.
@@ -344,7 +446,7 @@ Status pull_v2(Connection &connection, std::string_view remote_path, const std::
 
         // The decoded bytes are written as they arrive, so the file is never held
         // in memory whole.
-        auto decoded = decoder.decode(chunk);
+        auto decoded = decode(chunk);
         if (!decoded)
         {
             return tl::unexpected(decoded.error());
@@ -362,14 +464,14 @@ Status pull_v2(Connection &connection, std::string_view remote_path, const std::
 // The v2 SEND form: each chunk is compressed as a complete frame and the
 // device's streaming decoder starts the next frame at the end of one.
 Status push_v2(Connection &connection, const std::filesystem::path &local_path, std::string_view destination,
-               std::uint32_t mode)
+               std::uint32_t mode, CompressionCodec codec)
 {
     auto stream = Stream::open(connection, "sync:");
     if (!stream)
     {
         return tl::unexpected(stream.error());
     }
-    if (const auto written = write_send_v2(*stream, destination, mode); !written)
+    if (const auto written = write_send_v2(*stream, destination, mode, sync_flag_of(codec)); !written)
     {
         return tl::unexpected(written.error());
     }
@@ -390,8 +492,15 @@ Status push_v2(Connection &connection, const std::filesystem::path &local_path, 
             break;
         }
 
-        auto compressed = compress_zstd(
-            std::span(reinterpret_cast<const std::byte *>(buffer.data()), static_cast<std::size_t>(count)));
+        const auto bytes =
+            std::span(reinterpret_cast<const std::byte *>(buffer.data()), static_cast<std::size_t>(count));
+#    if defined(ADBCPP_HAS_ZSTD) && defined(ADBCPP_HAS_LZ4)
+        auto compressed = codec == CompressionCodec::Zstd ? compress_zstd(bytes) : compress_lz4(bytes);
+#    elif defined(ADBCPP_HAS_ZSTD)
+        auto compressed = compress_zstd(bytes);
+#    else
+        auto compressed = compress_lz4(bytes);
+#    endif
         if (!compressed)
         {
             return tl::unexpected(compressed.error());
@@ -551,19 +660,23 @@ Status pull(Connection &connection, std::string_view remote_path, const std::fil
     }
 
 #if defined(ADBCPP_HAS_COMPRESSION)
-    // The v2 form needs the codec on both sides, so it is used only when the
-    // device advertised it. A caller who asked for zstd explicitly gets an error
-    // rather than a silent v1 transfer.
-    if (compression != SyncCompression::None && connection.supports_feature(kSendRecvV2Feature) &&
-        connection.supports_feature(kSendRecvV2ZstdFeature))
+    // The v2 form needs a codec both sides have, so it is used only when one is
+    // available. A caller who asked for a codec explicitly gets an error rather
+    // than a silent v1 transfer.
+    const auto codec = choose_codec(connection, compression);
+    if (!codec)
     {
-        return pull_v2(connection, remote_path, local_path);
+        return tl::unexpected(codec.error());
+    }
+    if (codec->has_value())
+    {
+        return pull_v2(connection, remote_path, local_path, **codec);
     }
 #endif
-    if (compression == SyncCompression::Zstd)
+    if (compression == SyncCompression::Zstd || compression == SyncCompression::Lz4)
     {
         return tl::unexpected(
-            Error{ErrorCode::InvalidArgument, "zstd compression is not available for this device or build"});
+            Error{ErrorCode::InvalidArgument, "compression is not available for this device or build"});
     }
 
     // Requesting the `sync:` service puts the stream in sync mode.
@@ -756,17 +869,21 @@ Status push(Connection &connection, const std::filesystem::path &local_path, std
     const std::uint32_t mode = local_mode(local_path);
 
 #if defined(ADBCPP_HAS_COMPRESSION)
-    // The v2 form needs the codec on both sides, exactly as `pull` does.
-    if (compression != SyncCompression::None && connection.supports_feature(kSendRecvV2Feature) &&
-        connection.supports_feature(kSendRecvV2ZstdFeature))
+    // The v2 form needs a codec both sides have, exactly as `pull` does.
+    const auto codec = choose_codec(connection, compression);
+    if (!codec)
     {
-        return push_v2(connection, local_path, destination, mode);
+        return tl::unexpected(codec.error());
+    }
+    if (codec->has_value())
+    {
+        return push_v2(connection, local_path, destination, mode, **codec);
     }
 #endif
-    if (compression == SyncCompression::Zstd)
+    if (compression == SyncCompression::Zstd || compression == SyncCompression::Lz4)
     {
         return tl::unexpected(
-            Error{ErrorCode::InvalidArgument, "zstd compression is not available for this device or build"});
+            Error{ErrorCode::InvalidArgument, "compression is not available for this device or build"});
     }
 
     // SEND(id, path_length, "path,mode"). The mode is decimal and includes the

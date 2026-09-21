@@ -183,9 +183,9 @@ The device then answers with the file's chunks and `DONE`:
 followed by an extra 8-byte setup packet, `sync_recv_v2 { id, flags }`, that selects a
 compression codec (`kSyncFlagBrotli`, `kSyncFlagLz4`, or `kSyncFlagZstd`). With
 `flags = 0` the transfer is byte-for-byte the v1 form. `pull` uses the v2 form with
-zstd when the device advertised `sendrecv_v2_zstd` and the build has the codec, and the
-v1 form otherwise, so a device without the feature still works. `sendrecv_v2_zstd` is
-the only codec implemented; `kSyncFlagLz4` and `kSyncFlagBrotli` are not.
+the best codec both sides have, in adb's order, and the v1 form otherwise, so a device
+without the feature still works. `sendrecv_v2_zstd` is
+the codecs implemented, in adb's order; `kSyncFlagBrotli` is not.
 
 The `DATA` payload is the only thing compressed: its `sync_data { id, size }` header is
 unchanged and `size` is the compressed size, which a frame can make larger than the chunk

@@ -99,15 +99,20 @@ Result<std::vector<DirEntry>> ADBCPP_API list(Connection &connection, std::strin
  */
 enum class SyncCompression
 {
-    /// zstd when the build has it and the device advertised `sendrecv_v2_zstd`,
-    /// and the v1 forms otherwise. This is the default.
+    /// The best codec both sides have, in adb's order (`zstd`, then `lz4`), and
+    /// the v1 forms otherwise. This is the default.
     Auto,
     /// The v1 forms, with no compression.
     None,
     /// The v2 forms with zstd. It is an `ErrorCode::InvalidArgument` error when
-    /// the build has no codec or the device did not advertise `sendrecv_v2_zstd`,
-    /// rather than a silent fallback, so the caller is not misled.
-    Zstd
+    /// the build has no zstd codec or the device did not advertise
+    /// `sendrecv_v2_zstd`, rather than a silent fallback, so the caller is not
+    /// misled.
+    Zstd,
+    /// The v2 forms with lz4. It is an `ErrorCode::InvalidArgument` error when
+    /// the build has no lz4 codec or the device did not advertise
+    /// `sendrecv_v2_lz4`, rather than a silent fallback.
+    Lz4
 };
 
 /**
