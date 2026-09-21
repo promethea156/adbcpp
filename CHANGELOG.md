@@ -33,7 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `adbcpp_usb_example` takes `--compression <auto|none|zstd|lz4|brotli>` for
   `--pull` and `--push`, so the v1 form and each codec can be selected from the
   command line, and `tools/bench-compression.ps1` times each mode against `none` and
-  prints the speedup. `docs/06-sync-protocol.md` records the measured result.
+  prints the speedup. `docs/06-sync-protocol.md` records the measured result, and
+  `docs/00-start-here.md` explains the three codecs and why `Auto` prefers zstd.
 
 ## [2.1.0] - 2026-09-21
 
