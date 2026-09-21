@@ -8,7 +8,7 @@ A small, self-contained **ADB (Android Debug Bridge) client, as a C++20 library*
 
 **Minimum ADB protocol version: `0x01000001`.** The library advertises this version in its CNXN message (`kVersion` in `include/adbcpp/protocol/commands.hpp`), which matches AOSP's `A_VERSION`.
 
-> **Status: 2.0.1.** The [initial scope](docs/01-objective.md#initial-scope) is complete, and every fallible operation returns a `Result<T>` instead of throwing. See [`CHANGELOG.md`](CHANGELOG.md) and [`docs/03-roadmap.md`](docs/03-roadmap.md).
+> **Status: 2.1.0.** The [initial scope](docs/01-objective.md#initial-scope) is complete, and every fallible operation returns a `Result<T>` instead of throwing. See [`CHANGELOG.md`](CHANGELOG.md) and [`docs/03-roadmap.md`](docs/03-roadmap.md).
 
 ## How this was built
 

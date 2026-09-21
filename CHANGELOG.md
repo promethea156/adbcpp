@@ -7,12 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-09-21
+
 ### Added
 
 - Optional, level-configurable logging in [`include/adbcpp/log.hpp`](include/adbcpp/log.hpp)
   (`set_logger`, `clear_logger`, `is_logging`, `log`), wired into `Session`,
   `Connection`, `Stream`, and the USB and TCP transports. It reports frames, retries,
   and state changes, and never logs key material or a payload.
+
+### Changed
+
+- `docs/03-roadmap.md` records the 2.0 release, replaces the completed "Proposed
+  Order for What Remains" table with the current open backlog, and marks logging as
+  implemented.
+- `docs/05-usage.md` documents logging, and `docs/00-start-here.md` states the
+  current version.
+
+### Fixed
+
+- The CI release job publishes the tag's own changelog section instead of the empty
+  `[Unreleased]` section, which is what v2.0.0 and v2.0.1 were published with.
 
 ## [2.0.1] - 2026-09-21
 
@@ -97,7 +112,8 @@ over USB and TCP, with no dependency on the ADB server or the `adb` binary.
 
 - A `push` chunk is written as one message.
 
-[Unreleased]: https://github.com/promethea156/adbcpp/compare/v2.0.1...HEAD
+[Unreleased]: https://github.com/promethea156/adbcpp/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/promethea156/adbcpp/releases/tag/v2.1.0
 [2.0.1]: https://github.com/promethea156/adbcpp/releases/tag/v2.0.1
 [2.0.0]: https://github.com/promethea156/adbcpp/releases/tag/v2.0.0
 [1.0.0]: https://github.com/promethea156/adbcpp/releases/tag/v1.0.0
