@@ -19,6 +19,7 @@ option(ADBCPP_BUILD_EXAMPLES "Build adbcpp examples" ${ADBCPP_IS_TOP_LEVEL})
 option(ADBCPP_BUILD_DOCS "Build adbcpp documentation" OFF)
 option(ADBCPP_BUILD_USB "Build the adbcpp USB backend (libusb)" ${ADBCPP_IS_TOP_LEVEL})
 option(ADBCPP_BUILD_COMPRESSION "Build adbcpp compression (zstd)" ${ADBCPP_IS_TOP_LEVEL})
+option(ADBCPP_BUILD_LZ4 "Build the adbcpp lz4 codec (lz4)" ${ADBCPP_IS_TOP_LEVEL})
 option(ADBCPP_INSTALL "Generate adbcpp install rules" ${ADBCPP_IS_TOP_LEVEL})
 
 set(CMAKE_CXX_STANDARD 20)
@@ -69,6 +70,31 @@ if(ADBCPP_BUILD_COMPRESSION)
   FetchContent_MakeAvailable(zstd)
 endif()
 
+# lz4 provides the second codec the v2 `RECV`/`SEND` forms can use (see
+# `docs/09-sendrecv-v2.md`). It is fetched only when it is built, and its CLI is
+# turned off before `FetchContent_MakeAvailable`, the same trap as
+# `ZSTD_BUILD_PROGRAMS` above. It is BSD-2-Clause, so it carries no copyleft
+# obligation.
+if(ADBCPP_BUILD_LZ4)
+  set(LZ4_BUILD_CLI OFF CACHE BOOL "" FORCE)
+  set(LZ4_BUILD_LEGACY_LZ4C OFF CACHE BOOL "" FORCE)
+  set(LZ4_BUILD_LEGACY_LZ4HC OFF CACHE BOOL "" FORCE)
+  FetchContent_Declare(
+    lz4
+    GIT_REPOSITORY https://github.com/lz4/lz4.git
+    GIT_TAG v1.10.0
+    SOURCE_SUBDIR build/cmake
+  )
+  FetchContent_MakeAvailable(lz4)
+endif()
+
+# The v2 `RECV`/`SEND` forms are compiled in when any codec is built, and
+# `ADBCPP_HAS_COMPRESSION` gates that wire-format code. Each codec has its own
+# define so a build can turn one on without the others.
+if(ADBCPP_BUILD_COMPRESSION OR ADBCPP_BUILD_LZ4)
+  set(ADBCPP_HAVE_COMPRESSION TRUE)
+endif()
+
 add_library(adbcpp
   src/app.cpp
   src/connection.cpp
@@ -101,14 +127,22 @@ if(WIN32)
   target_link_libraries(adbcpp PRIVATE ws2_32)
 endif()
 
-# `src/compression.cpp` uses `<zstd.h>`, but the header stays internal, so zstd
-# is a private dependency of the core and no zstd type reaches the public API.
-# `ADBCPP_HAS_COMPRESSION` is defined only when the codec is built, so
-# `src/sync.cpp` compiles the v2 path in or out with it.
-if(ADBCPP_BUILD_COMPRESSION)
+# `src/compression.cpp` uses `<zstd.h>` and `<lz4frame.h>`, but those headers
+# stay internal, so zstd and lz4 are private dependencies of the core and no codec
+# type reaches the public API. `ADBCPP_HAS_COMPRESSION` gates the v2 wire format
+# and is defined when any codec is built; each codec also has its own define, so a
+# build can turn one on without the others and the banner only names the built ones.
+if(ADBCPP_HAVE_COMPRESSION)
   target_sources(adbcpp PRIVATE src/compression.cpp)
-  target_link_libraries(adbcpp PRIVATE libzstd_static)
   target_compile_definitions(adbcpp PRIVATE ADBCPP_HAS_COMPRESSION)
+endif()
+if(ADBCPP_BUILD_COMPRESSION)
+  target_link_libraries(adbcpp PRIVATE libzstd_static)
+  target_compile_definitions(adbcpp PRIVATE ADBCPP_HAS_ZSTD)
+endif()
+if(ADBCPP_BUILD_LZ4)
+  target_link_libraries(adbcpp PRIVATE lz4_static)
+  target_compile_definitions(adbcpp PRIVATE ADBCPP_HAS_LZ4)
 endif()
 
 set_target_properties(adbcpp PROPERTIES
@@ -197,6 +231,22 @@ if(ADBCPP_INSTALL)
     install(FILES
       "${zstd_SOURCE_DIR}/lib/zstd.h"
       "${zstd_SOURCE_DIR}/lib/zstd_errors.h"
+      DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
+  endif()
+
+  if(ADBCPP_BUILD_LZ4)
+    install(TARGETS lz4_static
+      EXPORT adbcppTargets
+      RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+      LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+      ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+      INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
+    install(FILES
+      "${lz4_SOURCE_DIR}/lib/lz4.h"
+      "${lz4_SOURCE_DIR}/lib/lz4frame.h"
+      "${lz4_SOURCE_DIR}/lib/lz4hc.h"
       DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     )
   endif()

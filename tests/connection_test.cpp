@@ -42,17 +42,28 @@ adbcpp::protocol::Message make_message(std::uint32_t command, std::uint32_t arg0
     return message;
 }
 
+void append_feature(std::vector<std::byte> &identity, std::string_view feature)
+{
+    identity.insert(identity.end(), reinterpret_cast<const std::byte *>(feature.data()),
+                    reinterpret_cast<const std::byte *>(feature.data()) + feature.size());
+}
+
 // The CNXN banner the host writes: `kSystemIdentity`, plus the v2 `RECV`/`SEND`
-// features when the codec is built in, exactly as `Connection::connect` builds it.
+// features and each codec that is built in, exactly as `Connection::connect`
+// builds it.
 std::vector<std::byte> expected_identity()
 {
     std::vector<std::byte> identity(
         reinterpret_cast<const std::byte *>(adbcpp::kSystemIdentity.data()),
         reinterpret_cast<const std::byte *>(adbcpp::kSystemIdentity.data()) + adbcpp::kSystemIdentity.size());
 #if defined(ADBCPP_HAS_COMPRESSION)
-    const auto features = adbcpp::kSendRecvV2Features;
-    identity.insert(identity.end(), reinterpret_cast<const std::byte *>(features.data()),
-                    reinterpret_cast<const std::byte *>(features.data()) + features.size());
+    append_feature(identity, adbcpp::kSendRecvV2Feature);
+#    if defined(ADBCPP_HAS_ZSTD)
+    append_feature(identity, adbcpp::kSendRecvV2ZstdFeature);
+#    endif
+#    if defined(ADBCPP_HAS_LZ4)
+    append_feature(identity, adbcpp::kSendRecvV2Lz4Feature);
+#    endif
 #endif
     return identity;
 }

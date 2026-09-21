@@ -2,9 +2,9 @@
 
 This document plans issue [#1](https://github.com/promethea156/adbcpp/issues/1): using
 the `sendrecv_v2` forms of `RECV`/`SEND` with zstd so a transfer can be compressed.
-LZ4 ([#35](https://github.com/promethea156/adbcpp/issues/35)) and brotli
-([#34](https://github.com/promethea156/adbcpp/issues/34)) are follow-ups, so #1 is
-zstd-only. It is a plan, not a description of shipped code;
+LZ4 ([#35](https://github.com/promethea156/adbcpp/issues/35)) followed, and brotli
+([#34](https://github.com/promethea156/adbcpp/issues/34)) is a follow-up. It is a plan,
+not a description of shipped code;
 [`06-sync-protocol.md`](06-sync-protocol.md) describes the v1 forms that are shipped
 today.
 
@@ -88,9 +88,9 @@ All three are permissive, so none adds a copyleft obligation. The project's
 self-contained goal is about not depending on `adb`/the ADB server, not about zero
 libraries: it already vendors libusb and mbedTLS. Zstd is the modern default and the
 best ratio, and AOSP's own `ResolveCompressionType` prefers it, so it is implemented
-first. LZ4 ([#35](https://github.com/promethea156/adbcpp/issues/35)) and brotli
-([#34](https://github.com/promethea156/adbcpp/issues/34)) are deferred; if either is added
-later, only its feature name is advertised.
+first, and LZ4 ([#35](https://github.com/promethea156/adbcpp/issues/35)) followed in the
+same way. Brotli ([#34](https://github.com/promethea156/adbcpp/issues/34)) is deferred;
+if it is added later, only its feature name is advertised.
 
 The zstd usage is AOSP's exactly, from `compression_utils.h`:
 

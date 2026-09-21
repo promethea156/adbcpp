@@ -121,9 +121,16 @@ Result<Connection> Connection::connect(Transport &transport, std::span<const std
     // payload with no trailing NUL (blocker 7 in `04-blockers.md`).
     std::string identity(kSystemIdentity);
 #if defined(ADBCPP_HAS_COMPRESSION)
-    // Only advertise the v2 `RECV`/`SEND` forms when their codec is built in,
-    // so the banner never claims a service the library cannot honor (blocker 32).
-    identity += kSendRecvV2Features;
+    // Only advertise the v2 `RECV`/`SEND` forms when a codec is built in, and
+    // each codec name only when that codec is built, so the banner never claims
+    // a service the library cannot honor (blocker 32).
+    identity += kSendRecvV2Feature;
+#    if defined(ADBCPP_HAS_ZSTD)
+    identity += kSendRecvV2ZstdFeature;
+#    endif
+#    if defined(ADBCPP_HAS_LZ4)
+    identity += kSendRecvV2Lz4Feature;
+#    endif
 #endif
     if (advertise_delayed_ack)
     {

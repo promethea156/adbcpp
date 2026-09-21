@@ -29,10 +29,17 @@ target_link_libraries(adbcpp_tests
 # The v2 sync tests compress and decompress with zstd, and the codec test
 # includes the internal `src/compression.hpp`, so the library, its source
 # directory, and `ADBCPP_HAS_COMPRESSION` are added when it is built.
-if(ADBCPP_BUILD_COMPRESSION)
-  target_link_libraries(adbcpp_tests PRIVATE libzstd_static)
+if(ADBCPP_HAVE_COMPRESSION)
   target_include_directories(adbcpp_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
   target_compile_definitions(adbcpp_tests PRIVATE ADBCPP_HAS_COMPRESSION)
+endif()
+if(ADBCPP_BUILD_COMPRESSION)
+  target_link_libraries(adbcpp_tests PRIVATE libzstd_static)
+  target_compile_definitions(adbcpp_tests PRIVATE ADBCPP_HAS_ZSTD)
+endif()
+if(ADBCPP_BUILD_LZ4)
+  target_link_libraries(adbcpp_tests PRIVATE lz4_static)
+  target_compile_definitions(adbcpp_tests PRIVATE ADBCPP_HAS_LZ4)
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
@@ -44,8 +51,14 @@ if(ADBCPP_BUILD_USB)
   target_link_libraries(adbcpp_device_tests
     PRIVATE adbcpp::usb adbcpp::crypto
   )
-  if(ADBCPP_BUILD_COMPRESSION)
+  if(ADBCPP_HAVE_COMPRESSION)
     target_compile_definitions(adbcpp_device_tests PRIVATE ADBCPP_HAS_COMPRESSION)
+  endif()
+  if(ADBCPP_BUILD_COMPRESSION)
+    target_compile_definitions(adbcpp_device_tests PRIVATE ADBCPP_HAS_ZSTD)
+  endif()
+  if(ADBCPP_BUILD_LZ4)
+    target_compile_definitions(adbcpp_device_tests PRIVATE ADBCPP_HAS_LZ4)
   endif()
 
   # See examples/CMakeLists.txt: the copy is Windows-only because
