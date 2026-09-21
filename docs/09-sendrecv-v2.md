@@ -126,29 +126,40 @@ FetchContent_MakeAvailable(zstd)
 `EXPECTED_BUILD_TESTS` are (blockers 20 and 22): an option set afterwards has no
 effect.
 
-A new `adbcpp-compression` target keeps `<zstd.h>` out of the public headers, exactly
-like `adbcpp::usb` keeps `<libusb.h>` out:
+`<zstd.h>` is kept out of the public headers by putting the codec in
+`src/compression.{hpp,cpp}`, which no public header includes, so no zstd type reaches
+a consumer:
 
 ```cpp
-// include/adbcpp/compression.hpp
+// src/compression.hpp
 namespace adbcpp
 {
-/// Compresses `data` with zstd, or reports why it cannot.
-Result<std::vector<std::byte>> ADBCPP_API compress_zstd(std::span<const std::byte> data);
+/// Compresses one sync chunk as a complete zstd frame.
+Result<std::vector<std::byte>> compress_zstd(std::span<const std::byte> input);
 
-/// Decompresses at most `uncompressed_size` bytes with zstd.
-Result<std::vector<std::byte>> ADBCPP_API decompress_zstd(std::span<const std::byte> data,
-                                                        std::size_t uncompressed_size);
+/// Decompresses a zstd stream incrementally, across `DATA` chunks.
+class ZstdDecoder
+{
+  public:
+    Result<std::vector<std::byte>> decode(std::span<const std::byte> input);
+};
 }
 ```
 
-The core links `adbcpp-compression` **privately**, so a consumer's public headers never
-see zstd. The static target propagates its private dependency to the final link, so zstd
-joins the install/export set like mbedcrypto (see `CMakeLists.txt`).
+`adbcpp` links `libzstd_static` **privately** and defines `ADBCPP_HAS_COMPRESSION`
+on itself, so a consumer's public headers never see zstd. A private dependency of a
+static library still propagates to the final link, so zstd joins the install/export set
+like mbedcrypto (see `CMakeLists.txt`).
 
-When `ADBCPP_BUILD_COMPRESSION=OFF`, the target is not built, `pull`/`push` always use
-v1, and the banner does not advertise `sendrecv_v2`. The core compiles either way,
-because `src/sync.cpp` guards the v2 path with `#if defined(ADBCPP_HAS_COMPRESSION)`.
+The codec is compiled into the core rather than into a separate target, because a
+separate `adbcpp-compression` target would report failures through `Result`/`Error` and
+therefore link `adbcpp::adbcpp`, while the core would link it back to call it — a link
+cycle. A separate target would only be needed if the codec were part of the public API,
+as `adbcpp::crypto` and `adbcpp::usb` are.
+
+When `ADBCPP_BUILD_COMPRESSION=OFF`, `src/compression.cpp` is not built, `pull`/`push`
+always use v1, and the banner does not advertise `sendrecv_v2`. The core compiles either
+way, because `src/sync.cpp` guards the v2 path with `#if defined(ADBCPP_HAS_COMPRESSION)`.
 
 ## The public API
 
@@ -215,14 +226,16 @@ adds the setup packet for no gain, so v1 is used instead. This is recorded here.
 
 `src/sync.cpp` gains, alongside the v1 helpers:
 
-- `kSendV2`, `kRecvV2`, `kSyncFlagZstd`.
-- `write_send_v2(stream, spec, mode, flags)` and `write_recv_v2(stream, path, flags)`, each
-  one write of the path request and the setup packet, like AOSP's `SendSend2`/`SendRecv2`.
+- `kRecvV2`, `kSendV2`, `kSyncFlagZstd`.
+- `write_recv_v2(stream, path)` and `write_send_v2(stream, path, mode)`, each one write
+  of the path request and the setup packet, like AOSP's `SendRecv2`/`SendSend2`. The setup
+  packet's flags are `kSyncFlagZstd`, since zstd is the only codec.
 - `pull_v2` and `push_v2`, which compress or decompress each `DATA` chunk with zstd and
   otherwise follow the v1 loops. `DONE` and `FAIL` are unchanged.
-- `run_pull`/`run_push` dispatch on the negotiated form.
+- `pull`/`push` dispatch on the negotiated form before they open the stream.
 
-The v1 `pull`/`push` are unchanged, so a device without the feature keeps working.
+The v1 `pull`/`push` bodies are otherwise unchanged, so a device without the feature keeps
+working.
 
 ## The tests
 
@@ -237,11 +250,11 @@ The v1 `pull`/`push` are unchanged, so a device without the feature keeps workin
 
 ## The steps
 
-1. **CMake and the target.** Add `ADBCPP_BUILD_COMPRESSION`, the FetchContent, and
-   `adbcpp-compression`; add `include/adbcpp/compression.hpp` and `src/compression.cpp`.
-2. **The codec.** Implement `compress_zstd`/`decompress_zstd` with the AOSP calls, and a
-   unit test that round-trips a compressible buffer and one that compresses to more than it
-   started with.
+1. **CMake and the codec.** Add `ADBCPP_BUILD_COMPRESSION`, the FetchContent, and
+   `src/compression.{hpp,cpp}`, linked privately to the core.
+2. **The codec.** Implement `compress_zstd` and `ZstdDecoder::decode` with the AOSP calls,
+   and a unit test that round-trips a compressible buffer, one that does not compress, and one
+   whose frame is split across chunks.
 3. **The API and the banner.** Add `SyncCompression`, the two parameters, and the banner
    names behind `ADBCPP_HAS_COMPRESSION`.
 4. **The v2 wire format.** Add the ids, the setup writers, and `pull_v2`/`push_v2` with the
@@ -255,8 +268,9 @@ The v1 `pull`/`push` are unchanged, so a device without the feature keeps workin
 
 - **The compressed chunk can be larger than the input.** Zstd on incompressible data adds a
   header, so `size` can exceed the uncompressed chunk. The `SYNC_DATA_MAX` bound is on the
-  compressed size, so a chunk at the cap is still framed; the encoder must be fed at most
-  `SYNC_DATA_MAX` and its output is at most `SYNC_DATA_MAX` for level 1. This must be
+  uncompressed chunk, so the decoder's output buffer is `SYNC_DATA_MAX`; the compressed size
+  is bounded by `ZSTD_compressBound(SYNC_DATA_MAX)` instead, which is what the encoder cannot
+  exceed and what `pull` checks the chunk size against. This must be
   tested, not assumed.
 - **The device must advertise the feature.** The attached device does; an older one may not, so
   the v1 fallback must stay correct and tested.
