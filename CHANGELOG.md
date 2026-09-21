@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-09-21
+
+### Added
+
+- [`docs/00-start-here.md`](docs/00-start-here.md), a plain-language tour of the
+  project for a first-time reader, linked from the README.
+
+### Changed
+
+- `docs/01-objective.md` states the minimum supported Android version (7.0, API 24)
+  and ADB protocol version (`0x01000001`).
+- `docs/03-roadmap.md` lists issues #22 and #23.
+
 ## [2.0.0] - 2026-09-21
 
 ### Added
@@ -77,6 +90,7 @@ over USB and TCP, with no dependency on the ADB server or the `adb` binary.
 
 - A `push` chunk is written as one message.
 
-[Unreleased]: https://github.com/promethea156/adbcpp/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/promethea156/adbcpp/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/promethea156/adbcpp/releases/tag/v2.0.1
 [2.0.0]: https://github.com/promethea156/adbcpp/releases/tag/v2.0.0
 [1.0.0]: https://github.com/promethea156/adbcpp/releases/tag/v1.0.0
