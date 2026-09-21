@@ -94,13 +94,12 @@ Result<std::vector<DirEntry>> ADBCPP_API list(Connection &connection, std::strin
  * @brief How `pull` and `push` may compress a transfer.
  *
  * The v2 `RECV`/`SEND` forms carry a compression flag, and the v1 forms do not.
- * The codec is zstd, the one adb prefers, and it is built only when
- * `ADBCPP_BUILD_COMPRESSION` is on.
+ * Each codec is built only when its own `ADBCPP_BUILD_*` option is on.
  */
 enum class SyncCompression
 {
-    /// The best codec both sides have, in adb's order (`zstd`, then `lz4`), and
-    /// the v1 forms otherwise. This is the default.
+    /// The best codec both sides have, in adb's order (`zstd`, then `lz4`, then
+    /// `brotli`), and the v1 forms otherwise. This is the default.
     Auto,
     /// The v1 forms, with no compression.
     None,
@@ -112,7 +111,11 @@ enum class SyncCompression
     /// The v2 forms with lz4. It is an `ErrorCode::InvalidArgument` error when
     /// the build has no lz4 codec or the device did not advertise
     /// `sendrecv_v2_lz4`, rather than a silent fallback.
-    Lz4
+    Lz4,
+    /// The v2 forms with brotli. It is an `ErrorCode::InvalidArgument` error
+    /// when the build has no brotli codec or the device did not advertise
+    /// `sendrecv_v2_brotli`, rather than a silent fallback.
+    Brotli
 };
 
 /**
@@ -124,10 +127,11 @@ enum class SyncCompression
  * `FAIL` message and is returned as an `ErrorCode::Device` error carrying the
  * daemon's reason.
  *
- * `compression` selects the request form. `Auto` uses the v2 form with zstd when the
- * device advertised `sendrecv_v2_zstd` and the build has the codec, and the v1 form
- * otherwise, so a caller who does not care gets the best available. `None` always
- * uses the v1 form. `Zstd` requires the device to have advertised it.
+ * `compression` selects the request form. `Auto` uses the v2 form with the best
+ * codec both sides have, in adb's order (zstd, then lz4, then brotli), and the v1
+ * form otherwise, so a caller who does not care gets the best available. `None`
+ * always uses the v1 form. `Zstd`, `Lz4`, or `Brotli` requires the device to have
+ * advertised that codec.
  *
  * `local_path` is created if it does not exist and truncated if it does, and its
  * parent directory must already exist. A transfer that fails part way through leaves

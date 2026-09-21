@@ -24,11 +24,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one thread.
 - `pull` and `push` use the v2 `RECV`/`SEND` forms with a codec when the build
   has one and the device advertised it, so a transfer can compress.
-  `SyncCompression` selects the codec per call (`Auto` prefers zstd, then lz4), and
-  `Auto` falls back to the v1 forms, which still work for a device without the
-  feature. zstd (`ADBCPP_BUILD_COMPRESSION`) and lz4 (`ADBCPP_BUILD_LZ4`) are each
-  fetched with `FetchContent` and linked privately, and the banner names only the
-  codecs that are built in. `docs/09-sendrecv-v2.md` is the plan.
+  `SyncCompression` selects the codec per call (`Auto` prefers zstd, then lz4, then
+  brotli), and `Auto` falls back to the v1 forms, which still work for a device
+  without the feature. zstd (`ADBCPP_BUILD_COMPRESSION`), lz4 (`ADBCPP_BUILD_LZ4`),
+  and brotli (`ADBCPP_BUILD_BROTLI`) are each fetched with `FetchContent` and linked
+  privately, and the banner names only the codecs that are built in.
+  `docs/09-sendrecv-v2.md` is the plan.
+- `adbcpp_usb_example` takes `--compression <auto|none|zstd|lz4|brotli>` for
+  `--pull` and `--push`, so the v1 form and each codec can be selected from the
+  command line, and `tools/bench-compression.ps1` times each mode against `none` and
+  prints the speedup. `docs/06-sync-protocol.md` records the measured result, and
+  `docs/00-start-here.md` explains the three codecs and why `Auto` prefers zstd.
 
 ## [2.1.0] - 2026-09-21
 

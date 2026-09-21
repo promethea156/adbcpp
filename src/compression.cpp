@@ -31,6 +31,12 @@ std::string lz4_error(std::string_view operation, std::size_t code)
 }
 #endif
 
+#if defined(ADBCPP_HAS_BROTLI)
+// The compression quality adb uses. The transfer is link-bound, so a faster,
+// lower setting is the right trade, and it matches AOSP's `BrotliEncoder`.
+constexpr int kBrotliQuality = 1;
+#endif
+
 } // namespace
 
 #if defined(ADBCPP_HAS_ZSTD)
@@ -147,6 +153,76 @@ Result<std::vector<std::byte>> Lz4Decoder::decode(std::span<const std::byte> inp
         // A call that consumes nothing and produces nothing needs more input, so
         // the frame is not over; without this the loop would spin on it.
         if (source_size == 0 && destination_size == 0)
+        {
+            break;
+        }
+    }
+    return output;
+}
+#endif
+
+#if defined(ADBCPP_HAS_BROTLI)
+Result<std::vector<std::byte>> compress_brotli(std::span<const std::byte> input)
+{
+    // `BrotliEncoderMaxCompressedSize` is the bound the encoder cannot exceed.
+    // It returns zero only when the bound overflows `size_t`, which a chunk cannot,
+    // so the fallback is never reached in practice.
+    std::size_t size = BrotliEncoderMaxCompressedSize(input.size());
+    if (size == 0)
+    {
+        size = input.size() + (input.size() / 4) + 1024;
+    }
+
+    std::vector<std::byte> output(size);
+    std::size_t encoded_size = output.size();
+    if (BrotliEncoderCompress(kBrotliQuality, BROTLI_DEFAULT_WINDOW, BROTLI_DEFAULT_MODE, input.size(),
+                              reinterpret_cast<const std::uint8_t *>(input.data()), &encoded_size,
+                              reinterpret_cast<std::uint8_t *>(output.data())) == BROTLI_FALSE)
+    {
+        return tl::unexpected(Error{ErrorCode::Protocol, "brotli compression failed"});
+    }
+    output.resize(encoded_size);
+    return output;
+}
+
+BrotliDecoder::BrotliDecoder()
+    : decoder_(BrotliDecoderCreateInstance(nullptr, nullptr, nullptr))
+{
+}
+
+Result<std::vector<std::byte>> BrotliDecoder::decode(std::span<const std::byte> input)
+{
+    if (decoder_ == nullptr)
+    {
+        return tl::unexpected(Error{ErrorCode::Protocol, "the brotli decompression context could not be created"});
+    }
+
+    // The output is appended across calls, because a stream can span chunks and a
+    // chunk can hold more than one stream. `BrotliDecoderDecompressStream` reports
+    // how much it consumed and produced through the two sizes and keeps its own
+    // input position, so the remaining input is passed back in.
+    std::vector<std::byte> output;
+    std::size_t available_in = input.size();
+    const std::uint8_t *next_in = reinterpret_cast<const std::uint8_t *>(input.data());
+    while (available_in > 0)
+    {
+        std::array<std::byte, kMaxChunkSize> buffer{};
+        std::size_t available_out = buffer.size();
+        std::uint8_t *next_out = reinterpret_cast<std::uint8_t *>(buffer.data());
+        const std::size_t consumed_before = available_in;
+        const BrotliDecoderResult result =
+            BrotliDecoderDecompressStream(decoder_.get(), &available_in, &next_in, &available_out, &next_out, nullptr);
+        if (result == BROTLI_DECODER_RESULT_ERROR)
+        {
+            return tl::unexpected(
+                Error{ErrorCode::Protocol, std::string("brotli decompression failed: ") +
+                                               BrotliDecoderErrorString(BrotliDecoderGetErrorCode(decoder_.get()))});
+        }
+        output.insert(output.end(), buffer.data(), buffer.data() + (buffer.size() - available_out));
+
+        // A call that consumes nothing and produces nothing needs more input, so
+        // the stream is not over; without this the loop would spin on it.
+        if (available_in == consumed_before && available_out == buffer.size())
         {
             break;
         }

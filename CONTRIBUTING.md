@@ -44,7 +44,6 @@ need little context; those labelled
 Reasonable starting points today:
 
 - **Verify the build on Linux or macOS** ([#26](https://github.com/promethea156/adbcpp/issues/26), [#25](https://github.com/promethea156/adbcpp/issues/25)) — needs a machine, since CI only compiles.
-- **Add the brotli codec** ([#34](https://github.com/promethea156/adbcpp/issues/34)) — the last codec beside zstd and lz4, with the format in [`docs/09-sendrecv-v2.md`](docs/09-sendrecv-v2.md).
 
 If an issue looks stale or already done, say so in it rather than guessing.
 
@@ -63,7 +62,7 @@ Read [`docs/01-objective.md`](docs/01-objective.md) for the architecture and the
 
 - The library never throws. Every fallible operation returns a `Result<T>`.
 - Public declarations carry a Doxygen comment.
-- The core adds no third-party dependency beyond `tl::expected` and, when compression is built, zstd and lz4, all linked privately; `crypto` and `usb` are optional backends.
+- The core adds no third-party dependency beyond `tl::expected` and, when compression is built, zstd, lz4, and brotli, all linked privately; `crypto` and `usb` are optional backends.
 - Comments explain *why*, matching the surrounding code.
 
 ## Set up

@@ -20,6 +20,10 @@
 #if defined(ADBCPP_HAS_ZSTD)
 #    include <zstd.h>
 #endif
+#if defined(ADBCPP_HAS_BROTLI)
+#    include <brotli/decode.h>
+#    include <brotli/encode.h>
+#endif
 
 #include "adbcpp/connection.hpp"
 #include "adbcpp/protocol/commands.hpp"
@@ -242,6 +246,30 @@ std::string decompress_lz4(const std::vector<std::byte> &compressed)
     REQUIRE(!LZ4F_isError(code));
     LZ4F_freeDecompressionContext(context);
     return std::string(reinterpret_cast<const char *>(output.data()), destination_size);
+}
+#endif
+
+#if defined(ADBCPP_HAS_BROTLI)
+// Feeds `data` compressed with brotli inside a DATA chunk, as the v2 form does.
+void feed_data_brotli(adbcpp::testing::MockTransport &transport, const std::string &data)
+{
+    std::vector<std::byte> compressed(BrotliEncoderMaxCompressedSize(data.size()));
+    std::size_t size = compressed.size();
+    REQUIRE(BrotliEncoderCompress(1, BROTLI_DEFAULT_WINDOW, BROTLI_DEFAULT_MODE, data.size(),
+                                  reinterpret_cast<const std::uint8_t *>(data.data()), &size,
+                                  reinterpret_cast<std::uint8_t *>(compressed.data())) == BROTLI_TRUE);
+    compressed.resize(size);
+    feed_data(transport, compressed);
+}
+
+// Decompresses a v2 DATA chunk the host wrote.
+std::string decompress_brotli(const std::vector<std::byte> &compressed)
+{
+    std::vector<std::byte> output(64 * 1024);
+    std::size_t size = output.size();
+    REQUIRE(BrotliDecoderDecompress(compressed.size(), reinterpret_cast<const std::uint8_t *>(compressed.data()), &size,
+                                    reinterpret_cast<std::uint8_t *>(output.data())) == BROTLI_DECODER_RESULT_SUCCESS);
+    return std::string(reinterpret_cast<const char *>(output.data()), size);
 }
 #endif
 
@@ -980,5 +1008,109 @@ TEST_CASE("push compresses the v2 chunks when lz4 is advertised", "[sync]")
     const std::vector<std::byte> compressed(written.begin() + data_offset + 8,
                                             written.begin() + data_offset + 8 + size);
     REQUIRE(decompress_lz4(compressed) == text);
+}
+#endif
+
+#if defined(ADBCPP_HAS_BROTLI)
+TEST_CASE("pull decompresses the v2 chunks when brotli is advertised", "[sync]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,sendrecv_v2,sendrecv_v2_brotli");
+
+    std::string text;
+    for (int i = 0; i < 1024; ++i)
+    {
+        text += "hello world ";
+    }
+    feed_data_brotli(transport, text);
+    feed_recv_done(transport);
+
+    const auto local = temp_file("pull_brotli.bin");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::pull(connection, "/sdcard/file.txt", local));
+
+    REQUIRE(read_file(local) == text);
+    std::filesystem::remove(local);
+}
+
+TEST_CASE("pull sends the RECV v2 request with the brotli flag", "[sync]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,sendrecv_v2,sendrecv_v2_brotli");
+    feed_recv_done(transport);
+
+    const auto local = temp_file("pull_brotli_request.bin");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::pull(connection, "/sdcard/file.txt", local, adbcpp::SyncCompression::Brotli));
+
+    // RCV2(id, path_length, "path", id, flags), in one write.
+    const std::string path = "/sdcard/file.txt";
+    std::vector<std::byte> request(8 + path.size() + 8);
+    write_u32_le(request.data(), adbcpp::protocol::make_command('R', 'C', 'V', '2'));
+    write_u32_le(request.data() + 4, static_cast<std::uint32_t>(path.size()));
+    std::copy_n(reinterpret_cast<const std::byte *>(path.data()), path.size(), request.data() + 8);
+    write_u32_le(request.data() + 8 + path.size(), adbcpp::protocol::make_command('R', 'C', 'V', '2'));
+    write_u32_le(request.data() + 8 + path.size() + 4, 1u);
+
+    const auto &written = transport.written();
+    REQUIRE(std::search(written.begin(), written.end(), request.begin(), request.end()) != written.end());
+    std::filesystem::remove(local);
+}
+
+#    if defined(ADBCPP_HAS_LZ4)
+TEST_CASE("pull prefers lz4 over brotli when both are advertised", "[sync]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,sendrecv_v2,sendrecv_v2_brotli,sendrecv_v2_lz4");
+
+    std::string text;
+    for (int i = 0; i < 1024; ++i)
+    {
+        text += "hello world ";
+    }
+    // The chunks are lz4 frames, so the codec is lz4, the second in adb's order.
+    feed_data_lz4(transport, text);
+    feed_recv_done(transport);
+
+    const auto local = temp_file("pull_brotli_lz4.bin");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::pull(connection, "/sdcard/file.txt", local));
+
+    REQUIRE(read_file(local) == text);
+    std::filesystem::remove(local);
+}
+#    endif
+
+TEST_CASE("push compresses the v2 chunks when brotli is advertised", "[sync]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,stat_v2,sendrecv_v2,sendrecv_v2_brotli");
+    feed_stat_v2(transport, 2u, 0u, 0u, 0);
+    feed_second_open(transport);
+    feed_status_on(transport, kSecondDeviceId, kSecondLocalId, adbcpp::protocol::make_command('O', 'K', 'A', 'Y'));
+
+    const std::string text = "hello world\n";
+    const auto local = temp_file("push_brotli.txt", text);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::push(connection, local, "/sdcard/file.txt", adbcpp::SyncCompression::Brotli));
+    std::filesystem::remove(local);
+
+    const auto &written = transport.written();
+
+    // SND2(id, path_length, "path", id, mode, flags). The setup packet
+    // follows the path, and its flags select brotli.
+    const auto send_offset = find_id(written, "SND2");
+    const std::uint32_t spec_length = read_u32_le(written.data() + send_offset + 4);
+    const auto setup_offset = send_offset + 8 + spec_length;
+    REQUIRE(read_u32_le(written.data() + setup_offset) == adbcpp::protocol::make_command('S', 'N', 'D', '2'));
+    REQUIRE(read_u32_le(written.data() + setup_offset + 8) == 1u);
+
+    // The DATA chunk after the setup holds the compressed file, so decompressing
+    // it gives the file back.
+    const auto data_offset = find_id(written, "DATA");
+    const std::uint32_t size = read_u32_le(written.data() + data_offset + 4);
+    const std::vector<std::byte> compressed(written.begin() + data_offset + 8,
+                                            written.begin() + data_offset + 8 + size);
+    REQUIRE(decompress_brotli(compressed) == text);
 }
 #endif

@@ -183,14 +183,15 @@ The device then answers with the file's chunks and `DONE`:
 followed by an extra 8-byte setup packet, `sync_recv_v2 { id, flags }`, that selects a
 compression codec (`kSyncFlagBrotli`, `kSyncFlagLz4`, or `kSyncFlagZstd`). With
 `flags = 0` the transfer is byte-for-byte the v1 form. `pull` uses the v2 form with
-the best codec both sides have, in adb's order, and the v1 form otherwise, so a device
-without the feature still works. `sendrecv_v2_zstd` is
-the codecs implemented, in adb's order; `kSyncFlagBrotli` is not.
+the best codec both sides have, in adb's order (`zstd`, then `lz4`, then `brotli`), and
+the v1 form otherwise, so a device without the feature still works. All three codecs are
+implemented.
 
 The `DATA` payload is the only thing compressed: its `sync_data { id, size }` header is
 unchanged and `size` is the compressed size, which a frame can make larger than the chunk
-itself. The device streams one zstd frame across the chunks, so the decoder is a stream and a
-chunk boundary is not a frame boundary. See [`09-sendrecv-v2.md`](09-sendrecv-v2.md).
+itself. The device streams one compressed frame across the chunks, so the decoder is a stream
+and a chunk boundary is not a frame boundary. See
+[`09-sendrecv-v2.md`](09-sendrecv-v2.md).
 
 ## Pushing a file
 
@@ -227,8 +228,7 @@ user permission bits to the group and other bits, so a `0644` local file becomes
 `SND2` is the v2 form. Like `RCV2` it takes the `id` + `path_length` + `path`
 request, but the path is no longer a spec: the mode moves into the setup packet,
 `sync_send_v2 { id, mode, flags }`, which follows the request. The flags select the
-same codecs, and `push` uses zstd when the device advertised `sendrecv_v2_zstd`,
-exactly as `pull` does.
+same codecs, and `push` uses the best codec both sides have, exactly as `pull` does.
 
 ## STAT
 
@@ -273,8 +273,8 @@ next response; a short read here would desynchronize the whole listing.
 
 1. Reject a path longer than 1024 bytes, the same check as `list`
    (`src/sync.cpp:550`).
-2. Choose the v2 form with zstd when `compression` selects it and the device
-   advertised it, and the v1 form otherwise (`src/sync.cpp:560`).
+2. Choose the v2 form with the best codec both sides have when `compression`
+   selects it, and the v1 form otherwise (`src/sync.cpp:560`).
 3. Open the `sync:` stream and write the `RECV` request
    (`src/sync.cpp:570`, `src/sync.cpp:579`).
 4. Open the local file before the transfer starts, so a failure leaves a partial
@@ -286,7 +286,7 @@ next response; a short read here would desynchronize the whole listing.
 
 Because each chunk is written as it arrives, the file is never held in memory whole,
 so pulling a large file costs no more memory than pulling a small one. The v2 form
-feeds each compressed chunk to a streaming zstd decoder instead, because the device's
+feeds each compressed chunk to a streaming decoder instead, because the device's
 frame can span chunks.
 
 `stat`:
@@ -306,8 +306,8 @@ frame can span chunks.
 1. Reject a local path that is not a regular file (`src/sync.cpp:737`).
 2. Stat the destination, so that an existing directory receives the file under the
    local file's name (`src/sync.cpp:745`).
-3. Choose the v2 form with zstd when `compression` selects it and the device
-   advertised it, and the v1 form otherwise (`src/sync.cpp:763`).
+3. Choose the v2 form with the best codec both sides have when `compression`
+   selects it, and the v1 form otherwise (`src/sync.cpp:763`).
 4. Build the `"<path>,<mode>"` spec from the local file's permissions
    (`src/sync.cpp:775`).
 5. Open the `sync:` stream and write the `SEND` request
@@ -356,6 +356,46 @@ go further than the default 1 GiB:
 Invoke-Adb -Arguments @("kill-server")
 ./tools/bench-transfer.ps1
 ./tools/bench-transfer.ps1 -Sizes 1073741824
+```
+
+### Measured compression performance
+
+`tools/bench-compression.ps1` runs the same push-and-pull round trip for each
+`SyncCompression` mode and prints one row per mode, with the speedup against
+`none`. `none` sends the v1 forms, which is exactly what `pull`/`push` did before
+the v2 forms existed, so it is the "before" control; `zstd`, `lz4`, and `brotli` are
+the "after".
+
+The gain is real only when the payload compresses, so the script can generate either
+a text payload, which shrinks a lot, or random bytes, which cannot shrink at all. A
+text payload of repeated lines, on the same host and device as the table above:
+
+| size | payload | mode | push | push rate | pull | pull rate | vs none (push/pull) | verified |
+| ---- | ------- | ---- | ---- | --------- | ---- | --------- | ------------------ | -------- |
+| 64 MiB | text | none | 8.8 s | 7.3 MB/s | 5.2 s | 12.4 MB/s | 1x/1x | SHA-256 |
+| 64 MiB | text | zstd | 0.4 s | 146.7 MB/s | 0.2 s | 416.2 MB/s | 20.1x/33.7x | SHA-256 |
+| 64 MiB | text | lz4 | 0.5 s | 126.8 MB/s | 0.1 s | 460.6 MB/s | 17.4x/37.3x | SHA-256 |
+| 64 MiB | text | brotli | 0.5 s | 131.2 MB/s | 0.1 s | 485.8 MB/s | 18.0x/39.3x | SHA-256 |
+| 256 MiB | text | none | 34.6 s | 7.4 MB/s | 25.5 s | 10.1 MB/s | 1x/1x | SHA-256 |
+| 256 MiB | text | zstd | 1.8 s | 142.5 MB/s | 0.3 s | 901.0 MB/s | 19.3x/89.6x | SHA-256 |
+| 256 MiB | text | lz4 | 1.8 s | 146.3 MB/s | 0.3 s | 847.1 MB/s | 19.8x/84.2x | SHA-256 |
+| 256 MiB | text | brotli | 1.7 s | 146.4 MB/s | 0.3 s | 802.2 MB/s | 19.8x/79.8x | SHA-256 |
+
+The three codecs are close on this payload because all three compress a repetitive
+text to a small fraction of its size, so the link stops being the bottleneck and the
+differences between the codecs do not show. Random bytes are the other case: the payload
+cannot shrink, so the compressed form only adds the frame header and the encoder's CPU,
+and the transfer is the same as `none` (0.98x to 1x on push and 1x on pull). That is
+why `None` remains useful and why `Auto` does not force a codec.
+
+Reproduce with:
+
+```
+. ./tools/invoke-adb.ps1
+Invoke-Adb -Arguments @("kill-server")
+./tools/bench-compression.ps1
+./tools/bench-compression.ps1 -Pattern random
+./tools/bench-compression.ps1 -Modes none,zstd,lz4,brotli
 ```
 
 ## Two details that are not in the format

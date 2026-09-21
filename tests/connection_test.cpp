@@ -64,6 +64,9 @@ std::vector<std::byte> expected_identity()
 #    if defined(ADBCPP_HAS_LZ4)
     append_feature(identity, adbcpp::kSendRecvV2Lz4Feature);
 #    endif
+#    if defined(ADBCPP_HAS_BROTLI)
+    append_feature(identity, adbcpp::kSendRecvV2BrotliFeature);
+#    endif
 #endif
     return identity;
 }

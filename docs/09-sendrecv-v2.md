@@ -2,10 +2,10 @@
 
 This document plans issue [#1](https://github.com/promethea156/adbcpp/issues/1): using
 the `sendrecv_v2` forms of `RECV`/`SEND` with zstd so a transfer can be compressed.
-LZ4 ([#35](https://github.com/promethea156/adbcpp/issues/35)) followed, and brotli
-([#34](https://github.com/promethea156/adbcpp/issues/34)) is a follow-up. It is a plan,
-not a description of shipped code;
-[`06-sync-protocol.md`](06-sync-protocol.md) describes the v1 forms that are shipped
+LZ4 ([#35](https://github.com/promethea156/adbcpp/issues/35)) followed, then brotli
+([#34](https://github.com/promethea156/adbcpp/issues/34)), so all three codecs are now
+implemented. It is a plan, not a description of shipped code;
+[`06-sync-protocol.md`](06-sync-protocol.md) describes the wire format that is shipped
 today.
 
 ## Why
@@ -74,9 +74,10 @@ The codec is chosen by the setup packet's `flags`. With `flags = 0` the transfer
 byte-for-byte the v1 form apart from the setup packet, which is why a caller can force
 v2 without compression.
 
-## The codec: zstd
+## The codecs
 
-Zstandard is the choice, over LZ4 and brotli:
+All three codecs are implemented, in the order AOSP's `ResolveCompressionType`
+prefers them:
 
 | Codec | License | How easy to add | Speed / ratio |
 | --- | --- | --- | --- |
@@ -87,10 +88,16 @@ Zstandard is the choice, over LZ4 and brotli:
 All three are permissive, so none adds a copyleft obligation. The project's
 self-contained goal is about not depending on `adb`/the ADB server, not about zero
 libraries: it already vendors libusb and mbedTLS. Zstd is the modern default and the
-best ratio, and AOSP's own `ResolveCompressionType` prefers it, so it is implemented
-first, and LZ4 ([#35](https://github.com/promethea156/adbcpp/issues/35)) followed in the
-same way. Brotli ([#34](https://github.com/promethea156/adbcpp/issues/34)) is deferred;
-if it is added later, only its feature name is advertised.
+best ratio, and AOSP's own `ResolveCompressionType` prefers it, so it was implemented
+first; LZ4 ([#35](https://github.com/promethea156/adbcpp/issues/35)) followed in the
+same way, and brotli ([#34](https://github.com/promethea156/adbcpp/issues/34)) last,
+bringing many sources because it has no single-file build.
+
+Each codec has its own build option (`ADBCPP_BUILD_COMPRESSION` for zstd,
+`ADBCPP_BUILD_LZ4` for lz4, `ADBCPP_BUILD_BROTLI` for brotli) and its own
+`ADBCPP_HAS_*` define, so a build can turn one on without the others and the
+banner names only the built ones. `Auto` picks the best one both sides have, in
+adb's order.
 
 The zstd usage is AOSP's exactly, from `compression_utils.h`:
 
@@ -103,10 +110,17 @@ The zstd usage is AOSP's exactly, from `compression_utils.h`:
 The compression level is fixed at 1, like adb: the transfer is link-bound, so a faster,
 smaller-ratio setting is the right trade.
 
-## The dependency
+The lz4 usage is AOSP's `Lz4Encoder`/`Lz4Decoder`: the frame API (`LZ4F_*`), with
+independent blocks, because a block has no framing of its own. The brotli usage is
+AOSP's `BrotliEncoder`/`BrotliDecoder`: `BrotliEncoderCompress` with quality 1 for a
+complete stream per chunk, and `BrotliDecoderDecompressStream` incrementally across the
+device's chunks.
 
-Zstd is fetched with `FetchContent` behind `ADBCPP_BUILD_COMPRESSION` (default `ON`),
-like libusb behind `ADBCPP_BUILD_USB`:
+## The dependencies
+
+Zstd, lz4, and brotli are each fetched with `FetchContent` behind its own option
+(`ADBCPP_BUILD_COMPRESSION`, `ADBCPP_BUILD_LZ4`, and `ADBCPP_BUILD_BROTLI`, all
+default `ON`), like libusb behind `ADBCPP_BUILD_USB`:
 
 ```cmake
 set(ZSTD_BUILD_PROGRAMS OFF)
@@ -124,11 +138,13 @@ FetchContent_MakeAvailable(zstd)
 `ZSTD_BUILD_PROGRAMS` and `ZSTD_BUILD_TESTS` are set before
 `FetchContent_MakeAvailable` for the same reason `LIBUSB_ENABLE_UDEV` and
 `EXPECTED_BUILD_TESTS` are (blockers 20 and 22): an option set afterwards has no
-effect.
+effect. Brotli's `BUILD_SHARED_LIBS` option is handled the same way, with the
+caller's value saved and restored around its `FetchContent_MakeAvailable`, because
+brotli would otherwise force this project's shared/static choice on.
 
-`<zstd.h>` is kept out of the public headers by putting the codec in
-`src/compression.{hpp,cpp}`, which no public header includes, so no zstd type reaches
-a consumer:
+`<zstd.h>`, `<lz4frame.h>`, and the brotli headers are kept out of the public
+headers by putting the codecs in `src/compression.{hpp,cpp}`, which no public header
+includes, so no codec type reaches a consumer:
 
 ```cpp
 // src/compression.hpp
@@ -143,13 +159,16 @@ class ZstdDecoder
   public:
     Result<std::vector<std::byte>> decode(std::span<const std::byte> input);
 };
+
+// The lz4 and brotli forms are declared beside it.
 }
 ```
 
-`adbcpp` links `libzstd_static` **privately** and defines `ADBCPP_HAS_COMPRESSION`
-on itself, so a consumer's public headers never see zstd. A private dependency of a
-static library still propagates to the final link, so zstd joins the install/export set
-like mbedcrypto (see `CMakeLists.txt`).
+`adbcpp` links the codec libraries **privately** and defines
+`ADBCPP_HAS_COMPRESSION` plus one `ADBCPP_HAS_*` per built codec, so a consumer's
+public headers never see a codec. A private dependency of a static library still
+propagates to the final link, so each codec joins the install/export set like
+mbedcrypto (see `CMakeLists.txt`).
 
 The codec is compiled into the core rather than into a separate target, because a
 separate `adbcpp-compression` target would report failures through `Result`/`Error` and
@@ -157,9 +176,10 @@ therefore link `adbcpp::adbcpp`, while the core would link it back to call it â€
 cycle. A separate target would only be needed if the codec were part of the public API,
 as `adbcpp::crypto` and `adbcpp::usb` are.
 
-When `ADBCPP_BUILD_COMPRESSION=OFF`, `src/compression.cpp` is not built, `pull`/`push`
+When every codec option is off, `src/compression.cpp` is not built, `pull`/`push`
 always use v1, and the banner does not advertise `sendrecv_v2`. The core compiles either
 way, because `src/sync.cpp` guards the v2 path with `#if defined(ADBCPP_HAS_COMPRESSION)`.
+Each codec can be turned off on its own; the banner then drops only that name.
 
 ## The public API
 
@@ -169,14 +189,20 @@ Compression is opt-in and per call, matching `ShellProtocol`:
 // include/adbcpp/sync.hpp
 enum class SyncCompression
 {
-    /// zstd when the device advertised `sendrecv_v2_zstd` and the build has
-    /// compression, and v1 otherwise. This is the default.
+    /// The best codec both sides have, in adb's order (zstd, then lz4, then
+    /// brotli), and v1 otherwise. This is the default.
     Auto,
     /// The v1 `RECV`/`SEND` forms, with no compression.
     None,
     /// The v2 forms with zstd. The device must have advertised
     /// `sendrecv_v2_zstd`.
-    Zstd
+    Zstd,
+    /// The v2 forms with lz4. The device must have advertised
+    /// `sendrecv_v2_lz4`.
+    Lz4,
+    /// The v2 forms with brotli. The device must have advertised
+    /// `sendrecv_v2_brotli`.
+    Brotli
 };
 
 Status ADBCPP_API pull(Connection &connection, std::string_view remote_path,
@@ -188,24 +214,26 @@ Status ADBCPP_API push(Connection &connection, const std::filesystem::path &loca
                         SyncCompression compression = SyncCompression::Auto);
 ```
 
-`Auto` chooses v2 with zstd only when both sides can, so a caller who does not care
+`Auto` chooses v2 with the best codec both sides can, so a caller who does not care
 gets the best available, and one who wants the v1 form passes `None`. A caller who
-passes `Zstd` to a device that did not advertise it is an `InvalidArgument`, not a
-silent fallback, so the caller is not misled.
+passes `Zstd`, `Lz4`, or `Brotli` to a device that did not advertise it is an
+`InvalidArgument`, not a silent fallback, so the caller is not misled.
 
 ## The banner
 
-The host banner advertises only what is implemented, so `kSystemIdentity` gains the two
-names when the build has compression, and no others:
+The host banner advertises only what is implemented, so `kSystemIdentity` gains
+`sendrecv_v2` and each built codec, and no others:
 
 ```cpp
 // connection.hpp
-#if defined(ADBCPP_HAS_COMPRESSION)
-inline constexpr std::string_view kSystemIdentity =
-    "host::features=shell_v2,stat_v2,ls_v2,sendrecv_v2,sendrecv_v2_zstd";
-#else
+// `sendrecv_v2` is appended when any codec is built, and each codec name
+// (`sendrecv_v2_zstd`, `sendrecv_v2_lz4`, `sendrecv_v2_brotli`) only when that
+// codec is built.
 inline constexpr std::string_view kSystemIdentity = "host::features=shell_v2,stat_v2,ls_v2";
-#endif
+inline constexpr std::string_view kSendRecvV2Feature = ",sendrecv_v2";
+inline constexpr std::string_view kSendRecvV2ZstdFeature = ",sendrecv_v2_zstd";
+inline constexpr std::string_view kSendRecvV2Lz4Feature = ",sendrecv_v2_lz4";
+inline constexpr std::string_view kSendRecvV2BrotliFeature = ",sendrecv_v2_brotli";
 ```
 
 The device resets its own feature set from this list (blocker 6), so a name that is not
@@ -215,23 +243,26 @@ implemented is a promise the peer may act on; this is exactly blocker 32.
 
 `pull`/`push` choose the form as adb does:
 
-1. If the build has no compression, or the device did not advertise `sendrecv_v2`, use v1.
+1. If no codec is built, or the device did not advertise `sendrecv_v2`, use v1.
 2. Otherwise, if the device advertised `sendrecv_v2_zstd`, use v2 with `kSyncFlagZstd`.
-3. Otherwise, use v1, because no codec both sides support is implemented.
+3. Otherwise, if it advertised `sendrecv_v2_lz4`, use v2 with `kSyncFlagLz4`.
+4. Otherwise, if it advertised `sendrecv_v2_brotli`, use v2 with `kSyncFlagBrotli`.
+5. Otherwise, use v1, because no codec both sides support is implemented.
 
-Step 3 is a deliberate simplification of AOSP, which would use v2 with `flags = 0`. That
+Step 5 is a deliberate simplification of AOSP, which would use v2 with `flags = 0`. That
 adds the setup packet for no gain, so v1 is used instead. This is recorded here.
 
 ## The implementation
 
 `src/sync.cpp` gains, alongside the v1 helpers:
 
-- `kRecvV2`, `kSendV2`, `kSyncFlagZstd`.
-- `write_recv_v2(stream, path)` and `write_send_v2(stream, path, mode)`, each one write
-  of the path request and the setup packet, like AOSP's `SendRecv2`/`SendSend2`. The setup
-  packet's flags are `kSyncFlagZstd`, since zstd is the only codec.
-- `pull_v2` and `push_v2`, which compress or decompress each `DATA` chunk with zstd and
-  otherwise follow the v1 loops. `DONE` and `FAIL` are unchanged.
+- `kRecvV2`, `kSendV2`, `kSyncFlagBrotli`, `kSyncFlagLz4`, `kSyncFlagZstd`.
+- `write_recv_v2(stream, path, flags)` and `write_send_v2(stream, path, mode, flags)`, each
+  one write of the path request and the setup packet, like AOSP's
+  `SendRecv2`/`SendSend2`. The flags select the codec.
+- `choose_codec`, which returns the best codec both sides have, or `nullopt` for v1.
+- `pull_v2` and `push_v2`, which compress or decompress each `DATA` chunk with the chosen
+  codec and otherwise follow the v1 loops. `DONE` and `FAIL` are unchanged.
 - `pull`/`push` dispatch on the negotiated form before they open the stream.
 
 The v1 `pull`/`push` bodies are otherwise unchanged, so a device without the feature keeps
@@ -239,14 +270,15 @@ working.
 
 ## The tests
 
-- `tests/sync_test.cpp`: a mock device whose `RECV` v2 reply is a zstd-compressed `DATA`
+- `tests/sync_test.cpp`: a mock device whose `RECV` v2 reply is a compressed `DATA`
   chunk and whose `DONE` ends it, so `pull` decompresses it; the same for `SEND` v2, so
-  `push` compresses it and the device's `OKAY` is read; and the v1 fallback when the
-  device does not advertise the feature.
+  `push` compresses it and the device's `OKAY` is read; the v1 fallback when the
+  device does not advertise the feature; and the codec order when a device advertises more
+  than one.
 - A round trip in one test: `push` compresses a buffer, the test decompresses the bytes the
   mock received, and `pull` decompresses what the mock sends, so the two halves agree.
-- `tests/device_test.cpp`: a file round trip with `SyncCompression::Zstd` against the real
-  device, checking the contents match, and one with `None` to prove v1 still works.
+- `tests/device_test.cpp`: a file round trip with each codec against the real device, checking
+  the contents match, and one with `None` to prove v1 still works.
 
 ## The steps
 
@@ -264,12 +296,16 @@ working.
    and update [`05-usage.md`](05-usage.md), [`03-roadmap.md`](03-roadmap.md) (mark #1 done),
    blocker 32's note, [`README.md`](../README.md), and [`CHANGELOG.md`](../CHANGELOG.md).
 
+Steps 1-6 were followed for zstd, then repeated for lz4
+([#35](https://github.com/promethea156/adbcpp/issues/35)) and brotli
+([#34](https://github.com/promethea156/adbcpp/issues/34)), each behind its own option.
+
 ## The risks
 
-- **The compressed chunk can be larger than the input.** Zstd on incompressible data adds a
+- **The compressed chunk can be larger than the input.** A codec on incompressible data adds a
   header, so `size` can exceed the uncompressed chunk. The `SYNC_DATA_MAX` bound is on the
   uncompressed chunk, so the decoder's output buffer is `SYNC_DATA_MAX`; the compressed size
-  is bounded by `ZSTD_compressBound(SYNC_DATA_MAX)` instead, which is what the encoder cannot
+  is bounded by the codec's own bound instead, which is what the encoder cannot
   exceed and what `pull` checks the chunk size against. This must be
   tested, not assumed.
 - **The device must advertise the feature.** The attached device does; an older one may not, so
@@ -279,6 +315,6 @@ working.
 
 ## Acceptance
 
-`pull` and `push` use the v2 forms with zstd against a device that advertises them, the bytes
-on the wire are compressed, the transferred file is identical, and the v1 forms still work for a
-device without the feature and for a caller who passes `None`.
+`pull` and `push` use the v2 forms with the best codec both sides have against a device that
+advertises it, the bytes on the wire are compressed, the transferred file is identical, and the v1
+forms still work for a device without the feature and for a caller who passes `None`.

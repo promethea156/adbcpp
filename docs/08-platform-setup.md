@@ -15,6 +15,9 @@ the only things to install by hand are a C++20 compiler, CMake, and Git:
 | Dependency | Version | License | Where it goes | Fetched by |
 | --- | --- | --- | --- | --- |
 | `tl::expected` | v1.3.1 | CC0-1.0 | Core, public headers | `CMakeLists.txt` |
+| zstd | v1.5.7 | BSD-3-Clause | Core, linked privately | `CMakeLists.txt` |
+| lz4 | v1.10.0 | BSD-2-Clause | Core, linked privately | `CMakeLists.txt` |
+| brotli | v1.1.0 | MIT | Core, linked privately | `CMakeLists.txt` |
 | mbedTLS | v3.6.2 | Apache-2.0 | `adbcpp::crypto` | `src/crypto/CMakeLists.txt` |
 | libusb | v1.0.30-0 | LGPL-2.1-or-later | `adbcpp::usb` | `src/usb/CMakeLists.txt` |
 | Catch2 | v3.7.1 | BSL-1.0 | Tests only | `tests/CMakeLists.txt` |
@@ -22,8 +25,8 @@ the only things to install by hand are a C++20 compiler, CMake, and Git:
 `libusb` is fetched through the community `libusb/libusb-cmake` build and is deliberately
 linked **dynamically**, because its LGPL-2.1-or-later license must not be statically linked into
 the BSL-1.0 core ([blocker 1](04-blockers.md#1-usb-backend-libusb-dynamically-linked)). The
-core adds only `tl::expected`, a header-only CC0-1.0 library. A consumer that only needs TCP
-never pulls `libusb` in.
+core adds only `tl::expected` and the permissive compression codecs (zstd, lz4, brotli),
+each linked privately. A consumer that only needs TCP never pulls `libusb` in.
 
 There is no Android SDK, no NDK, no Java, and no `adb` server in the build. `adb` is only useful
 for preparing a device (see [Prepare a device](#prepare-a-device)) and as a reference capture.

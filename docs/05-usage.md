@@ -30,7 +30,7 @@ There are three targets:
 
 | Target           | What it adds                                  | Extra dependency |
 | ---------------- | --------------------------------------------- | ---------------- |
-| `adbcpp::adbcpp` | Protocol, session, streams, shell, sync, mock transport | `tl::expected`, zstd, lz4 |
+| `adbcpp::adbcpp` | Protocol, session, streams, shell, sync, mock transport | `tl::expected`, zstd, lz4, brotli |
 | `adbcpp::crypto` | `adbcpp::crypto::Key` (ADB key pair)           | mbedTLS          |
 | `adbcpp::usb`    | `adbcpp::usb::UsbTransport` (USB transport)    | libusb           |
 
@@ -38,9 +38,10 @@ There are three targets:
 linking the USB backend pulls in the rest. `adbcpp::usb` is only defined when the
 project is built with `ADBCPP_BUILD_USB=ON` (the default at the top level). The TCP
 transport has no third-party dependency, so it lives in `adbcpp::adbcpp` and is always
-available. `adbcpp::adbcpp` links zstd (`ADBCPP_BUILD_COMPRESSION`) and lz4
-(`ADBCPP_BUILD_LZ4`) privately, so `<zstd.h>` and `<lz4frame.h>` stay out of the
-public headers; either is off for a build that does not want that codec.
+available. `adbcpp::adbcpp` links zstd (`ADBCPP_BUILD_COMPRESSION`), lz4
+(`ADBCPP_BUILD_LZ4`), and brotli (`ADBCPP_BUILD_BROTLI`) privately, so the codec
+headers stay out of the public headers; any of them is off for a build that does not
+want that codec.
 
 Alternatively, install `adbcpp` and use `find_package`:
 
@@ -650,8 +651,8 @@ memory than a small one.
 
 `pull` and `push` take a `SyncCompression`, and the default `Auto` uses the v2
 `RECV`/`SEND` forms with the best codec both sides have, in adb's order (zstd, then
-lz4), and the v1 forms otherwise. `None` always uses the v1 forms, and `Zstd` or
-`Lz4` requires the device to have advertised that codec.
+lz4, then brotli), and the v1 forms otherwise. `None` always uses the v1 forms, and
+`Zstd`, `Lz4`, or `Brotli` requires the device to have advertised that codec.
 
 ```cpp
 #include <filesystem>

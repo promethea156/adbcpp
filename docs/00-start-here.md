@@ -47,7 +47,8 @@ The library can already do all of the everyday work:
 - find the phone and open the cable, or reach one over the network;
 - authorize with it once, and remember the authorization;
 - run a shell command and read its combined output and exit code;
-- list a folder, check a path, and copy a file to or from the phone;
+- list a folder, check a path, and copy a file to or from the phone, packed smaller
+  on the way across when that helps;
 - install and remove an app, launch it, check whether it is running, and close it;
 - drive every attached phone at once, one thread per phone.
 
@@ -95,6 +96,35 @@ The last pieces were reach and identity:
    and the library can select one by it, so two phones of the same model are no
    longer both the first match.
 
+## Packing the file smaller
+
+The cable is the narrow part of a file transfer, and every byte has to cross it. So
+the library can **compress** a file before it sends it: it packs the bytes into fewer
+bytes here, sends the smaller pile, and the phone unpacks it back into the file. A file
+coming the other way is packed by the phone and unpacked here.
+
+Packing only helps when the file has repetition to squeeze out. A text file does, and
+moves roughly twenty times faster with packing than without. A photo or an app package
+is already packed, so it shrinks little and moves no faster; the library still makes the
+attempt, because it cannot know in advance whether a file will shrink, but the attempt buys
+nothing there.
+
+There are three packing methods, and they trade speed against how small the pile gets:
+
+- **LZ4** is the fastest and the loosest. It barely looks ahead, so it is quick but
+  leaves the pile large.
+- **Brotli** is the tightest and the slowest. It looks far ahead, so it makes the
+  smallest pile but costs the most time to pack.
+- **Zstd** sits between them: nearly as quick as LZ4 and nearly as small as Brotli.
+  It is the one `adb` itself prefers.
+
+The library's default is to **use the best method both sides know, preferring Zstd,
+then LZ4, then Brotli**, and to send the file unpacked when neither side knows one.
+Zstd comes first for the same reason `adb` puts it first: it is the best trade of speed
+against size, so someone who does not care gets the most benefit for the least cost. A
+caller who wants a specific method can ask for it, and a caller who wants no packing at
+all can ask for that too.
+
 ## Where it is now
 
 The library is complete for its current scope: every feature works end to end, and
@@ -102,9 +132,9 @@ the sample program walks them all once. It connects, runs a shell command, lists
 copies files, installs an app, starts it, checks it is running, and removes it. The
 same tour can run on every attached phone at once, one thread per phone.
 
-What is left is in [Future Improvements](03-roadmap.md#future-improvements): the lz4
-and brotli codecs in place of zstd for a transfer, platform-native USB in place of
-the third-party dependency, and verifying the build on Linux and macOS.
+What is left is in [Future Improvements](03-roadmap.md#future-improvements):
+platform-native USB in place of the third-party dependency, and verifying the build on
+Linux and macOS.
 
 ## The words this project uses
 
@@ -119,6 +149,7 @@ the third-party dependency, and verifying the build on Linux and macOS.
 | stream | One conversation over the cable, kept apart from the others by an id. |
 | `shell` | The room that runs commands and returns their output and exit code. |
 | `sync` | The room that lists folders and moves files. |
+| `zstd`, `lz4`, `brotli` | The three methods for packing a file smaller before it crosses the cable. `zstd` is the default. |
 | `shell_v2` | The newer shell form that reports output and the exit code separately. The older form is the fallback. |
 | APK | An Android app package, the file that `install` uploads. |
 | transport | The byte pipe under the protocol: a USB cable or a network socket. |

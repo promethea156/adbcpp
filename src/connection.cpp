@@ -131,6 +131,9 @@ Result<Connection> Connection::connect(Transport &transport, std::span<const std
 #    if defined(ADBCPP_HAS_LZ4)
     identity += kSendRecvV2Lz4Feature;
 #    endif
+#    if defined(ADBCPP_HAS_BROTLI)
+    identity += kSendRecvV2BrotliFeature;
+#    endif
 #endif
     if (advertise_delayed_ack)
     {
