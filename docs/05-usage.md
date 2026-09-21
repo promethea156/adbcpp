@@ -30,7 +30,7 @@ There are three targets:
 
 | Target           | What it adds                                  | Extra dependency |
 | ---------------- | --------------------------------------------- | ---------------- |
-| `adbcpp::adbcpp` | Protocol, session, streams, shell, mock transport | `tl::expected`   |
+| `adbcpp::adbcpp` | Protocol, session, streams, shell, sync, mock transport | `tl::expected`, zstd |
 | `adbcpp::crypto` | `adbcpp::crypto::Key` (ADB key pair)           | mbedTLS          |
 | `adbcpp::usb`    | `adbcpp::usb::UsbTransport` (USB transport)    | libusb           |
 
@@ -38,7 +38,9 @@ There are three targets:
 linking the USB backend pulls in the rest. `adbcpp::usb` is only defined when the
 project is built with `ADBCPP_BUILD_USB=ON` (the default at the top level). The TCP
 transport has no third-party dependency, so it lives in `adbcpp::adbcpp` and is always
-available.
+available. `adbcpp::adbcpp` links zstd privately when `ADBCPP_BUILD_COMPRESSION` is on,
+so `<zstd.h>` stays out of the public headers; it is off only for a build that does
+not want the v2 `RECV`/`SEND` forms.
 
 Alternatively, install `adbcpp` and use `find_package`:
 
@@ -645,6 +647,11 @@ itself is explained in [`06-sync-protocol.md`](06-sync-protocol.md).
 `pull` copies a file from the device to a local path. It writes each `DATA` chunk as
 it arrives, so the file is never held in memory whole and a large file costs no more
 memory than a small one.
+
+`pull` and `push` take a `SyncCompression`, and the default `Auto` uses the v2
+`RECV`/`SEND` forms with zstd when the build has `ADBCPP_BUILD_COMPRESSION` and the
+device advertised `sendrecv_v2_zstd`, and the v1 forms otherwise. `None` always uses
+the v1 forms, and `Zstd` requires the device to have advertised them.
 
 ```cpp
 #include <filesystem>

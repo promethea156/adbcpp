@@ -102,9 +102,9 @@ the sample program walks them all once. It connects, runs a shell command, lists
 copies files, installs an app, starts it, checks it is running, and removes it. The
 same tour can run on every attached phone at once, one thread per phone.
 
-What is left is in [Future Improvements](03-roadmap.md#future-improvements): faster
-transfers with compression, platform-native USB in place of the one third-party
-dependency, and optional logging.
+What is left is in [Future Improvements](03-roadmap.md#future-improvements): the lz4
+and brotli codecs in place of zstd for a transfer, platform-native USB in place of
+the third-party dependency, and verifying the build on Linux and macOS.
 
 ## The words this project uses
 

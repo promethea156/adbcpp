@@ -20,6 +20,12 @@
 #include "adbcpp/stream.hpp"
 #include "protocol/byte_order.hpp"
 
+#if defined(ADBCPP_HAS_COMPRESSION)
+#    include <span>
+
+#    include "compression.hpp"
+#endif
+
 namespace adbcpp
 {
 namespace
@@ -49,6 +55,21 @@ constexpr std::uint32_t kDone = protocol::make_command('D', 'O', 'N', 'E');
 constexpr std::uint32_t kOkay = protocol::make_command('O', 'K', 'A', 'Y');
 constexpr std::uint32_t kFail = protocol::make_command('F', 'A', 'I', 'L');
 constexpr std::uint32_t kQuit = protocol::make_command('Q', 'U', 'I', 'T');
+
+// The v2 RECV/SEND requests carry a compression flag in a setup packet that
+// follows the path request, and only their `DATA` payloads are compressed. The ids
+// are the little-endian encoding of four ASCII characters, like the v1 ids above.
+constexpr std::uint32_t kRecvV2 = protocol::make_command('R', 'C', 'V', '2');
+constexpr std::uint32_t kSendV2 = protocol::make_command('S', 'N', 'D', '2');
+// `kSyncFlagZstd` selects zstd, from `SyncFlag` in `file_sync_protocol.h`.
+constexpr std::uint32_t kSyncFlagZstd = 4;
+
+// The device's `features=` names for the v2 forms. `sendrecv_v2` selects the v2
+// requests and `sendrecv_v2_zstd` the codec, exactly like adb. The match is
+// exact, like `ls_v2`, because a substring search would treat `sendrecv_v2` as
+// matching `recv_v2`.
+constexpr std::string_view kSendRecvV2Feature = "sendrecv_v2";
+constexpr std::string_view kSendRecvV2ZstdFeature = "sendrecv_v2_zstd";
 
 // A sync request is an id followed by a path length; the path itself is not
 // null-terminated. The daemon rejects a path longer than 1024 bytes.
@@ -141,6 +162,36 @@ Status write_quit(Stream &stream)
     return stream.write(quit);
 }
 
+#if defined(ADBCPP_HAS_COMPRESSION)
+// A v2 request is the path request followed by a setup packet, and adb sends
+// both in one write. RECV's setup is `sync_recv_v2 { id, flags }`; SEND's is
+// `sync_send_v2 { id, mode, flags }`, where the mode is the value the v1 form
+// would carry after the path's comma.
+Status write_recv_v2(Stream &stream, std::string_view path)
+{
+    std::vector<std::byte> request(kRequestSize + path.size() + 8);
+    write_u32_le(request.data(), kRecvV2);
+    write_u32_le(request.data() + 4, static_cast<std::uint32_t>(path.size()));
+    std::copy_n(reinterpret_cast<const std::byte *>(path.data()), path.size(), request.data() + kRequestSize);
+    write_u32_le(request.data() + kRequestSize + path.size(), kRecvV2);
+    write_u32_le(request.data() + kRequestSize + path.size() + 4, kSyncFlagZstd);
+    return stream.write(request);
+}
+
+Status write_send_v2(Stream &stream, std::string_view path, std::uint32_t mode)
+{
+    std::vector<std::byte> request(kRequestSize + path.size() + 12);
+    write_u32_le(request.data(), kSendV2);
+    write_u32_le(request.data() + 4, static_cast<std::uint32_t>(path.size()));
+    std::copy_n(reinterpret_cast<const std::byte *>(path.data()), path.size(), request.data() + kRequestSize);
+    std::byte *setup = request.data() + kRequestSize + path.size();
+    write_u32_le(setup, kSendV2);
+    write_u32_le(setup + 4, mode);
+    write_u32_le(setup + 8, kSyncFlagZstd);
+    return stream.write(request);
+}
+#endif
+
 // Reads the device's reply to a request it acknowledges with `OKAY`, or rejects
 // with `FAIL` and a reason. The reply is `sync_status { id, msglen }`; only `FAIL`
 // has a message behind it.
@@ -217,6 +268,168 @@ std::uint32_t local_mode(const std::filesystem::path &path)
     return static_cast<std::uint32_t>(info.st_mode & 0777u);
 #endif
 }
+
+#if defined(ADBCPP_HAS_COMPRESSION)
+// The compressed form of a `SYNC_DATA_MAX` chunk is at most `ZSTD_compressBound`,
+// which is what the encoder cannot exceed. It is larger than the chunk itself
+// because a frame adds its own header, so the compressed size is checked against
+// this and not against `kMaxChunkSize`.
+const std::size_t kMaxCompressedChunkSize = ZSTD_compressBound(kMaxChunkSize);
+
+// The v2 RECV form: the device streams one zstd frame across `DATA` chunks, so a
+// chunk boundary is not a frame boundary and each chunk is fed to the decoder
+// rather than written as it arrives.
+Status pull_v2(Connection &connection, std::string_view remote_path, const std::filesystem::path &local_path)
+{
+    auto stream = Stream::open(connection, "sync:");
+    if (!stream)
+    {
+        return tl::unexpected(stream.error());
+    }
+
+    if (const auto written = write_recv_v2(*stream, remote_path); !written)
+    {
+        return tl::unexpected(written.error());
+    }
+
+    std::ofstream output(local_path, std::ios::binary | std::ios::trunc);
+    if (!output)
+    {
+        return tl::unexpected(Error{ErrorCode::Io, "cannot open the local file for writing"});
+    }
+
+    ZstdDecoder decoder;
+    while (true)
+    {
+        // Every response starts with a four-byte id.
+        std::array<std::byte, 4> id_bytes{};
+        if (const auto read = stream->read(id_bytes); !read)
+        {
+            return tl::unexpected(read.error());
+        }
+        const std::uint32_t id = read_u32_le(id_bytes.data());
+
+        if (id == kFail)
+        {
+            return tl::unexpected(sync_fail(*stream));
+        }
+
+        std::array<std::byte, 4> size_bytes{};
+        if (const auto read = stream->read(size_bytes); !read)
+        {
+            return tl::unexpected(read.error());
+        }
+        const std::uint32_t size = read_u32_le(size_bytes.data());
+
+        if (id == kDone)
+        {
+            break;
+        }
+
+        if (id != kData)
+        {
+            return tl::unexpected(Error{ErrorCode::Protocol, "unexpected sync response"});
+        }
+
+        if (size > kMaxCompressedChunkSize)
+        {
+            return tl::unexpected(Error{ErrorCode::Protocol, "the sync chunk is larger than the compression bound"});
+        }
+
+        std::vector<std::byte> chunk(size);
+        if (const auto read = stream->read(chunk); !read)
+        {
+            return tl::unexpected(read.error());
+        }
+
+        // The decoded bytes are written as they arrive, so the file is never held
+        // in memory whole.
+        auto decoded = decoder.decode(chunk);
+        if (!decoded)
+        {
+            return tl::unexpected(decoded.error());
+        }
+        output.write(reinterpret_cast<const char *>(decoded->data()), static_cast<std::streamsize>(decoded->size()));
+        if (!output)
+        {
+            return tl::unexpected(Error{ErrorCode::Io, "failed to write the local file"});
+        }
+    }
+
+    return write_quit(*stream);
+}
+
+// The v2 SEND form: each chunk is compressed as a complete frame and the
+// device's streaming decoder starts the next frame at the end of one.
+Status push_v2(Connection &connection, const std::filesystem::path &local_path, std::string_view destination,
+               std::uint32_t mode)
+{
+    auto stream = Stream::open(connection, "sync:");
+    if (!stream)
+    {
+        return tl::unexpected(stream.error());
+    }
+    if (const auto written = write_send_v2(*stream, destination, mode); !written)
+    {
+        return tl::unexpected(written.error());
+    }
+
+    std::ifstream input(local_path, std::ios::binary);
+    if (!input)
+    {
+        return tl::unexpected(Error{ErrorCode::Io, "cannot open the local file"});
+    }
+
+    std::vector<char> buffer(kMaxChunkSize);
+    while (input)
+    {
+        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const auto count = input.gcount();
+        if (count <= 0)
+        {
+            break;
+        }
+
+        auto compressed = compress_zstd(
+            std::span(reinterpret_cast<const std::byte *>(buffer.data()), static_cast<std::size_t>(count)));
+        if (!compressed)
+        {
+            return tl::unexpected(compressed.error());
+        }
+
+        // The DATA header and its compressed chunk go in one write, like the v1
+        // form, so a large file is not one `WRTE` message per chunk.
+        std::vector<std::byte> block(8 + compressed->size());
+        write_u32_le(block.data(), kData);
+        write_u32_le(block.data() + 4, static_cast<std::uint32_t>(compressed->size()));
+        std::copy(compressed->begin(), compressed->end(), block.begin() + 8);
+        if (const auto written = stream->write(block); !written)
+        {
+            return tl::unexpected(written.error());
+        }
+    }
+
+    if (!input.eof())
+    {
+        return tl::unexpected(Error{ErrorCode::Io, "failed to read the local file"});
+    }
+
+    std::array<std::byte, 8> done{};
+    write_u32_le(done.data(), kDone);
+    write_u32_le(done.data() + 4, static_cast<std::uint32_t>(local_mtime(local_path)));
+    if (const auto written = stream->write(done); !written)
+    {
+        return tl::unexpected(written.error());
+    }
+
+    if (const auto status = read_status(*stream); !status)
+    {
+        return tl::unexpected(status.error());
+    }
+
+    return write_quit(*stream);
+}
+#endif
 
 } // namespace
 
@@ -328,12 +541,29 @@ Result<std::vector<DirEntry>> list(Connection &connection, std::string_view path
     return entries;
 }
 
-Status pull(Connection &connection, std::string_view remote_path, const std::filesystem::path &local_path)
+Status pull(Connection &connection, std::string_view remote_path, const std::filesystem::path &local_path,
+            SyncCompression compression)
 {
     if (remote_path.size() > kMaxPathLength)
     {
         return tl::unexpected(
             Error{ErrorCode::InvalidArgument, "the path is longer than the sync limit of 1024 bytes"});
+    }
+
+#if defined(ADBCPP_HAS_COMPRESSION)
+    // The v2 form needs the codec on both sides, so it is used only when the
+    // device advertised it. A caller who asked for zstd explicitly gets an error
+    // rather than a silent v1 transfer.
+    if (compression != SyncCompression::None && connection.supports_feature(kSendRecvV2Feature) &&
+        connection.supports_feature(kSendRecvV2ZstdFeature))
+    {
+        return pull_v2(connection, remote_path, local_path);
+    }
+#endif
+    if (compression == SyncCompression::Zstd)
+    {
+        return tl::unexpected(
+            Error{ErrorCode::InvalidArgument, "zstd compression is not available for this device or build"});
     }
 
     // Requesting the `sync:` service puts the stream in sync mode.
@@ -344,8 +574,8 @@ Status pull(Connection &connection, std::string_view remote_path, const std::fil
     }
 
     // RECV(id, path_length, "path"), the same request layout as LIST. The v1 form
-    // is used because the v2 form only adds compression flags, which this does not
-    // need; both send the file as `DATA` chunks.
+    // is used because the v2 form is only for compression and `compression` did not
+    // select it; both send the file as `DATA` chunks.
     if (const auto written = write_path_request(*stream, kRecvV1, remote_path); !written)
     {
         return tl::unexpected(written.error());
@@ -500,7 +730,8 @@ Result<std::optional<FileStat>> stat(Connection &connection, std::string_view pa
     return std::optional<FileStat>{result};
 }
 
-Status push(Connection &connection, const std::filesystem::path &local_path, std::string_view remote_path)
+Status push(Connection &connection, const std::filesystem::path &local_path, std::string_view remote_path,
+            SyncCompression compression)
 {
     std::error_code error;
     if (!std::filesystem::is_regular_file(local_path, error))
@@ -522,10 +753,26 @@ Status push(Connection &connection, const std::filesystem::path &local_path, std
         destination += local_path.filename().string();
     }
 
+    const std::uint32_t mode = local_mode(local_path);
+
+#if defined(ADBCPP_HAS_COMPRESSION)
+    // The v2 form needs the codec on both sides, exactly as `pull` does.
+    if (compression != SyncCompression::None && connection.supports_feature(kSendRecvV2Feature) &&
+        connection.supports_feature(kSendRecvV2ZstdFeature))
+    {
+        return push_v2(connection, local_path, destination, mode);
+    }
+#endif
+    if (compression == SyncCompression::Zstd)
+    {
+        return tl::unexpected(
+            Error{ErrorCode::InvalidArgument, "zstd compression is not available for this device or build"});
+    }
+
     // SEND(id, path_length, "path,mode"). The mode is decimal and includes the
     // file type bits; the daemon parses it with `strtoul(..., 0)` and passes it to
     // `open`, which uses only its permission bits.
-    const std::string spec = destination + ',' + std::to_string(local_mode(local_path));
+    const std::string spec = destination + ',' + std::to_string(mode);
 
     auto stream = Stream::open(connection, "sync:");
     if (!stream)

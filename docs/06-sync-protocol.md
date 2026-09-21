@@ -182,9 +182,15 @@ The device then answers with the file's chunks and `DONE`:
 `RCV2` is the v2 form. It takes the same `id` + `path_length` + `path` request,
 followed by an extra 8-byte setup packet, `sync_recv_v2 { id, flags }`, that selects a
 compression codec (`kSyncFlagBrotli`, `kSyncFlagLz4`, or `kSyncFlagZstd`). With
-`flags = 0` the transfer is byte-for-byte the v1 form. `pull` uses v1 because it does
-not implement decompression; the `sendrecv_v2` feature that the device advertises only
-matters when a codec is requested.
+`flags = 0` the transfer is byte-for-byte the v1 form. `pull` uses the v2 form with
+zstd when the device advertised `sendrecv_v2_zstd` and the build has the codec, and the
+v1 form otherwise, so a device without the feature still works. `sendrecv_v2_zstd` is
+the only codec implemented; `kSyncFlagLz4` and `kSyncFlagBrotli` are not.
+
+The `DATA` payload is the only thing compressed: its `sync_data { id, size }` header is
+unchanged and `size` is the compressed size, which a frame can make larger than the chunk
+itself. The device streams one zstd frame across the chunks, so the decoder is a stream and a
+chunk boundary is not a frame boundary. See [`09-sendrecv-v2.md`](09-sendrecv-v2.md).
 
 ## Pushing a file
 
@@ -216,6 +222,14 @@ The device creates the file, or overwrites it if it already exists, and copies t
 user permission bits to the group and other bits, so a `0644` local file becomes
 `0666` on the device. That is the daemon's behaviour, not this library's.
 
+### SEND v2
+
+`SND2` is the v2 form. Like `RCV2` it takes the `id` + `path_length` + `path`
+request, but the path is no longer a spec: the mode moves into the setup packet,
+`sync_send_v2 { id, mode, flags }`, which follows the request. The flags select the
+same codecs, and `push` uses zstd when the device advertised `sendrecv_v2_zstd`,
+exactly as `pull` does.
+
 ## STAT
 
 `STAT` reports a path's metadata and follows symbolic links, so a destination that
@@ -240,16 +254,16 @@ directly, so a missing path can be told from a real one.
 `list`:
 
 1. Reject a path longer than 1024 bytes up front, because the daemon would reject
-   it anyway (`src/sync.cpp:227`).
+   it anyway (`src/sync.cpp:441`).
 2. Choose the v1 or v2 form from `connection.supports_feature("ls_v2")`
-   (`src/sync.cpp:235`). The match is exact, like adb's.
+   (`src/sync.cpp:446`). The match is exact, like adb's.
 3. Open the `sync:` stream. This is the same `Stream` that `shell:` uses
-   (`src/sync.cpp:238`).
-4. Write the `LIST`/`LIS2` request as one write (`src/sync.cpp:245`).
+   (`src/sync.cpp:449`).
+4. Write the `LIST`/`LIS2` request as one write (`src/sync.cpp:456`).
 5. Loop: read a four-byte id, then the body, then the name, and build a
-   `DirEntry`. `FAIL` is an `Error`, `DONE` ends the loop (`src/sync.cpp:254`).
+   `DirEntry`. `FAIL` is an `Error`, `DONE` ends the loop (`src/sync.cpp:466`).
 6. Write `QUIT` to leave sync mode, after which the daemon closes the stream
-   (`src/sync.cpp:325`).
+   (`src/sync.cpp:536`).
 
 The loop reads the body **before** it checks the id, so that every path consumes
 exactly the bytes the daemon sent. That is what keeps the stream aligned for the
@@ -258,45 +272,51 @@ next response; a short read here would desynchronize the whole listing.
 `pull`:
 
 1. Reject a path longer than 1024 bytes, the same check as `list`
-   (`src/sync.cpp:335`).
-2. Open the `sync:` stream and write the `RECV` request
-   (`src/sync.cpp:342`, `src/sync.cpp:351`).
-3. Open the local file before the transfer starts, so a failure leaves a partial
-   file rather than a missing one (`src/sync.cpp:358`).
-4. Loop: read the id and the chunk size, write each `DATA` chunk to the file as it
-   arrives, and stop at `DONE` (`src/sync.cpp:364`). A chunk larger than 64 KiB is
-   rejected rather than trusted (`src/sync.cpp:400`).
-5. Write `QUIT` (`src/sync.cpp:419`).
+   (`src/sync.cpp:550`).
+2. Choose the v2 form with zstd when `compression` selects it and the device
+   advertised it, and the v1 form otherwise (`src/sync.cpp:560`).
+3. Open the `sync:` stream and write the `RECV` request
+   (`src/sync.cpp:570`, `src/sync.cpp:579`).
+4. Open the local file before the transfer starts, so a failure leaves a partial
+   file rather than a missing one (`src/sync.cpp:586`).
+5. Loop: read the id and the chunk size, write each `DATA` chunk to the file as it
+   arrives, and stop at `DONE` (`src/sync.cpp:592`). A chunk larger than 64 KiB is
+   rejected rather than trusted (`src/sync.cpp:628`).
+6. Write `QUIT` (`src/sync.cpp:647`).
 
 Because each chunk is written as it arrives, the file is never held in memory whole,
-so pulling a large file costs no more memory than pulling a small one.
+so pulling a large file costs no more memory than pulling a small one. The v2 form
+feeds each compressed chunk to a streaming zstd decoder instead, because the device's
+frame can span chunks.
 
 `stat`:
 
-1. Reject a path longer than 1024 bytes (`src/sync.cpp:424`).
+1. Reject a path longer than 1024 bytes (`src/sync.cpp:655`).
 2. Choose the v1 or v2 form from `connection.supports_feature("stat_v2")`
-   (`src/sync.cpp:432`).
+   (`src/sync.cpp:660`).
 3. Open the `sync:` stream and write the `STAT`/`STA2` request
-   (`src/sync.cpp:434`, `src/sync.cpp:439`).
+   (`src/sync.cpp:662`, `src/sync.cpp:667`).
 4. Read the id and the body. The v2 form's leading error field, or the v1 form's
    all-zero body, means the path does not exist, which is an empty `optional` rather
-   than an `Error` (`src/sync.cpp:463`).
-5. Write `QUIT` (`src/sync.cpp:497`).
+   than an `Error` (`src/sync.cpp:691`).
+5. Write `QUIT` (`src/sync.cpp:726`).
 
 `push`:
 
-1. Reject a local path that is not a regular file (`src/sync.cpp:507`).
+1. Reject a local path that is not a regular file (`src/sync.cpp:737`).
 2. Stat the destination, so that an existing directory receives the file under the
-   local file's name (`src/sync.cpp:515`).
-3. Build the `"<path>,<mode>"` spec from the local file's permissions
-   (`src/sync.cpp:529`).
-4. Open the `sync:` stream and write the `SEND` request
-   (`src/sync.cpp:531`, `src/sync.cpp:536`).
-5. Read the local file in 64 KiB chunks, write each as a `DATA` chunk, and finish
+   local file's name (`src/sync.cpp:745`).
+3. Choose the v2 form with zstd when `compression` selects it and the device
+   advertised it, and the v1 form otherwise (`src/sync.cpp:763`).
+4. Build the `"<path>,<mode>"` spec from the local file's permissions
+   (`src/sync.cpp:775`).
+5. Open the `sync:` stream and write the `SEND` request
+   (`src/sync.cpp:777`, `src/sync.cpp:782`).
+6. Read the local file in 64 KiB chunks, write each as a `DATA` chunk, and finish
    with a `DONE` that carries the local file's modification time
-   (`src/sync.cpp:578`).
-6. Read the device's reply, which is the only `OKAY` in the sync service
-   (`src/sync.cpp:588`), and write `QUIT` (`src/sync.cpp:593`).
+   (`src/sync.cpp:795`, `src/sync.cpp:824`).
+7. Read the device's reply, which is the only `OKAY` in the sync service
+   (`src/sync.cpp:834`), and write `QUIT` (`src/sync.cpp:839`).
 
 ## Measured transfer performance
 

@@ -91,6 +91,26 @@ struct ADBCPP_API FileStat
 Result<std::vector<DirEntry>> ADBCPP_API list(Connection &connection, std::string_view path);
 
 /**
+ * @brief How `pull` and `push` may compress a transfer.
+ *
+ * The v2 `RECV`/`SEND` forms carry a compression flag, and the v1 forms do not.
+ * The codec is zstd, the one adb prefers, and it is built only when
+ * `ADBCPP_BUILD_COMPRESSION` is on.
+ */
+enum class SyncCompression
+{
+    /// zstd when the build has it and the device advertised `sendrecv_v2_zstd`,
+    /// and the v1 forms otherwise. This is the default.
+    Auto,
+    /// The v1 forms, with no compression.
+    None,
+    /// The v2 forms with zstd. It is an `ErrorCode::InvalidArgument` error when
+    /// the build has no codec or the device did not advertise `sendrecv_v2_zstd`,
+    /// rather than a silent fallback, so the caller is not misled.
+    Zstd
+};
+
+/**
  * @brief Copies a file from the device to `local_path`.
  *
  * Opens the `sync:` service, sends a RECV request for `remote_path`, and writes each
@@ -99,12 +119,18 @@ Result<std::vector<DirEntry>> ADBCPP_API list(Connection &connection, std::strin
  * `FAIL` message and is returned as an `ErrorCode::Device` error carrying the
  * daemon's reason.
  *
+ * `compression` selects the request form. `Auto` uses the v2 form with zstd when the
+ * device advertised `sendrecv_v2_zstd` and the build has the codec, and the v1 form
+ * otherwise, so a caller who does not care gets the best available. `None` always
+ * uses the v1 form. `Zstd` requires the device to have advertised it.
+ *
  * `local_path` is created if it does not exist and truncated if it does, and its
  * parent directory must already exist. A transfer that fails part way through leaves
  * the partial file behind, exactly as adb leaves it, so the caller can decide whether
  * to retry or remove it.
  */
-Status ADBCPP_API pull(Connection &connection, std::string_view remote_path, const std::filesystem::path &local_path);
+Status ADBCPP_API pull(Connection &connection, std::string_view remote_path, const std::filesystem::path &local_path,
+                       SyncCompression compression = SyncCompression::Auto);
 
 /**
  * @brief Stats a path on the device, following symbolic links.
@@ -131,7 +157,10 @@ Result<std::optional<FileStat>> ADBCPP_API stat(Connection &connection, std::str
  * `local_path`'s file name, exactly like `adb push local.txt /sdcard/`. The device
  * creates the file with `local_path`'s permissions and modification time, so far as
  * the platform reports them.
+ *
+ * `compression` selects the request form, exactly as it does for `pull`.
  */
-Status ADBCPP_API push(Connection &connection, const std::filesystem::path &local_path, std::string_view remote_path);
+Status ADBCPP_API push(Connection &connection, const std::filesystem::path &local_path, std::string_view remote_path,
+                       SyncCompression compression = SyncCompression::Auto);
 
 } // namespace adbcpp
