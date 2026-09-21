@@ -18,6 +18,7 @@ option(ADBCPP_BUILD_TESTS "Build adbcpp tests" ${ADBCPP_IS_TOP_LEVEL})
 option(ADBCPP_BUILD_EXAMPLES "Build adbcpp examples" ${ADBCPP_IS_TOP_LEVEL})
 option(ADBCPP_BUILD_DOCS "Build adbcpp documentation" OFF)
 option(ADBCPP_BUILD_USB "Build the adbcpp USB backend (libusb)" ${ADBCPP_IS_TOP_LEVEL})
+option(ADBCPP_BUILD_COMPRESSION "Build adbcpp compression (zstd)" ${ADBCPP_IS_TOP_LEVEL})
 option(ADBCPP_INSTALL "Generate adbcpp install rules" ${ADBCPP_IS_TOP_LEVEL})
 
 set(CMAKE_CXX_STANDARD 20)
@@ -47,6 +48,26 @@ FetchContent_Declare(
   GIT_TAG v1.3.1
 )
 FetchContent_MakeAvailable(tl_expected)
+
+# zstd provides the compression that the v2 `RECV`/`SEND` forms use (see
+# `docs/09-sendrecv-v2.md`). It is fetched only when compression is built, and
+# its programs and tests are turned off before `FetchContent_MakeAvailable`, the
+# same trap as `EXPECTED_BUILD_TESTS` above (blockers 20 and 22). It is
+# BSD-3-Clause, so it carries no copyleft obligation.
+if(ADBCPP_BUILD_COMPRESSION)
+  set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+  set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+  set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
+  set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "" FORCE)
+  FetchContent_Declare(
+    zstd
+    GIT_REPOSITORY https://github.com/facebook/zstd.git
+    GIT_TAG v1.5.7
+    SOURCE_SUBDIR build/cmake
+  )
+  FetchContent_MakeAvailable(zstd)
+endif()
 
 add_library(adbcpp
   src/app.cpp
@@ -78,6 +99,16 @@ target_link_libraries(adbcpp PUBLIC tl::expected)
 # stays free of any third-party dependency.
 if(WIN32)
   target_link_libraries(adbcpp PRIVATE ws2_32)
+endif()
+
+# `src/compression.cpp` uses `<zstd.h>`, but the header stays internal, so zstd
+# is a private dependency of the core and no zstd type reaches the public API.
+# `ADBCPP_HAS_COMPRESSION` is defined only when the codec is built, so
+# `src/sync.cpp` compiles the v2 path in or out with it.
+if(ADBCPP_BUILD_COMPRESSION)
+  target_sources(adbcpp PRIVATE src/compression.cpp)
+  target_link_libraries(adbcpp PRIVATE libzstd_static)
+  target_compile_definitions(adbcpp PRIVATE ADBCPP_HAS_COMPRESSION)
 endif()
 
 set_target_properties(adbcpp PROPERTIES
@@ -150,6 +181,25 @@ if(ADBCPP_INSTALL)
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
   )
+
+  # zstd is a static library with no other dependency, and it is installed next
+  # to `adbcpp` for the same reason mbedcrypto is: a static library propagates
+  # its private dependencies to the final link, so zstd has to be in the export set.
+  # Only its public headers are installed, not the whole source `lib/`.
+  if(ADBCPP_BUILD_COMPRESSION)
+    install(TARGETS libzstd_static
+      EXPORT adbcppTargets
+      RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+      LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+      ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+      INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
+    install(FILES
+      "${zstd_SOURCE_DIR}/lib/zstd.h"
+      "${zstd_SOURCE_DIR}/lib/zstd_errors.h"
+      DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
+  endif()
 
   # `tl::expected` is header-only, and `EXPECTED_BUILD_PACKAGE OFF` keeps it
   # from installing itself, so its target and its headers are installed here. It is

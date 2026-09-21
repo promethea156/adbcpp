@@ -435,6 +435,44 @@ int main()
     std::filesystem::remove(pushed_local);
     std::filesystem::remove(pushed_back);
 
+#if defined(ADBCPP_HAS_COMPRESSION)
+    // The same round trip through the v2 forms with zstd, which the device has to
+    // advertise. A device that does not is left to the v1 round trip above.
+    if (connection->supports_feature("sendrecv_v2_zstd"))
+    {
+        const std::string v2_remote = "/data/local/tmp/adbcpp_device_v2_test.txt";
+        if (const auto status = adbcpp::run(*connection, "echo adbcpp-v2-test > " + v2_remote); !status)
+        {
+            report(status.error());
+            return 1;
+        }
+
+        const auto v2_local = std::filesystem::temp_directory_path() / "adbcpp_device_v2_test.txt";
+        if (const auto status = adbcpp::pull(*connection, v2_remote, v2_local, adbcpp::SyncCompression::Zstd); !status)
+        {
+            report(status.error());
+            return 1;
+        }
+
+        std::string v2_contents;
+        {
+            std::ifstream pulled(v2_local, std::ios::binary);
+            v2_contents.assign(std::istreambuf_iterator<char>(pulled), std::istreambuf_iterator<char>());
+        }
+        if (const auto status = adbcpp::run(*connection, "rm -f " + v2_remote); !status)
+        {
+            report(status.error());
+            return 1;
+        }
+        std::filesystem::remove(v2_local);
+        if (v2_contents != "adbcpp-v2-test\n")
+        {
+            std::cerr << "unexpected v2 pulled contents: " << v2_contents << '\n';
+            return 1;
+        }
+    }
+#endif
+
     const int install_result = check_install(*connection);
     const int app_result = check_app(*connection);
 

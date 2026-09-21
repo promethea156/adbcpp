@@ -33,10 +33,10 @@ namespace adbcpp
 /// device treat the host as supporting nothing (blocker 6 in `04-blockers.md`).
 ///
 /// The list names only the features the library acts on: `shell_v2` for `run`,
-/// and `ls_v2`/`stat_v2` for the v2 `LIST`/`STAT` forms. AOSP's
+/// `ls_v2`/`stat_v2` for the v2 `LIST`/`STAT` forms, and the v2 `RECV`/`SEND`
+/// forms when they are built in (see @ref kSendRecvV2Features). AOSP's
 /// `supported_features()` is longer, and the extra names claim services the library
-/// never opens (for example `sendrecv_v2`, when `pull`/`push` always send the v1
-/// forms), so a peer would rely on them in vain. See blocker 32 in
+/// never opens, so a peer would rely on them in vain. See blocker 32 in
 /// `04-blockers.md`.
 inline constexpr std::string_view kSystemIdentity = "host::features=shell_v2,stat_v2,ls_v2";
 
@@ -48,6 +48,16 @@ inline constexpr std::string_view kSystemIdentity = "host::features=shell_v2,sta
 /// by default: advertising it on a transport that does not really implement it made
 /// the device close the stream.
 inline constexpr std::string_view kDelayedAckFeature = "delayed_ack";
+
+/// Features appended to @ref kSystemIdentity when the v2 `RECV`/`SEND` forms with
+/// zstd are built in.
+///
+/// `sendrecv_v2` selects the v2 forms and `sendrecv_v2_zstd` the zstd codec, the
+/// same names adb looks for in the device's banner. They are appended only when
+/// `ADBCPP_BUILD_COMPRESSION` is on, because the device resets its feature set
+/// from the host banner (blocker 6), so a name the host cannot honor is a promise
+/// the peer would rely on in vain (blocker 32). See `docs/09-sendrecv-v2.md`.
+inline constexpr std::string_view kSendRecvV2Features = ",sendrecv_v2,sendrecv_v2_zstd";
 
 /**
  * @brief An authenticated ADB connection to a device.

@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TcpTransport` with `select`, `UsbTransport` with one bounded bulk transfer, and
   the mock with its queued bytes. `examples/poll` drives two loopback devices from
   one thread.
+- `pull` and `push` use the v2 `RECV`/`SEND` forms with zstd when the build has
+  `ADBCPP_BUILD_COMPRESSION` and the device advertised `sendrecv_v2_zstd`, so a
+  transfer can compress. `SyncCompression` selects it per call, and `Auto` falls
+  back to the v1 forms, which still work for a device without the feature. The
+  codec is zstd, fetched with `FetchContent` behind `ADBCPP_BUILD_COMPRESSION`, and
+  `docs/09-sendrecv-v2.md` is the plan.
 
 ## [2.1.0] - 2026-09-21
 
