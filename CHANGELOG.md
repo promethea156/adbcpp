@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-09-21
+
+### Added
+
+- `CommandResult::standard_output` and `CommandResult::error_output`, which report
+  the `shell_v2` service's standard output and standard error separately, while
+  `CommandResult::output` still merges them in the order the device produced them.
+  The v1 `shell` service leaves the two separate fields empty.
+- `Session::send` checks that `header.data_length` equals `payload.size()` and
+  reports a mismatch as an `InvalidArgument` before writing anything, so a header
+  cannot leave the device waiting for bytes that never arrive (blocker 13).
+- `adbcpp::wait_readable(transports, timeout)`, which waits on several
+  transports at once and returns the readable one, and
+  `Transport::wait_readable(timeout)`, which each transport implements:
+  `TcpTransport` with `select`, `UsbTransport` with one bounded bulk transfer, and
+  the mock with its queued bytes. `examples/poll` drives two loopback devices from
+  one thread.
+- `pull` and `push` use the v2 `RECV`/`SEND` forms with a codec when the build
+  has one and the device advertised it, so a transfer can compress.
+  `SyncCompression` selects the codec per call (`Auto` prefers zstd, then lz4, then
+  brotli), and `Auto` falls back to the v1 forms, which still work for a device
+  without the feature. zstd (`ADBCPP_BUILD_COMPRESSION`), lz4 (`ADBCPP_BUILD_LZ4`),
+  and brotli (`ADBCPP_BUILD_BROTLI`) are each fetched with `FetchContent` and linked
+  privately, and the banner names only the codecs that are built in.
+  `docs/09-sendrecv-v2.md` is the plan.
+- `adbcpp_usb_example` takes `--compression <auto|none|zstd|lz4|brotli>` for
+  `--pull` and `--push`, so the v1 form and each codec can be selected from the
+  command line, and `tools/bench-compression.ps1` times each mode against `none` and
+  prints the speedup. `docs/06-sync-protocol.md` records the measured result, and
+  `docs/00-start-here.md` explains the three codecs and why `Auto` prefers zstd.
+
 ## [2.1.0] - 2026-09-21
 
 ### Added
@@ -112,7 +143,8 @@ over USB and TCP, with no dependency on the ADB server or the `adb` binary.
 
 - A `push` chunk is written as one message.
 
-[Unreleased]: https://github.com/promethea156/adbcpp/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/promethea156/adbcpp/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/promethea156/adbcpp/releases/tag/v2.2.0
 [2.1.0]: https://github.com/promethea156/adbcpp/releases/tag/v2.1.0
 [2.0.1]: https://github.com/promethea156/adbcpp/releases/tag/v2.0.1
 [2.0.0]: https://github.com/promethea156/adbcpp/releases/tag/v2.0.0

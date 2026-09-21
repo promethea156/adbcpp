@@ -8,7 +8,7 @@ A small, self-contained **ADB (Android Debug Bridge) client, as a C++20 library*
 
 **Minimum ADB protocol version: `0x01000001`.** The library advertises this version in its CNXN message (`kVersion` in `include/adbcpp/protocol/commands.hpp`), which matches AOSP's `A_VERSION`.
 
-> **Status: 2.1.0.** The [initial scope](docs/01-objective.md#initial-scope) is complete, and every fallible operation returns a `Result<T>` instead of throwing. See [`CHANGELOG.md`](CHANGELOG.md) and [`docs/03-roadmap.md`](docs/03-roadmap.md).
+> **Status: 2.2.0.** The [initial scope](docs/01-objective.md#initial-scope) is complete, and every fallible operation returns a `Result<T>` instead of throwing. See [`CHANGELOG.md`](CHANGELOG.md) and [`docs/03-roadmap.md`](docs/03-roadmap.md).
 
 ## How this was built
 
@@ -50,12 +50,31 @@ a green run is just as useful as a red one, and see [Contributing](#contributing
 
 ## What it can do
 
-- **Shell**: run a command and read its combined output and exit code.
-- **Files**: list a directory, `stat` a path, and pull or push a file.
+- **Shell**: run a command and read its combined output and exit code, or its standard output and standard error separately.
+- **Files**: list a directory, `stat` a path, and pull or push a file, compressed with zstd, lz4, or brotli when the device and the build support it.
 - **Apps**: install and uninstall a package, launch it, check whether it is running, and close it.
 - **Connect**: reach a device over USB, or over TCP to a `tcpip` device or an emulator, and pick one by its USB serial. The TCP path is verified against a `tcpip` device; an emulator's listener speaks the same plaintext protocol and is expected to work.
-- **Several devices**: drive every attached device at once, one thread per device, because the objects share no state.
+- **Several devices**: drive every attached device at once, one thread per device, because the objects share no state, or drive several from one thread with `adbcpp::wait_readable`.
 - **Log**: opt in to a process-wide logger, configurable per level, that reports frames, retries, and state changes and never logs keys or payloads.
+
+## Compression that pays off
+
+`pull` and `push` use the `sendrecv_v2` forms with zstd, lz4, or brotli when the
+device advertises one, and the v1 forms otherwise, so a file transfer is compressed
+when it can be. The gain is real only when the file compresses: on a Windows host over
+USB, a 64 MiB text file moves about twenty times faster each way, while 64 MiB of random
+bytes moves at the same speed with or without a codec.
+
+| 64 MiB text file | push | pull |
+| --- | --- | --- |
+| v1 (no compression) | 8.8 s (7.3 MB/s) | 5.2 s (12.4 MB/s) |
+| zstd (the default) | 0.4 s (146.7 MB/s) | 0.2 s (416 MB/s) |
+
+`SyncCompression` selects the form per call: `Auto` picks the best codec both sides
+have, `None` forces the v1 forms, and `Zstd`, `Lz4`, or `Brotli` requires that
+codec. The full table, including lz4, brotli, and the incompressible case, is in
+[`docs/06-sync-protocol.md`](docs/06-sync-protocol.md#measured-compression-performance),
+and `tools/bench-compression.ps1` reproduces it on any attached device.
 
 ## Build it
 
@@ -179,7 +198,7 @@ include/adbcpp/testing/  The in-memory transport used by the tests and examples
 src/                    Library sources, mirroring the public headers
 tests/                  Catch2 unit tests and the device integration test
 examples/               Runnable examples, including the guided tours in demo/ and demo_multi/
-tools/                  Developer scripts (adb wrapper, transfer benchmark)
+tools/                  Developer scripts (adb wrapper, transfer and compression benchmarks)
 docs/                   Design documents and Doxygen configuration
 cmake/                  CMake package configuration
 ```
@@ -189,6 +208,7 @@ cmake/                  CMake package configuration
 - [`docs/00-start-here.md`](docs/00-start-here.md) — a plain-language tour, if ADB is new to you.
 - [`examples/demo/main.cpp`](examples/demo/main.cpp) — the guided tour, step by step in its comments.
 - [`examples/demo_multi/main.cpp`](examples/demo_multi/main.cpp) — the same tour on every attached device at once.
+- [`examples/poll/main.cpp`](examples/poll/main.cpp) — driving two loopback devices from one thread with `wait_readable`.
 - [`LEARNING.md`](LEARNING.md) — the theory: a guided curriculum, module by module.
 - [`docs/05-usage.md`](docs/05-usage.md) — copy-pasteable snippets for one feature at a time.
 - [`docs/06-sync-protocol.md`](docs/06-sync-protocol.md) — how the `sync` service and file transfer work, byte by byte.

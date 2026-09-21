@@ -86,14 +86,11 @@ A proposal, not a commitment. Nothing below blocks the next item, and any of it 
 | Order | Work | Why here |
 | --- | --- | --- |
 | 1 | Verify the build and tests on Linux and macOS ([#26](https://github.com/promethea156/adbcpp/issues/26), [#25](https://github.com/promethea156/adbcpp/issues/25)) | P2. A real machine confirms what CI only compiles, and [issue #2](https://github.com/promethea156/adbcpp/issues/2)'s acceptance needs it. |
-| 2 | Add a non-blocking read/poll ([#6](https://github.com/promethea156/adbcpp/issues/6)) | P4. Deferred until one thread must drive several devices. |
-| 3 | State the minimum supported Android version ([#4](https://github.com/promethea156/adbcpp/issues/4)) | P5. The floor is documented but unverified on a device without `shell_v2`. |
-| 4 | Use `sendrecv_v2` for `pull` and `push` ([#1](https://github.com/promethea156/adbcpp/issues/1)) | P6. A transfer is never compressed today. |
-| 5 | Replace libusb with platform-native USB APIs ([#2](https://github.com/promethea156/adbcpp/issues/2)) | P7. Removes the only third-party runtime dependency and its license obligation. |
-| 6 | Decide whether a target needs ADB's TLS handshake ([#5](https://github.com/promethea156/adbcpp/issues/5)) | P8. Only matters for a target that demands the handshake. |
-| 7 | Validate a message header against its payload ([#23](https://github.com/promethea156/adbcpp/issues/23)) and separate stdout from stderr ([#22](https://github.com/promethea156/adbcpp/issues/22)) | P9. Hardening, not capability. |
+| 2 | State the minimum supported Android version ([#4](https://github.com/promethea156/adbcpp/issues/4)) | P5. The floor is documented but unverified on a device without `shell_v2`. |
+| 3 | Replace libusb with platform-native USB APIs ([#2](https://github.com/promethea156/adbcpp/issues/2)) | P7. Removes the only third-party runtime dependency and its license obligation. |
+| 4 | Decide whether a target needs ADB's TLS handshake ([#5](https://github.com/promethea156/adbcpp/issues/5)) | P8. Only matters for a target that demands the handshake. |
 
-Optional logging ([#3](https://github.com/promethea156/adbcpp/issues/3)) was the P3 item and is now done, so it is no longer listed.
+Optional logging ([#3](https://github.com/promethea156/adbcpp/issues/3)) was the P3 item, the non-blocking poll ([#6](https://github.com/promethea156/adbcpp/issues/6)) the P4 item, the brotli codec ([#34](https://github.com/promethea156/adbcpp/issues/34)) the P6 item, and both P9 items, the header/payload check ([#23](https://github.com/promethea156/adbcpp/issues/23)) and the separate streams ([#22](https://github.com/promethea156/adbcpp/issues/22)), are now done, so none is listed.
 
 ## Slice 0 — Walking Skeleton
 
@@ -202,7 +199,7 @@ The initial scope is complete, so this slice is not new capability: it closes th
 
 - **The `adb devices` serial on the transport.** `Connection::device_serial` returns the banner `serialno`, which is empty on current devices, so a caller reading it gets nothing. Add `Transport::serial()`, returning the transport's identity (the USB `iSerial` descriptor, or the TCP endpoint), and have `device_serial` prefer it and fall back to the banner field. This is the one change here that alters a public type's layout, so it belongs before 1.0.
 - **Fall back to `shell:` when `shell_v2` is absent.** `run` opens `shell,v2,raw:` and requires the feature, while `list` and `stat` already fall back to their v1 forms. Open `shell:<command>` when the device did not advertise `shell_v2`, take the combined output as the raw bytes, and report exit code 0, matching adb (the v1 shell has no exit packet; AOSP's own v1 path reports 0). The v1 path can be exercised on a current device by forcing the service string, so it needs no old device to test.
-- **Advertise only what is implemented.** The host banner claims `sendrecv_v2` with brotli, lz4, and zstd, and services that are never opened (`abb`, `apex`, `remount_shell`, `track_app`, `devraw`, `server_status`, ...). Either implement `sendrecv_v2` for `pull`/`push` or trim the list to the features the library acts on, so a peer cannot rely on a claim that is not honored.
+- **Advertise only what is implemented.** The host banner claims `sendrecv_v2` with brotli, lz4, and zstd, and services that are never opened (`abb`, `apex`, `remount_shell`, `track_app`, `devraw`, `server_status`, ...). Either implement `sendrecv_v2` for `pull`/`push` or trim the list to the features the library acts on, so a peer cannot rely on a claim that is not honored. Slice 9 trimmed the list; the zstd, lz4, and brotli v2 forms are now implemented (see [Future Improvements](#other-improvements)).
 - **Release chores.** Bump `project(VERSION)` to `1.0.0` (`SOVERSION` follows to 1), add a `CHANGELOG.md` generated from the Conventional Commits history, and tag `v1.0.0`. ([issue #7](https://github.com/promethea156/adbcpp/issues/7))
 
 **Acceptance:** `device_serial()` returns the same string `adb devices` prints for a USB device; `run` works against a device that does not advertise `shell_v2` (forced with `shell:`) as well as one that does; the banner claims nothing unimplemented; and a `v1.0.0` tag builds and passes the suite on all three CI platforms.
@@ -214,7 +211,7 @@ Obligations that run through every slice, with the current state of each.
 - **Error handling**: every operation that can fail returns a `Result<T>`; nothing in the library throws, and third-party exceptions are caught at the boundary. The rule, the types, and the shape of each command's answer are in [`07-error-model.md`](07-error-model.md).
 - **Testing**: unit tests per module, driven by the mock transport, plus one integration test against a real device. Device-dependent tests live in `adbcpp_device_tests`; when no matching USB device is present they exit with code 77 so CTest reports them as skipped rather than failed, and the USB example prints a warning and exits successfully in the same case.
 - **Logging**: implemented as `adbcpp/log.hpp`. It is opt-in and off until `set_logger` installs a sink, configurable per level, and never logs key material or a payload: a frame is logged with its command, arguments, and length only, and the service a stream is opened for is the only payload-derived detail, at `Trace`. `tests/log_test.cpp` covers the CNXN/AUTH flow and pins that none of the key material reaches the sink. ([issue #3](https://github.com/promethea156/adbcpp/issues/3))
-- **Thread safety**: `Transport`, `Connection`, `Stream`, and `Key` each state that they are not thread-safe, and that a caller must serialize concurrent use. Independent objects share no state, so the model for several devices is one thread per device (see [Working with Several Devices in Parallel](#working-with-several-devices-in-parallel)).
+- **Thread safety**: `Transport`, `Connection`, `Stream`, and `Key` each state that they are not thread-safe, and that a caller must serialize concurrent use. Independent objects share no state, so the model for several devices is one thread per device. One thread can also drive several devices, by waiting on their transports with `adbcpp::wait_readable` (see [Working with Several Devices in Parallel](#working-with-several-devices-in-parallel)).
 - **Documentation**: Doxygen comments on every public declaration, and the reasoning behind each protocol decision written down in [`04-blockers.md`](04-blockers.md).
 - **Compatibility**: the minimum supported Android is **7.0 (API 24)** and the minimum ADB protocol version is `0x01000001`. The v2 `shell`, `LIST`, and `STAT` forms are used when the device advertises them, with their v1 forms as the fallback. ([issue #4](https://github.com/promethea156/adbcpp/issues/4))
 
@@ -228,12 +225,19 @@ Each item below is tracked as an issue in the [issue tracker](https://github.com
 
 ### Working with Several Devices in Parallel
 
-The intended use case is driving several devices at once, and the model is **one
-thread per device**. It needs no change to `Transport`: every `UsbTransport` has its
-own libusb context, and `Connection`, `Stream`, and `Key` are independent and
-documented as one-object-per-thread, so several connections on several threads share
-no state. The blocking `Transport::read` is therefore kept, and a non-blocking read or
-poll is deferred until one thread must drive several devices.
+The intended use case is driving several devices at once, and the default model is
+**one thread per device**. It needs no change to `Transport`: every `UsbTransport`
+has its own libusb context, and `Connection`, `Stream`, and `Key` are independent
+and documented as one-object-per-thread, so several connections on several threads
+share no state. `Transport::read` therefore stays blocking, and `examples/multi`
+drives two devices on two threads.
+
+**Done.** One thread can also drive several devices. `Transport::wait_readable` waits
+for readability with a timeout, and the `adbcpp::wait_readable` helper waits on
+several transports at once and returns the readable one, which the caller then reads.
+`TcpTransport` waits with `select`, `UsbTransport` with one bulk transfer bounded by
+the timeout, and the mock reports whether bytes are queued. `examples/poll` drives two
+loopback devices from one thread and runs in CI.
 ([issue #6](https://github.com/promethea156/adbcpp/issues/6))
 
 Each device also needs its own connection: the WinUSB driver on the test device admits
@@ -255,9 +259,9 @@ own serial, each on its own thread, and both run `echo hello` and a file round t
 
 ### Other Improvements
 
-- **Use `sendrecv_v2` for `pull` and `push`.** The v1 `RECV`/`SEND` forms are sent today, so a transfer is never compressed. [Slice 9](#slice-9--release-10) removed the false `sendrecv_v2` claim from the banner; implementing the v2 forms would let a transfer use brotli, lz4, or zstd. ([issue #1](https://github.com/promethea156/adbcpp/issues/1))
+- **Use `sendrecv_v2` with zstd for `pull` and `push`.** **Done.** The v1 `RECV`/`SEND` forms were always sent, so a transfer was never compressed. `pull` and `push` now send the v2 forms with the best codec both sides have, in adb's order, and the v1 forms otherwise, so a device without the feature still works. The banner advertises `sendrecv_v2` and only the built codecs. ([issue #1](https://github.com/promethea156/adbcpp/issues/1), [#35](https://github.com/promethea156/adbcpp/issues/35), [#34](https://github.com/promethea156/adbcpp/issues/34))
 - **Give `Connection` an explicit `disconnect`.** **Done.** Closing a link is `transport->close()` on the borrowed transport, and a `Connection` records no dead state, so a closed connection still looks live. `Connection::close()` now closes the transport and marks the connection dead, so a later `send`/`receive` reports a `Transport` error, and `Connection::is_open()` reports the state. ([issue #11](https://github.com/promethea156/adbcpp/issues/11))
 - **Reconnect a dropped or reset link.** **Done.** There is no `reconnect()` and `connect` does not retry, so a dropped TCP link or a USB 3 link reset (blocker 29) needs the same manual close, reopen, and re-handshake that the examples hand-roll. `adbcpp::connect_with_retry(open, transport, ...)` now owns that loop with a bounded exponential backoff, and the examples call it instead. ([issue #12](https://github.com/promethea156/adbcpp/issues/12))
-- **Separate stdout and stderr in `CommandResult`.** `run` merges the two shell_v2 streams, so a caller cannot tell which one a line came from. The v1 fallback stays merged, since it does not separate them. ([issue #22](https://github.com/promethea156/adbcpp/issues/22))
-- **Check a message header against the payload it writes.** `Message` and `Session::send` take the header and payload separately, so a header can advertise a `data_length` that does not match the bytes written, which is how blocker 13 stalled the `OPEN`. ([issue #23](https://github.com/promethea156/adbcpp/issues/23))
+- **Separate stdout and stderr in `CommandResult`.** **Done.** `run` merged the two shell_v2 streams, so a caller could not tell which one a line came from. `CommandResult` now carries `standard_output` and `error_output` as well as the merged `output`, and the v1 fallback leaves the two separate fields empty, since it does not separate them. ([issue #22](https://github.com/promethea156/adbcpp/issues/22))
+- **Check a message header against the payload it writes.** **Done.** `Message` and `Session::send` take the header and payload separately, so a header could advertise a `data_length` that did not match the bytes written, which is how blocker 13 stalled the `OPEN`. `Session::send` now checks that `header.data_length` equals `payload.size()` and reports a mismatch as an `InvalidArgument` before it writes anything. ([issue #23](https://github.com/promethea156/adbcpp/issues/23))
 - Replace the dynamically-linked libusb backend with platform-native USB APIs (WinUSB, IOKit, `usbfs`) to remove the third-party dependency and its license obligations. See [USB Backend](01-objective.md#usb-backend). ([issue #2](https://github.com/promethea156/adbcpp/issues/2))

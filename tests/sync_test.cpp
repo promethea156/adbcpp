@@ -14,6 +14,17 @@
 #include <utility>
 #include <vector>
 
+#if defined(ADBCPP_HAS_LZ4)
+#    include <lz4frame.h>
+#endif
+#if defined(ADBCPP_HAS_ZSTD)
+#    include <zstd.h>
+#endif
+#if defined(ADBCPP_HAS_BROTLI)
+#    include <brotli/decode.h>
+#    include <brotli/encode.h>
+#endif
+
 #include "adbcpp/connection.hpp"
 #include "adbcpp/protocol/commands.hpp"
 #include "adbcpp/protocol/message.hpp"
@@ -187,6 +198,81 @@ void feed_data(adbcpp::testing::MockTransport &transport, std::span<const std::b
     feed_sync(transport, chunk);
 }
 
+#if defined(ADBCPP_HAS_ZSTD)
+// Feeds `data` compressed with zstd inside a DATA chunk, as the v2 form does.
+void feed_data_zstd(adbcpp::testing::MockTransport &transport, const std::string &data)
+{
+    std::vector<std::byte> compressed(ZSTD_compressBound(data.size()));
+    const std::size_t size = ZSTD_compress(compressed.data(), compressed.size(), data.data(), data.size(), 1);
+    REQUIRE(!ZSTD_isError(size));
+    compressed.resize(size);
+    feed_data(transport, compressed);
+}
+
+// Decompresses a v2 DATA chunk the host wrote.
+std::string decompress_zstd(const std::vector<std::byte> &compressed)
+{
+    std::vector<std::byte> output(64 * 1024);
+    const std::size_t size = ZSTD_decompress(output.data(), output.size(), compressed.data(), compressed.size());
+    REQUIRE(!ZSTD_isError(size));
+    return std::string(reinterpret_cast<const char *>(output.data()), size);
+}
+#endif
+
+#if defined(ADBCPP_HAS_LZ4)
+// Feeds `data` compressed with lz4 inside a DATA chunk, as the v2 form does.
+void feed_data_lz4(adbcpp::testing::MockTransport &transport, const std::string &data)
+{
+    LZ4F_preferences_t preferences{};
+    preferences.frameInfo.blockMode = LZ4F_blockIndependent;
+    std::vector<std::byte> compressed(LZ4F_compressFrameBound(data.size(), &preferences));
+    const std::size_t size =
+        LZ4F_compressFrame(compressed.data(), compressed.size(), data.data(), data.size(), &preferences);
+    REQUIRE(!LZ4F_isError(size));
+    compressed.resize(size);
+    feed_data(transport, compressed);
+}
+
+// Decompresses a v2 DATA chunk the host wrote.
+std::string decompress_lz4(const std::vector<std::byte> &compressed)
+{
+    LZ4F_dctx *context = nullptr;
+    REQUIRE(!LZ4F_isError(LZ4F_createDecompressionContext(&context, LZ4F_VERSION)));
+    std::vector<std::byte> output(64 * 1024);
+    std::size_t source_size = compressed.size();
+    std::size_t destination_size = output.size();
+    const std::size_t code =
+        LZ4F_decompress(context, output.data(), &destination_size, compressed.data(), &source_size, nullptr);
+    REQUIRE(!LZ4F_isError(code));
+    LZ4F_freeDecompressionContext(context);
+    return std::string(reinterpret_cast<const char *>(output.data()), destination_size);
+}
+#endif
+
+#if defined(ADBCPP_HAS_BROTLI)
+// Feeds `data` compressed with brotli inside a DATA chunk, as the v2 form does.
+void feed_data_brotli(adbcpp::testing::MockTransport &transport, const std::string &data)
+{
+    std::vector<std::byte> compressed(BrotliEncoderMaxCompressedSize(data.size()));
+    std::size_t size = compressed.size();
+    REQUIRE(BrotliEncoderCompress(1, BROTLI_DEFAULT_WINDOW, BROTLI_DEFAULT_MODE, data.size(),
+                                  reinterpret_cast<const std::uint8_t *>(data.data()), &size,
+                                  reinterpret_cast<std::uint8_t *>(compressed.data())) == BROTLI_TRUE);
+    compressed.resize(size);
+    feed_data(transport, compressed);
+}
+
+// Decompresses a v2 DATA chunk the host wrote.
+std::string decompress_brotli(const std::vector<std::byte> &compressed)
+{
+    std::vector<std::byte> output(64 * 1024);
+    std::size_t size = output.size();
+    REQUIRE(BrotliDecoderDecompress(compressed.size(), reinterpret_cast<const std::uint8_t *>(compressed.data()), &size,
+                                    reinterpret_cast<std::uint8_t *>(output.data())) == BROTLI_DECODER_RESULT_SUCCESS);
+    return std::string(reinterpret_cast<const char *>(output.data()), size);
+}
+#endif
+
 // DONE for a transfer is `sync_data { id, size }`, not a DENT struct; the size is
 // ignored.
 void feed_recv_done(adbcpp::testing::MockTransport &transport)
@@ -273,6 +359,14 @@ std::size_t find_id(const std::vector<std::byte> &written, const char *four)
     const auto found = std::search(written.begin(), written.end(), id.begin(), id.end());
     REQUIRE(found != written.end());
     return static_cast<std::size_t>(std::distance(written.begin(), found));
+}
+
+// Whether the host wrote the four-byte sync id `four`.
+bool contains_id(const std::vector<std::byte> &written, const char *four)
+{
+    std::array<std::byte, 4> id{};
+    write_u32_le(id.data(), adbcpp::protocol::make_command(four[0], four[1], four[2], four[3]));
+    return std::search(written.begin(), written.end(), id.begin(), id.end()) != written.end();
 }
 
 void feed_fail_on(adbcpp::testing::MockTransport &transport, std::uint32_t arg0, std::uint32_t arg1,
@@ -686,3 +780,337 @@ TEST_CASE("push rejects a remote path longer than the sync limit", "[sync]")
     REQUIRE(status.error().code == adbcpp::ErrorCode::InvalidArgument);
     std::filesystem::remove(local);
 }
+
+#if defined(ADBCPP_HAS_ZSTD)
+TEST_CASE("pull decompresses the v2 chunks when zstd is advertised", "[sync]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,sendrecv_v2,sendrecv_v2_zstd");
+
+    std::string text;
+    for (int i = 0; i < 1024; ++i)
+    {
+        text += "hello world ";
+    }
+    feed_data_zstd(transport, text);
+    feed_recv_done(transport);
+
+    const auto local = temp_file("pull_v2.bin");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::pull(connection, "/sdcard/file.txt", local));
+
+    REQUIRE(read_file(local) == text);
+    std::filesystem::remove(local);
+}
+
+TEST_CASE("pull sends the RECV v2 request with the zstd flag", "[sync]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,sendrecv_v2,sendrecv_v2_zstd");
+    feed_recv_done(transport);
+
+    const auto local = temp_file("pull_v2_request.bin");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::pull(connection, "/sdcard/file.txt", local, adbcpp::SyncCompression::Zstd));
+
+    // RCV2(id, path_length, "path", id, flags), in one write.
+    const std::string path = "/sdcard/file.txt";
+    std::vector<std::byte> request(8 + path.size() + 8);
+    write_u32_le(request.data(), adbcpp::protocol::make_command('R', 'C', 'V', '2'));
+    write_u32_le(request.data() + 4, static_cast<std::uint32_t>(path.size()));
+    std::copy_n(reinterpret_cast<const std::byte *>(path.data()), path.size(), request.data() + 8);
+    write_u32_le(request.data() + 8 + path.size(), adbcpp::protocol::make_command('R', 'C', 'V', '2'));
+    write_u32_le(request.data() + 8 + path.size() + 4, 4u);
+
+    const auto &written = transport.written();
+    REQUIRE(std::search(written.begin(), written.end(), request.begin(), request.end()) != written.end());
+    std::filesystem::remove(local);
+}
+
+TEST_CASE("pull uses the v1 form when sendrecv_v2 is not advertised", "[sync]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,cmd");
+    feed_data(transport, bytes_of("plain"));
+    feed_recv_done(transport);
+
+    const auto local = temp_file("pull_v2_absent.bin");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::pull(connection, "/sdcard/file.txt", local));
+
+    REQUIRE(read_file(local) == "plain");
+    std::filesystem::remove(local);
+
+    // The request is the v1 RECV, not the v2 one.
+    REQUIRE_FALSE(contains_id(transport.written(), "RCV2"));
+}
+
+TEST_CASE("pull uses the v1 form when compression is None", "[sync]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,sendrecv_v2,sendrecv_v2_zstd");
+    feed_data(transport, bytes_of("plain"));
+    feed_recv_done(transport);
+
+    const auto local = temp_file("pull_v2_none.bin");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::pull(connection, "/sdcard/file.txt", local, adbcpp::SyncCompression::None));
+
+    REQUIRE(read_file(local) == "plain");
+    std::filesystem::remove(local);
+    REQUIRE_FALSE(contains_id(transport.written(), "RCV2"));
+}
+
+TEST_CASE("pull rejects zstd when the device did not advertise it", "[sync]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,cmd");
+
+    const auto local = temp_file("pull_v2_missing.bin");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+
+    const auto status = adbcpp::pull(connection, "/sdcard/file.txt", local, adbcpp::SyncCompression::Zstd);
+    REQUIRE_FALSE(status.has_value());
+    REQUIRE(status.error().code == adbcpp::ErrorCode::InvalidArgument);
+    std::filesystem::remove(local);
+}
+
+TEST_CASE("push compresses the v2 chunks when zstd is advertised", "[sync]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,stat_v2,sendrecv_v2,sendrecv_v2_zstd");
+    feed_stat_v2(transport, 2u, 0u, 0u, 0);
+    feed_second_open(transport);
+    feed_status_on(transport, kSecondDeviceId, kSecondLocalId, adbcpp::protocol::make_command('O', 'K', 'A', 'Y'));
+
+    const std::string text = "hello world\n";
+    const auto local = temp_file("push_v2.txt", text);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::push(connection, local, "/sdcard/file.txt", adbcpp::SyncCompression::Zstd));
+    std::filesystem::remove(local);
+
+    const auto &written = transport.written();
+
+    // SND2(id, path_length, "path", id, mode, flags). The setup packet
+    // follows the path, and its flags select zstd.
+    const auto send_offset = find_id(written, "SND2");
+    const std::uint32_t spec_length = read_u32_le(written.data() + send_offset + 4);
+    const auto setup_offset = send_offset + 8 + spec_length;
+    REQUIRE(read_u32_le(written.data() + setup_offset) == adbcpp::protocol::make_command('S', 'N', 'D', '2'));
+    REQUIRE(read_u32_le(written.data() + setup_offset + 8) == 4u);
+
+    // The DATA chunk after the setup holds the compressed file, so decompressing
+    // it gives the file back.
+    const auto data_offset = find_id(written, "DATA");
+    const std::uint32_t size = read_u32_le(written.data() + data_offset + 4);
+    const std::vector<std::byte> compressed(written.begin() + data_offset + 8,
+                                            written.begin() + data_offset + 8 + size);
+    REQUIRE(decompress_zstd(compressed) == text);
+}
+#endif
+
+#if defined(ADBCPP_HAS_LZ4)
+TEST_CASE("pull decompresses the v2 chunks when lz4 is advertised", "[sync]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,sendrecv_v2,sendrecv_v2_lz4");
+
+    std::string text;
+    for (int i = 0; i < 1024; ++i)
+    {
+        text += "hello world ";
+    }
+    feed_data_lz4(transport, text);
+    feed_recv_done(transport);
+
+    const auto local = temp_file("pull_lz4.bin");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::pull(connection, "/sdcard/file.txt", local));
+
+    REQUIRE(read_file(local) == text);
+    std::filesystem::remove(local);
+}
+
+TEST_CASE("pull sends the RECV v2 request with the lz4 flag", "[sync]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,sendrecv_v2,sendrecv_v2_lz4");
+    feed_recv_done(transport);
+
+    const auto local = temp_file("pull_lz4_request.bin");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::pull(connection, "/sdcard/file.txt", local, adbcpp::SyncCompression::Lz4));
+
+    // RCV2(id, path_length, "path", id, flags), in one write.
+    const std::string path = "/sdcard/file.txt";
+    std::vector<std::byte> request(8 + path.size() + 8);
+    write_u32_le(request.data(), adbcpp::protocol::make_command('R', 'C', 'V', '2'));
+    write_u32_le(request.data() + 4, static_cast<std::uint32_t>(path.size()));
+    std::copy_n(reinterpret_cast<const std::byte *>(path.data()), path.size(), request.data() + 8);
+    write_u32_le(request.data() + 8 + path.size(), adbcpp::protocol::make_command('R', 'C', 'V', '2'));
+    write_u32_le(request.data() + 8 + path.size() + 4, 2u);
+
+    const auto &written = transport.written();
+    REQUIRE(std::search(written.begin(), written.end(), request.begin(), request.end()) != written.end());
+    std::filesystem::remove(local);
+}
+
+TEST_CASE("pull prefers zstd over lz4 when both are advertised", "[sync]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,sendrecv_v2,sendrecv_v2_zstd,sendrecv_v2_lz4");
+
+    std::string text;
+    for (int i = 0; i < 1024; ++i)
+    {
+        text += "hello world ";
+    }
+    // The chunks are zstd frames, so the codec is zstd, the first in adb's order.
+    feed_data_zstd(transport, text);
+    feed_recv_done(transport);
+
+    const auto local = temp_file("pull_both.bin");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::pull(connection, "/sdcard/file.txt", local));
+
+    REQUIRE(read_file(local) == text);
+    std::filesystem::remove(local);
+}
+
+TEST_CASE("push compresses the v2 chunks when lz4 is advertised", "[sync]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,stat_v2,sendrecv_v2,sendrecv_v2_lz4");
+    feed_stat_v2(transport, 2u, 0u, 0u, 0);
+    feed_second_open(transport);
+    feed_status_on(transport, kSecondDeviceId, kSecondLocalId, adbcpp::protocol::make_command('O', 'K', 'A', 'Y'));
+
+    const std::string text = "hello world\n";
+    const auto local = temp_file("push_lz4.txt", text);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::push(connection, local, "/sdcard/file.txt", adbcpp::SyncCompression::Lz4));
+    std::filesystem::remove(local);
+
+    const auto &written = transport.written();
+
+    // SND2(id, path_length, "path", id, mode, flags). The setup packet
+    // follows the path, and its flags select lz4.
+    const auto send_offset = find_id(written, "SND2");
+    const std::uint32_t spec_length = read_u32_le(written.data() + send_offset + 4);
+    const auto setup_offset = send_offset + 8 + spec_length;
+    REQUIRE(read_u32_le(written.data() + setup_offset) == adbcpp::protocol::make_command('S', 'N', 'D', '2'));
+    REQUIRE(read_u32_le(written.data() + setup_offset + 8) == 2u);
+
+    // The DATA chunk after the setup holds the compressed file, so decompressing
+    // it gives the file back.
+    const auto data_offset = find_id(written, "DATA");
+    const std::uint32_t size = read_u32_le(written.data() + data_offset + 4);
+    const std::vector<std::byte> compressed(written.begin() + data_offset + 8,
+                                            written.begin() + data_offset + 8 + size);
+    REQUIRE(decompress_lz4(compressed) == text);
+}
+#endif
+
+#if defined(ADBCPP_HAS_BROTLI)
+TEST_CASE("pull decompresses the v2 chunks when brotli is advertised", "[sync]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,sendrecv_v2,sendrecv_v2_brotli");
+
+    std::string text;
+    for (int i = 0; i < 1024; ++i)
+    {
+        text += "hello world ";
+    }
+    feed_data_brotli(transport, text);
+    feed_recv_done(transport);
+
+    const auto local = temp_file("pull_brotli.bin");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::pull(connection, "/sdcard/file.txt", local));
+
+    REQUIRE(read_file(local) == text);
+    std::filesystem::remove(local);
+}
+
+TEST_CASE("pull sends the RECV v2 request with the brotli flag", "[sync]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,sendrecv_v2,sendrecv_v2_brotli");
+    feed_recv_done(transport);
+
+    const auto local = temp_file("pull_brotli_request.bin");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::pull(connection, "/sdcard/file.txt", local, adbcpp::SyncCompression::Brotli));
+
+    // RCV2(id, path_length, "path", id, flags), in one write.
+    const std::string path = "/sdcard/file.txt";
+    std::vector<std::byte> request(8 + path.size() + 8);
+    write_u32_le(request.data(), adbcpp::protocol::make_command('R', 'C', 'V', '2'));
+    write_u32_le(request.data() + 4, static_cast<std::uint32_t>(path.size()));
+    std::copy_n(reinterpret_cast<const std::byte *>(path.data()), path.size(), request.data() + 8);
+    write_u32_le(request.data() + 8 + path.size(), adbcpp::protocol::make_command('R', 'C', 'V', '2'));
+    write_u32_le(request.data() + 8 + path.size() + 4, 1u);
+
+    const auto &written = transport.written();
+    REQUIRE(std::search(written.begin(), written.end(), request.begin(), request.end()) != written.end());
+    std::filesystem::remove(local);
+}
+
+#    if defined(ADBCPP_HAS_LZ4)
+TEST_CASE("pull prefers lz4 over brotli when both are advertised", "[sync]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,sendrecv_v2,sendrecv_v2_brotli,sendrecv_v2_lz4");
+
+    std::string text;
+    for (int i = 0; i < 1024; ++i)
+    {
+        text += "hello world ";
+    }
+    // The chunks are lz4 frames, so the codec is lz4, the second in adb's order.
+    feed_data_lz4(transport, text);
+    feed_recv_done(transport);
+
+    const auto local = temp_file("pull_brotli_lz4.bin");
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::pull(connection, "/sdcard/file.txt", local));
+
+    REQUIRE(read_file(local) == text);
+    std::filesystem::remove(local);
+}
+#    endif
+
+TEST_CASE("push compresses the v2 chunks when brotli is advertised", "[sync]")
+{
+    adbcpp::testing::MockTransport transport;
+    feed_device(transport, "shell_v2,stat_v2,sendrecv_v2,sendrecv_v2_brotli");
+    feed_stat_v2(transport, 2u, 0u, 0u, 0);
+    feed_second_open(transport);
+    feed_status_on(transport, kSecondDeviceId, kSecondLocalId, adbcpp::protocol::make_command('O', 'K', 'A', 'Y'));
+
+    const std::string text = "hello world\n";
+    const auto local = temp_file("push_brotli.txt", text);
+    auto connection = unwrap(adbcpp::Connection::connect(transport));
+    unwrap(adbcpp::push(connection, local, "/sdcard/file.txt", adbcpp::SyncCompression::Brotli));
+    std::filesystem::remove(local);
+
+    const auto &written = transport.written();
+
+    // SND2(id, path_length, "path", id, mode, flags). The setup packet
+    // follows the path, and its flags select brotli.
+    const auto send_offset = find_id(written, "SND2");
+    const std::uint32_t spec_length = read_u32_le(written.data() + send_offset + 4);
+    const auto setup_offset = send_offset + 8 + spec_length;
+    REQUIRE(read_u32_le(written.data() + setup_offset) == adbcpp::protocol::make_command('S', 'N', 'D', '2'));
+    REQUIRE(read_u32_le(written.data() + setup_offset + 8) == 1u);
+
+    // The DATA chunk after the setup holds the compressed file, so decompressing
+    // it gives the file back.
+    const auto data_offset = find_id(written, "DATA");
+    const std::uint32_t size = read_u32_le(written.data() + data_offset + 4);
+    const std::vector<std::byte> compressed(written.begin() + data_offset + 8,
+                                            written.begin() + data_offset + 8 + size);
+    REQUIRE(decompress_brotli(compressed) == text);
+}
+#endif

@@ -42,6 +42,35 @@ adbcpp::protocol::Message make_message(std::uint32_t command, std::uint32_t arg0
     return message;
 }
 
+void append_feature(std::vector<std::byte> &identity, std::string_view feature)
+{
+    identity.insert(identity.end(), reinterpret_cast<const std::byte *>(feature.data()),
+                    reinterpret_cast<const std::byte *>(feature.data()) + feature.size());
+}
+
+// The CNXN banner the host writes: `kSystemIdentity`, plus the v2 `RECV`/`SEND`
+// features and each codec that is built in, exactly as `Connection::connect`
+// builds it.
+std::vector<std::byte> expected_identity()
+{
+    std::vector<std::byte> identity(
+        reinterpret_cast<const std::byte *>(adbcpp::kSystemIdentity.data()),
+        reinterpret_cast<const std::byte *>(adbcpp::kSystemIdentity.data()) + adbcpp::kSystemIdentity.size());
+#if defined(ADBCPP_HAS_COMPRESSION)
+    append_feature(identity, adbcpp::kSendRecvV2Feature);
+#    if defined(ADBCPP_HAS_ZSTD)
+    append_feature(identity, adbcpp::kSendRecvV2ZstdFeature);
+#    endif
+#    if defined(ADBCPP_HAS_LZ4)
+    append_feature(identity, adbcpp::kSendRecvV2Lz4Feature);
+#    endif
+#    if defined(ADBCPP_HAS_BROTLI)
+    append_feature(identity, adbcpp::kSendRecvV2BrotliFeature);
+#    endif
+#endif
+    return identity;
+}
+
 } // namespace
 
 TEST_CASE("connection completes the handshake without authentication", "[connection]")
@@ -123,9 +152,7 @@ TEST_CASE("connection answers an AUTH request with the public key", "[connection
 
     const auto connection = unwrap(adbcpp::Connection::connect(transport, public_key));
 
-    std::vector<std::byte> identity(
-        reinterpret_cast<const std::byte *>(adbcpp::kSystemIdentity.data()),
-        reinterpret_cast<const std::byte *>(adbcpp::kSystemIdentity.data()) + adbcpp::kSystemIdentity.size());
+    const auto identity = expected_identity();
     const auto cnxn =
         make_message(adbcpp::protocol::kCnxn, adbcpp::protocol::kVersion, adbcpp::protocol::kMaxData, identity);
     const auto auth_out = make_message(adbcpp::protocol::kAuth, adbcpp::protocol::kAuthPublicKey, 0, key);
@@ -169,9 +196,7 @@ TEST_CASE("connection offers the public key when the signature is rejected", "[c
 
     const auto connection = unwrap(adbcpp::Connection::connect(transport, public_key, signer));
 
-    std::vector<std::byte> identity(
-        reinterpret_cast<const std::byte *>(adbcpp::kSystemIdentity.data()),
-        reinterpret_cast<const std::byte *>(adbcpp::kSystemIdentity.data()) + adbcpp::kSystemIdentity.size());
+    const auto identity = expected_identity();
     const auto cnxn =
         make_message(adbcpp::protocol::kCnxn, adbcpp::protocol::kVersion, adbcpp::protocol::kMaxData, identity);
     const auto signed_auth = make_message(adbcpp::protocol::kAuth, adbcpp::protocol::kAuthSignature, 0, signature);
