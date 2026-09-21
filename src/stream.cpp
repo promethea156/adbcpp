@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <string>
 #include <utility>
 
+#include "adbcpp/log.hpp"
 #include "adbcpp/protocol/commands.hpp"
 
 namespace adbcpp
@@ -61,6 +63,11 @@ Result<Stream> Stream::open(Connection &connection, std::string_view service)
 {
     Stream stream(connection, service);
 
+    if (is_logging(LogLevel::Trace))
+    {
+        log(LogLevel::Trace, "open " + std::string(service) + " local_id=" + std::to_string(stream.local_id_));
+    }
+
     // OPEN's destination is null-terminated and the NUL is part of `data_length`,
     // because adbd parses it as a C string. The same is true of the AUTH public
     // key, but not of the CNXN banner (blocker 7 in `04-blockers.md`).
@@ -101,9 +108,12 @@ Result<Stream> Stream::open(Connection &connection, std::string_view service)
         }
         if (frame->header.command != protocol::kOkay)
         {
+            log(LogLevel::Error, "the device refused to open the stream");
             return tl::unexpected(Error{ErrorCode::Protocol, "failed to open the stream"});
         }
         stream.remote_id_ = frame->header.arg0;
+        log(LogLevel::Info, "opened stream local_id=" + std::to_string(stream.local_id_) +
+                                " remote_id=" + std::to_string(stream.remote_id_));
         return stream;
     }
 }

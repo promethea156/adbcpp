@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "adbcpp/log.hpp"
 #include "adbcpp/protocol/commands.hpp"
 
 namespace adbcpp
@@ -187,6 +188,7 @@ Result<Connection> Connection::connect(Transport &transport, std::span<const std
         if (frame->header.command == protocol::kAuth)
         {
             connection.requested_authorization_ = true;
+            log(LogLevel::Info, "the device requested authorization");
             if (public_key.empty())
             {
                 return tl::unexpected(
@@ -218,6 +220,7 @@ Result<Connection> Connection::connect(Transport &transport, std::span<const std
 
     if (frame->header.command != protocol::kCnxn)
     {
+        log(LogLevel::Error, "unexpected response to the CNXN message");
         return tl::unexpected(Error{ErrorCode::Protocol, "unexpected response to the CNXN message"});
     }
 
@@ -233,6 +236,11 @@ Result<Connection> Connection::connect(Transport &transport, std::span<const std
     // `delayed_ack` is only enabled if both sides advertised it, so a device
     // that does not support it keeps the OPEN window at zero (blocker 12).
     connection.delayed_ack_ = advertise_delayed_ack && connection.supports_feature(kDelayedAckFeature);
+
+    // The serial is the transport's when it has one, and the banner's otherwise,
+    // so it may be empty and is only logged when it is not.
+    const std::string serial(connection.device_serial());
+    log(LogLevel::Info, serial.empty() ? "connected" : "connected to " + serial);
 
     return connection;
 }

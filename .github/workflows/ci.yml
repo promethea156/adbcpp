@@ -57,8 +57,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The tag is `v<version>`, so the section to publish is `## [<version>]`.
+      # Matching on the version rather than taking the first section matters:
+      # the first section is `## [Unreleased]`, which would publish empty notes.
       - name: Extract the release notes
-        run: awk '/^## \[/{count++} count == 1' CHANGELOG.md > notes.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v heading="## [$version]" '
+            index($0, heading) == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
 
       - name: Create the release
         env:
