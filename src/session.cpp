@@ -126,6 +126,17 @@ Status Session::send(const protocol::Message &header, std::span<const std::byte>
         return tl::unexpected(Error{ErrorCode::Transport, "the session is closed"});
     }
 
+    // `data_length` is the header's claim about how many payload bytes follow,
+    // and the device trusts it, so a header that disagrees with the payload would
+    // write a header and then stall the device, which is waiting for bytes that
+    // never arrive (blocker 13 in `04-blockers.md`). The check is here, where
+    // both are known, rather than in `Message`, which never sees the payload.
+    if (header.data_length != payload.size())
+    {
+        log(LogLevel::Error, "the header data_length does not match the payload");
+        return tl::unexpected(Error{ErrorCode::InvalidArgument, "the header data_length does not match the payload"});
+    }
+
     if (is_logging(LogLevel::Debug))
     {
         log(LogLevel::Debug, "send " + describe(header));
