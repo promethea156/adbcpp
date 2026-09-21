@@ -8,7 +8,7 @@ A small, self-contained **ADB (Android Debug Bridge) client, as a C++20 library*
 
 **Minimum ADB protocol version: `0x01000001`.** The library advertises this version in its CNXN message (`kVersion` in `include/adbcpp/protocol/commands.hpp`), which matches AOSP's `A_VERSION`.
 
-> **Status: 2.0.1.** The [initial scope](docs/01-objective.md#initial-scope) is complete, and every fallible operation returns a `Result<T>` instead of throwing. See [`CHANGELOG.md`](CHANGELOG.md) and [`docs/03-roadmap.md`](docs/03-roadmap.md).
+> **Status: 2.1.0.** The [initial scope](docs/01-objective.md#initial-scope) is complete, and every fallible operation returns a `Result<T>` instead of throwing. See [`CHANGELOG.md`](CHANGELOG.md) and [`docs/03-roadmap.md`](docs/03-roadmap.md).
 
 ## How this was built
 
@@ -55,6 +55,7 @@ a green run is just as useful as a red one, and see [Contributing](#contributing
 - **Apps**: install and uninstall a package, launch it, check whether it is running, and close it.
 - **Connect**: reach a device over USB, or over TCP to a `tcpip` device or an emulator, and pick one by its USB serial. The TCP path is verified against a `tcpip` device; an emulator's listener speaks the same plaintext protocol and is expected to work.
 - **Several devices**: drive every attached device at once, one thread per device, because the objects share no state.
+- **Log**: opt in to a process-wide logger, configurable per level, that reports frames, retries, and state changes and never logs keys or payloads.
 
 ## Build it
 
@@ -170,7 +171,7 @@ channels to a full shell session. The tour is its hands-on counterpart.
 
 ```
 include/adbcpp/         Public headers (connection, transport, protocol,
-                        session, stream, shell, sync, app)
+                        session, stream, shell, sync, app, log)
 include/adbcpp/crypto/  The ADB key pair, backed by mbedTLS
 include/adbcpp/tcp/      The TCP transport, over the platform's sockets
 include/adbcpp/usb/      The USB transport, backed by libusb

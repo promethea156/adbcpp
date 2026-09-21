@@ -3,6 +3,7 @@
 #include "adbcpp/app.hpp"
 #include "adbcpp/connection.hpp"
 #include "adbcpp/error.hpp"
+#include "adbcpp/log.hpp"
 #include "adbcpp/protocol/commands.hpp"
 #include "adbcpp/protocol/message.hpp"
 #include "adbcpp/session.hpp"

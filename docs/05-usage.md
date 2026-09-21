@@ -2,9 +2,9 @@
 
 Practical, copy-pasteable examples for everything `adbcpp` can do today: connect
 over USB or TCP, run a shell command, list a directory, pull and push files, stat a path,
-install and uninstall an application, launch, close, and check an application, work
-with the ADB key, and use the lower-level protocol layers directly. Every
-example compiles against the library as it stands now. For the theory behind them, read
+install and uninstall an application, launch, close, and check an application, log
+what the library is doing, work with the ADB key, and use the lower-level protocol
+layers directly. Every example compiles against the library as it stands now. For the theory behind them, read
 [`LEARNING.md`](../LEARNING.md); for how the `sync` service works, read
 [`06-sync-protocol.md`](06-sync-protocol.md).
 
@@ -60,6 +60,7 @@ Include what you use:
 ```cpp
 #include "adbcpp/adbcpp.hpp"                 // core: Connection, Stream, run, install, protocol
 #include "adbcpp/app.hpp"                     // adbcpp::install, uninstall, launch, close, is_running
+#include "adbcpp/log.hpp"                     // adbcpp::set_logger, adbcpp::LogLevel
 #include "adbcpp/sync.hpp"                    // adbcpp::list, adbcpp::DirEntry
 #include "adbcpp/crypto/adb_key.hpp"          // adbcpp::crypto::Key
 #include "adbcpp/tcp/tcp_transport.hpp"       // adbcpp::tcp::TcpTransport
@@ -130,6 +131,54 @@ A device's rejection is an answer rather than an `Error`. `install` and `uninsta
 `pm` reports a rejection in its output. A package manager that refuses an APK is therefore
 reported with `success == false` and its output, while a failed transfer or stream is an
 `Error`.
+
+## Log What the Library Is Doing
+
+Logging is opt-in and off by default. `adbcpp::set_logger` installs a sink and a
+level, and the library then writes protocol events to it, from a frame sent or received
+to a retry or a state change. `adbcpp::clear_logger` removes it again.
+
+```cpp
+#include <iostream>
+#include <string_view>
+
+#include "adbcpp/adbcpp.hpp"
+
+int main()
+{
+    // `Debug` adds the frames to the state changes; `Trace` adds the service a
+    // stream is opened for. The default is `Info`.
+    adbcpp::set_logger(
+        [](adbcpp::LogLevel level, std::string_view message) { std::cerr << message << '\n'; },
+        adbcpp::LogLevel::Debug);
+
+    // ... connect and run a command; the CNXN/AUTH/OPEN/WRTE frames are written.
+
+    adbcpp::clear_logger();
+    return 0;
+}
+```
+
+The sink is process-wide, because the objects that log do not take one of their own.
+It is called from the thread that caused the event, so with one thread per device it
+may be called from several threads at once and must serialize itself if it shares
+state. It must not throw, because the library reports its failures with `Result`.
+
+The levels are ordered, and a message is written when it is at or below the installed
+level:
+
+| Level | What it reports |
+| --- | --- |
+| `Error` | A failure, which the operation also returns as an `Error`. |
+| `Warning` | Something unexpected that did not fail, such as a retry. |
+| `Info` | A state change: a connection, a stream, an authorization. This is the default. |
+| `Debug` | A protocol frame sent or received, with its command, arguments, and length. |
+| `Trace` | A payload-derived detail, such as the service a stream is opened for. |
+
+The library never logs key material or a payload: a frame is logged with its command,
+its arguments, and its length only, and the service is the only payload-derived detail.
+`tests/log_test.cpp` pins that down by driving the handshake with a distinctive token,
+signature, and public key and checking that none of them reaches the sink.
 
 ## Run a Shell Command over USB
 
@@ -1261,6 +1310,10 @@ int main()
 | Check a device feature                  | `connection->supports_feature("ls_v2")`                     |
 | Check delayed acknowledgements           | `connection->supports_delayed_ack()`                       |
 | Detect the authorization prompt          | `connection->requested_authorization()`                    |
+| Enable logging                          | `adbcpp::set_logger(sink, level)`                        |
+| Turn logging off                         | `adbcpp::clear_logger()`                                 |
+| Check whether a level is logged           | `adbcpp::is_logging(level)` → `bool`                      |
+| Write a message to the sink               | `adbcpp::log(level, message)`                             |
 
 ## Pitfalls
 
@@ -1268,6 +1321,10 @@ int main()
 - **Keep the key alive.** The signer callback is stored by the `Connection`, so the
   `Key` it captures must outlive the connection. A dangling reference crashes on
   the first AUTH.
+- **The logger is process-wide.** One sink is shared by every connection and thread,
+  because the objects that log do not take one of their own. Install it before the
+  connections are opened, and make the sink thread-safe if it shares state, because
+  it may be called from several threads at once. `clear_logger()` turns logging off.
 - **Stop the `adb` server first.** `adb` claims the USB interface while it runs, so
   opening the same device fails with an access error. Stop the server before using
   `adbcpp`, and vice versa.

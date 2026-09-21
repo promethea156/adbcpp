@@ -23,6 +23,8 @@
 #    include <cerrno>
 #endif
 
+#include "adbcpp/log.hpp"
+
 namespace adbcpp::tcp
 {
 namespace
@@ -205,6 +207,7 @@ Result<TcpTransport> TcpTransport::open(std::string_view endpoint, unsigned int 
 {
     if (const auto ready = ensure_sockets(); !ready)
     {
+        log(LogLevel::Error, "could not open " + std::string(endpoint) + ": " + ready.error().message);
         return tl::unexpected(ready.error());
     }
 
@@ -213,6 +216,7 @@ Result<TcpTransport> TcpTransport::open(std::string_view endpoint, unsigned int 
     const auto separator = endpoint.rfind(':');
     if (separator == std::string_view::npos)
     {
+        log(LogLevel::Error, "the endpoint is not a host:port pair");
         return tl::unexpected(Error{ErrorCode::InvalidArgument, "the endpoint is not a host:port pair"});
     }
     std::string host(endpoint.substr(0, separator));
@@ -223,6 +227,7 @@ Result<TcpTransport> TcpTransport::open(std::string_view endpoint, unsigned int 
     }
     if (host.empty() || port.empty())
     {
+        log(LogLevel::Error, "the endpoint is not a host:port pair");
         return tl::unexpected(Error{ErrorCode::InvalidArgument, "the endpoint is not a host:port pair"});
     }
 
@@ -238,6 +243,7 @@ Result<TcpTransport> TcpTransport::open(std::string_view endpoint, unsigned int 
 #else
         const std::string reason = ::gai_strerror(resolved);
 #endif
+        log(LogLevel::Error, "could not resolve " + host + ": " + reason);
         return tl::unexpected(Error{ErrorCode::Transport, "getaddrinfo: " + reason});
     }
 
@@ -266,6 +272,7 @@ Result<TcpTransport> TcpTransport::open(std::string_view endpoint, unsigned int 
 
     if (transport.impl_->socket == kInvalidSocket)
     {
+        log(LogLevel::Error, "could not connect to " + std::string(endpoint) + ": " + last_socket_error());
         return tl::unexpected(
             Error{ErrorCode::Transport, "could not connect to " + std::string(endpoint) + ": " + last_socket_error()});
     }
@@ -277,6 +284,8 @@ Result<TcpTransport> TcpTransport::open(std::string_view endpoint, unsigned int 
                        sizeof(enabled));
     set_timeout(transport.impl_->socket, SO_RCVTIMEO, transfer_timeout_ms);
     set_timeout(transport.impl_->socket, SO_SNDTIMEO, transfer_timeout_ms);
+
+    log(LogLevel::Info, "connected to " + std::string(endpoint));
 
     return transport;
 }

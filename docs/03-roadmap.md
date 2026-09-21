@@ -69,23 +69,31 @@ This completes the initial scope.
 - The CNXN banner names only the features the library acts on.
 - `project(VERSION)` is `1.0.0`, [`CHANGELOG.md`](../CHANGELOG.md) records the release, and `v1.0.0` tags it.
 
+**Slice 10 — complete.** The 2.0 hardening, then the release:
+
+- `Connection::close()` and `Connection::is_open()` close the link and record it, so a later `send`/`receive` reports a `Transport` error instead of touching a closed transport ([issue #11](https://github.com/promethea156/adbcpp/issues/11)).
+- `connect_with_retry(open, transport, ...)` owns the open-and-handshake loop with a bounded exponential backoff, which the examples use, and which is also how a dropped link is reconnected ([issue #12](https://github.com/promethea156/adbcpp/issues/12)).
+- `Session` is move-only and records whether it is closed, so a moved-from session does not close the transport its successor uses. This is the **BREAKING** change that makes the release `2.0.0`.
+- `adbcpp_demo_multi_example` runs the guided tour on every attached device at once, one thread per device.
+- `2.0.1` adds [`00-start-here.md`](00-start-here.md) and states the compatibility floor in [`01-objective.md`](01-objective.md).
+
 **Next:** The rest of [Future Improvements](#future-improvements), tracked as [issues](https://github.com/promethea156/adbcpp/issues).
 
 ## Proposed Order for What Remains
 
-A proposal, not a commitment. Nothing below blocks the next slice, and any of it can move.
+A proposal, not a commitment. Nothing below blocks the next item, and any of it can move. Each entry is an open issue, ordered by the priority in its title (P2 first).
 
 | Order | Work | Why here |
 | --- | --- | --- |
-| 1 | Apply the [error model](07-error-model.md) | **Done.** The whole library returns `Result<T>`, so Slice 6 adds its three functions in the new shape rather than converting them later. |
-| 2 | [Slice 6 — app control](#slice-6--app-control) | **Done.** Composition again: `am start`, `am force-stop`, and `pidof` are shell commands. |
-| 3 | Validate the received header | **Done.** `Session::receive` checks `magic`, bounds `data_length`, and verifies a non-zero payload checksum, closing the transport on a framing error. |
-| 4 | State thread safety for `Connection`, `Stream`, and `Key` | **Done.** Each states that it is not thread-safe and must be serialized by the caller, matching `Transport`. |
-| 5 | Settle the [threading model for several devices](#working-with-several-devices-in-parallel) | **Done.** One thread per device; `Transport` stays blocking and `examples/multi` drives two devices on two threads. |
-| 6 | [Slice 7 — TCP transport](#slice-7--tcp-transport) | **Done.** Native sockets, so the core stays free of any third-party dependency. |
-| 7 | [Select devices by serial](#working-with-several-devices-in-parallel) | **Done.** `DeviceId` matches the USB `iSerial`, and `list()` discovers the serials. |
-| 8 | [Slice 9 — release 1.0 hardening](#slice-9--release-10) | **Done.** `Transport::serial`, the `shell` fallback, and the trimmed banner, then `1.0.0`. |
-| 9 | The rest of [Future Improvements](#other-improvements) | Logging and `sendrecv_v2` matter only once a caller needs them. |
+| 1 | Verify the build and tests on Linux and macOS ([#26](https://github.com/promethea156/adbcpp/issues/26), [#25](https://github.com/promethea156/adbcpp/issues/25)) | P2. A real machine confirms what CI only compiles, and [issue #2](https://github.com/promethea156/adbcpp/issues/2)'s acceptance needs it. |
+| 2 | Add a non-blocking read/poll ([#6](https://github.com/promethea156/adbcpp/issues/6)) | P4. Deferred until one thread must drive several devices. |
+| 3 | State the minimum supported Android version ([#4](https://github.com/promethea156/adbcpp/issues/4)) | P5. The floor is documented but unverified on a device without `shell_v2`. |
+| 4 | Use `sendrecv_v2` for `pull` and `push` ([#1](https://github.com/promethea156/adbcpp/issues/1)) | P6. A transfer is never compressed today. |
+| 5 | Replace libusb with platform-native USB APIs ([#2](https://github.com/promethea156/adbcpp/issues/2)) | P7. Removes the only third-party runtime dependency and its license obligation. |
+| 6 | Decide whether a target needs ADB's TLS handshake ([#5](https://github.com/promethea156/adbcpp/issues/5)) | P8. Only matters for a target that demands the handshake. |
+| 7 | Validate a message header against its payload ([#23](https://github.com/promethea156/adbcpp/issues/23)) and separate stdout from stderr ([#22](https://github.com/promethea156/adbcpp/issues/22)) | P9. Hardening, not capability. |
+
+Optional logging ([#3](https://github.com/promethea156/adbcpp/issues/3)) was the P3 item and is now done, so it is no longer listed.
 
 ## Slice 0 — Walking Skeleton
 
@@ -205,7 +213,7 @@ Obligations that run through every slice, with the current state of each.
 
 - **Error handling**: every operation that can fail returns a `Result<T>`; nothing in the library throws, and third-party exceptions are caught at the boundary. The rule, the types, and the shape of each command's answer are in [`07-error-model.md`](07-error-model.md).
 - **Testing**: unit tests per module, driven by the mock transport, plus one integration test against a real device. Device-dependent tests live in `adbcpp_device_tests`; when no matching USB device is present they exit with code 77 so CTest reports them as skipped rather than failed, and the USB example prints a warning and exits successfully in the same case.
-- **Logging**: not implemented. When it is, it must be optional, configurable, and must never log keys or payloads. ([issue #3](https://github.com/promethea156/adbcpp/issues/3))
+- **Logging**: implemented as `adbcpp/log.hpp`. It is opt-in and off until `set_logger` installs a sink, configurable per level, and never logs key material or a payload: a frame is logged with its command, arguments, and length only, and the service a stream is opened for is the only payload-derived detail, at `Trace`. `tests/log_test.cpp` covers the CNXN/AUTH flow and pins that none of the key material reaches the sink. ([issue #3](https://github.com/promethea156/adbcpp/issues/3))
 - **Thread safety**: `Transport`, `Connection`, `Stream`, and `Key` each state that they are not thread-safe, and that a caller must serialize concurrent use. Independent objects share no state, so the model for several devices is one thread per device (see [Working with Several Devices in Parallel](#working-with-several-devices-in-parallel)).
 - **Documentation**: Doxygen comments on every public declaration, and the reasoning behind each protocol decision written down in [`04-blockers.md`](04-blockers.md).
 - **Compatibility**: the minimum supported Android is **7.0 (API 24)** and the minimum ADB protocol version is `0x01000001`. The v2 `shell`, `LIST`, and `STAT` forms are used when the device advertises them, with their v1 forms as the fallback. ([issue #4](https://github.com/promethea156/adbcpp/issues/4))
