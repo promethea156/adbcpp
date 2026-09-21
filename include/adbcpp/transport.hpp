@@ -1,6 +1,8 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
+#include <optional>
 #include <span>
 #include <string_view>
 
@@ -66,6 +68,21 @@ public:
         return {};
     }
 
+    /**
+     * @brief Waits until this transport has bytes to read, up to `timeout`.
+     *
+     * Returns whether it is readable. A timeout is `false` rather than an error:
+     * nothing has arrived yet is a normal answer, not a failure. A readable
+     * transport's next @ref read returns bytes without blocking, which is what lets
+     * one thread drive several transports.
+     *
+     * The default reports `false`, because a transport that cannot wait has no other
+     * answer; a caller's own transport is then never selected by the `wait_readable`
+     * helper below. `tcp::TcpTransport`, `usb::UsbTransport`, and the mock
+     * override this, and each documents what its wait costs.
+     */
+    virtual Result<bool> wait_readable(std::chrono::milliseconds timeout);
+
 protected:
     Transport() = default;
 
@@ -75,5 +92,24 @@ protected:
     Transport(Transport &&) = default;
     Transport &operator=(Transport &&) = default;
 };
+
+/**
+ * @brief Waits until one of `transports` has bytes to read, or `timeout` passes.
+ *
+ * Returns the index of a transport that is readable, or nothing when the timeout
+ * passed first. The transport at that index has bytes for its next @ref
+ * Transport::read, so a caller drives several devices from one thread by waiting
+ * here and then reading the one that came back.
+ *
+ * The wait is a round-robin of each transport's `wait_readable(0)`, repeated
+ * with a short sleep until the timeout, because there is no single handle to select
+ * over: a TCP transport's handle is a socket, but a USB transport's is not, so
+ * `select` cannot cover both. A transport that reports `false` from its
+ * `wait_readable` because it cannot wait is therefore never returned.
+ *
+ * @warning A transport must outlive the wait, because it is borrowed.
+ */
+ADBCPP_API Result<std::optional<std::size_t>> wait_readable(std::span<Transport *const> transports,
+                                                            std::chrono::milliseconds timeout);
 
 } // namespace adbcpp

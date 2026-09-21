@@ -54,7 +54,7 @@ a green run is just as useful as a red one, and see [Contributing](#contributing
 - **Files**: list a directory, `stat` a path, and pull or push a file.
 - **Apps**: install and uninstall a package, launch it, check whether it is running, and close it.
 - **Connect**: reach a device over USB, or over TCP to a `tcpip` device or an emulator, and pick one by its USB serial. The TCP path is verified against a `tcpip` device; an emulator's listener speaks the same plaintext protocol and is expected to work.
-- **Several devices**: drive every attached device at once, one thread per device, because the objects share no state.
+- **Several devices**: drive every attached device at once, one thread per device, because the objects share no state, or drive several from one thread with `adbcpp::wait_readable`.
 - **Log**: opt in to a process-wide logger, configurable per level, that reports frames, retries, and state changes and never logs keys or payloads.
 
 ## Build it
@@ -189,6 +189,7 @@ cmake/                  CMake package configuration
 - [`docs/00-start-here.md`](docs/00-start-here.md) — a plain-language tour, if ADB is new to you.
 - [`examples/demo/main.cpp`](examples/demo/main.cpp) — the guided tour, step by step in its comments.
 - [`examples/demo_multi/main.cpp`](examples/demo_multi/main.cpp) — the same tour on every attached device at once.
+- [`examples/poll/main.cpp`](examples/poll/main.cpp) — driving two loopback devices from one thread with `wait_readable`.
 - [`LEARNING.md`](LEARNING.md) — the theory: a guided curriculum, module by module.
 - [`docs/05-usage.md`](docs/05-usage.md) — copy-pasteable snippets for one feature at a time.
 - [`docs/06-sync-protocol.md`](docs/06-sync-protocol.md) — how the `sync` service and file transfer work, byte by byte.

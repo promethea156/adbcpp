@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <array>
 #include <catch2/catch_test_macros.hpp>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -382,6 +383,45 @@ TEST_CASE("run works over tcp against a fake device", "[tcp]")
     REQUIRE(result->output == "hello\n");
     REQUIRE(result->exit_code == 0);
     REQUIRE(result->success);
+
+    transport->close();
+    server.join();
+}
+
+TEST_CASE("tcp transport is readable once the peer sends bytes", "[tcp]")
+{
+#if defined(_WIN32)
+    const SocketRuntime runtime;
+#endif
+    const Loopback loopback;
+
+    std::thread server(
+        [&loopback]
+        {
+            const socket_t socket = loopback.accept();
+            // The wait is bounded, so the server pauses before sending to make
+            // the not-readable answer observable.
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            (void)::send(socket, "h", 1, 0);
+            close_socket(socket);
+        });
+
+    auto transport = adbcpp::tcp::TcpTransport::open(loopback.endpoint());
+    REQUIRE(transport.has_value());
+
+    // Nothing has arrived yet, so the wait times out rather than blocking.
+    const auto before = transport->wait_readable(std::chrono::milliseconds(5));
+    REQUIRE(before.has_value());
+    REQUIRE_FALSE(*before);
+
+    const auto after = transport->wait_readable(std::chrono::milliseconds(5000));
+    REQUIRE(after.has_value());
+    REQUIRE(*after);
+
+    std::array<std::byte, 1> received{};
+    const auto count = transport->read(received);
+    REQUIRE(count.has_value());
+    REQUIRE(*count == 1);
 
     transport->close();
     server.join();
