@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -152,6 +153,16 @@ public:
     Result<std::size_t> read(std::span<std::byte> buffer) override;
     Status write(std::span<const std::byte> data) override;
     void close() override;
+
+    /// Waits until the endpoint has bytes to read, up to `timeout`. Returns
+    /// whether it is readable, so the caller can wait on several transports at
+    /// once (see @ref adbcpp::wait_readable).
+    ///
+    /// libusb exposes no pollable handle on Windows, and its poll-fd list is
+    /// Linux and macOS only, so the wait is a bulk transfer bounded by `timeout`.
+    /// Bytes that arrive are buffered for the next @ref read, exactly as @ref read
+    /// does. A transfer that times out having moved nothing is not readable.
+    Result<bool> wait_readable(std::chrono::milliseconds timeout) override;
 
     /// The opened device's USB `iSerial` descriptor, or empty when it has none.
     std::string_view serial() const noexcept override;

@@ -1,3 +1,4 @@
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -13,6 +14,7 @@
 #include "adbcpp/connection.hpp"
 #include "adbcpp/crypto/adb_key.hpp"
 #include "adbcpp/shell.hpp"
+#include "adbcpp/stream.hpp"
 #include "adbcpp/sync.hpp"
 #include "adbcpp/usb/usb_transport.hpp"
 
@@ -169,6 +171,45 @@ int check_install(adbcpp::Connection &connection)
     return 0;
 }
 
+// The non-blocking wait: a stream's output arrives after it is opened, so the
+// transport becomes readable without a read having been issued, which is what lets
+// one thread drive several devices. The wait is bounded, so a device that never
+// answers is noticed rather than blocking the test.
+int check_wait_readable(adbcpp::usb::UsbTransport &transport, adbcpp::Connection &connection)
+{
+    auto stream = adbcpp::Stream::open(connection, "shell:echo hello");
+    if (!stream)
+    {
+        report(stream.error());
+        return 1;
+    }
+
+    const auto readable = transport.wait_readable(std::chrono::milliseconds(5000));
+    if (!readable)
+    {
+        report(readable.error());
+        return 1;
+    }
+    if (!*readable)
+    {
+        std::cerr << "the transport was not readable while the stream had output\n";
+        return 1;
+    }
+
+    const auto output = stream->read_all();
+    if (!output)
+    {
+        report(output.error());
+        return 1;
+    }
+    if (std::string(reinterpret_cast<const char *>(output->data()), output->size()) != "hello\n")
+    {
+        std::cerr << "unexpected output after a readable wait\n";
+        return 1;
+    }
+    return 0;
+}
+
 // Slice 6: app control. Launch the device's settings app, prove it is
 // running, and force-stop it. Settings is present on every device and is safe
 // to stop, because the system starts it again on demand.
@@ -275,6 +316,11 @@ int main()
     {
         std::cerr << "unexpected exit code: " << static_cast<int>(result->exit_code) << '\n';
         return 1;
+    }
+
+    if (const int wait_result = check_wait_readable(*transport, *connection); wait_result != 0)
+    {
+        return wait_result;
     }
 
     // Both test devices advertise shell_v2, so the v1 fallback is forced here to

@@ -58,6 +58,7 @@ add_library(adbcpp
   src/stream.cpp
   src/sync.cpp
   src/tcp/tcp_transport.cpp
+  src/transport.cpp
 )
 add_library(adbcpp::adbcpp ALIAS adbcpp)
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <span>
 #include <string>
@@ -47,6 +48,14 @@ public:
     void close() override
     {
         closed_ = true;
+    }
+
+    /// Reports whether bytes are queued. A mock has no device that can arrive
+    /// later, so the answer is immediate and the timeout is ignored; there is
+    /// nothing for it to wait for.
+    Result<bool> wait_readable(std::chrono::milliseconds) override
+    {
+        return read_position_ < incoming_.size();
     }
 
     /// Sets the serial reported by serial(), to stand in for a real transport's.

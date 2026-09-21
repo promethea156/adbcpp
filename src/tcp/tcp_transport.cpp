@@ -101,13 +101,19 @@ Status ensure_sockets()
     return {};
 }
 
-// Builds a `timeval` for `timeout_ms`. Its field types are not the same
+// Builds a `timeval` for `timeout`. Its field types are not the same
 // everywhere (`tv_sec` is `time_t` and `tv_usec` is `suseconds_t` on POSIX, both
 // `long` on Winsock), so they are taken from `timeval` itself rather than assumed.
+timeval make_timeval(std::chrono::milliseconds timeout)
+{
+    const auto count = timeout.count();
+    return timeval{static_cast<decltype(timeval::tv_sec)>(count / 1000),
+                   static_cast<decltype(timeval::tv_usec)>((count % 1000) * 1000)};
+}
+
 timeval make_timeval(unsigned int timeout_ms)
 {
-    return timeval{static_cast<decltype(timeval::tv_sec)>(timeout_ms / 1000),
-                   static_cast<decltype(timeval::tv_usec)>((timeout_ms % 1000) * 1000)};
+    return make_timeval(std::chrono::milliseconds(timeout_ms));
 }
 
 // Connects `socket` to `address`, bounded by `timeout_ms`. A blocking connect
@@ -372,6 +378,24 @@ Status TcpTransport::write(std::span<const std::byte> data)
         }
     }
     return {};
+}
+
+Result<bool> TcpTransport::wait_readable(std::chrono::milliseconds timeout)
+{
+    fd_set readable;
+    FD_ZERO(&readable);
+    FD_SET(impl_->socket, &readable);
+    // `select` takes a non-const `timeval*` on POSIX, so this one is mutable.
+    // On Winsock the first argument is ignored, which is harmless.
+    timeval wait = make_timeval(timeout);
+    const int ready = ::select(static_cast<int>(impl_->socket) + 1, &readable, nullptr, nullptr, &wait);
+    if (ready < 0)
+    {
+        return tl::unexpected(Error{ErrorCode::Transport, "select: " + last_socket_error()});
+    }
+    // A peer that closed is readable: the next `recv` returns 0, which `read`
+    // reports as the end of the stream.
+    return ready > 0;
 }
 
 void TcpTransport::close()

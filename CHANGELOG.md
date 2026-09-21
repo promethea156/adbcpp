@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `adbcpp::wait_readable(transports, timeout)`, which waits on several
+  transports at once and returns the readable one, and
+  `Transport::wait_readable(timeout)`, which each transport implements:
+  `TcpTransport` with `select`, `UsbTransport` with one bounded bulk transfer, and
+  the mock with its queued bytes. `examples/poll` drives two loopback devices from
+  one thread.
+
 ## [2.1.0] - 2026-09-21
 
 ### Added

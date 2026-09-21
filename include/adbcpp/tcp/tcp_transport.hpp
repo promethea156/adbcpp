@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <memory>
 #include <span>
@@ -92,6 +93,12 @@ public:
     Result<std::size_t> read(std::span<std::byte> buffer) override;
     Status write(std::span<const std::byte> data) override;
     void close() override;
+
+    /// Waits until the socket has bytes to read, up to `timeout`. Returns
+    /// whether it is readable, so the caller can wait on several transports at
+    /// once (see @ref adbcpp::wait_readable). A peer that closed is readable,
+    /// because the next @ref read reports the end of the stream.
+    Result<bool> wait_readable(std::chrono::milliseconds timeout) override;
 
     /// The `host:port` endpoint, which is what `adb devices` prints for a `tcpip`
     /// device or an emulator.

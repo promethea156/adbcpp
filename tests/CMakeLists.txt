@@ -18,6 +18,7 @@ add_executable(adbcpp_tests
   stream_test.cpp
   sync_test.cpp
   tcp_test.cpp
+  transport_test.cpp
 )
 target_link_libraries(adbcpp_tests
   PRIVATE adbcpp::adbcpp adbcpp::crypto MbedTLS::mbedcrypto
