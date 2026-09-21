@@ -15,6 +15,7 @@
 
 #include "adbcpp/error.hpp"
 #include "adbcpp/export.hpp"
+#include "adbcpp/log.hpp"
 #include "adbcpp/protocol/message.hpp"
 #include "adbcpp/session.hpp"
 #include "adbcpp/transport.hpp"
@@ -245,6 +246,8 @@ Result<Connection> connect_with_retry(Open open, std::optional<TransportT> &tran
         if (!opened)
         {
             connection = tl::unexpected(opened.error());
+            log(LogLevel::Warning, "connect attempt " + std::to_string(attempt + 1) + " of " +
+                                       std::to_string(attempts) + " failed: " + opened.error().message);
             continue;
         }
         // The connection keeps a pointer to the transport, so the transport is
@@ -256,6 +259,8 @@ Result<Connection> connect_with_retry(Open open, std::optional<TransportT> &tran
         {
             connection = tl::unexpected(connected.error());
             transport.reset();
+            log(LogLevel::Warning, "connect attempt " + std::to_string(attempt + 1) + " of " +
+                                       std::to_string(attempts) + " failed: " + connected.error().message);
             continue;
         }
         return std::move(*connected);

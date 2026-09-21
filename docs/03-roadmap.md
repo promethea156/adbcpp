@@ -86,13 +86,14 @@ A proposal, not a commitment. Nothing below blocks the next item, and any of it 
 | Order | Work | Why here |
 | --- | --- | --- |
 | 1 | Verify the build and tests on Linux and macOS ([#26](https://github.com/promethea156/adbcpp/issues/26), [#25](https://github.com/promethea156/adbcpp/issues/25)) | P2. A real machine confirms what CI only compiles, and [issue #2](https://github.com/promethea156/adbcpp/issues/2)'s acceptance needs it. |
-| 2 | Add optional logging ([#3](https://github.com/promethea156/adbcpp/issues/3)) | P3. A caller cannot see what the protocol is doing today. |
-| 3 | Add a non-blocking read/poll ([#6](https://github.com/promethea156/adbcpp/issues/6)) | P4. Deferred until one thread must drive several devices. |
-| 4 | State the minimum supported Android version ([#4](https://github.com/promethea156/adbcpp/issues/4)) | P5. The floor is documented but unverified on a device without `shell_v2`. |
-| 5 | Use `sendrecv_v2` for `pull` and `push` ([#1](https://github.com/promethea156/adbcpp/issues/1)) | P6. A transfer is never compressed today. |
-| 6 | Replace libusb with platform-native USB APIs ([#2](https://github.com/promethea156/adbcpp/issues/2)) | P7. Removes the only third-party runtime dependency and its license obligation. |
-| 7 | Decide whether a target needs ADB's TLS handshake ([#5](https://github.com/promethea156/adbcpp/issues/5)) | P8. Only matters for a target that demands the handshake. |
-| 8 | Validate a message header against its payload ([#23](https://github.com/promethea156/adbcpp/issues/23)) and separate stdout from stderr ([#22](https://github.com/promethea156/adbcpp/issues/22)) | P9. Hardening, not capability. |
+| 2 | Add a non-blocking read/poll ([#6](https://github.com/promethea156/adbcpp/issues/6)) | P4. Deferred until one thread must drive several devices. |
+| 3 | State the minimum supported Android version ([#4](https://github.com/promethea156/adbcpp/issues/4)) | P5. The floor is documented but unverified on a device without `shell_v2`. |
+| 4 | Use `sendrecv_v2` for `pull` and `push` ([#1](https://github.com/promethea156/adbcpp/issues/1)) | P6. A transfer is never compressed today. |
+| 5 | Replace libusb with platform-native USB APIs ([#2](https://github.com/promethea156/adbcpp/issues/2)) | P7. Removes the only third-party runtime dependency and its license obligation. |
+| 6 | Decide whether a target needs ADB's TLS handshake ([#5](https://github.com/promethea156/adbcpp/issues/5)) | P8. Only matters for a target that demands the handshake. |
+| 7 | Validate a message header against its payload ([#23](https://github.com/promethea156/adbcpp/issues/23)) and separate stdout from stderr ([#22](https://github.com/promethea156/adbcpp/issues/22)) | P9. Hardening, not capability. |
+
+Optional logging ([#3](https://github.com/promethea156/adbcpp/issues/3)) was the P3 item and is now done, so it is no longer listed.
 
 ## Slice 0 — Walking Skeleton
 
@@ -212,7 +213,7 @@ Obligations that run through every slice, with the current state of each.
 
 - **Error handling**: every operation that can fail returns a `Result<T>`; nothing in the library throws, and third-party exceptions are caught at the boundary. The rule, the types, and the shape of each command's answer are in [`07-error-model.md`](07-error-model.md).
 - **Testing**: unit tests per module, driven by the mock transport, plus one integration test against a real device. Device-dependent tests live in `adbcpp_device_tests`; when no matching USB device is present they exit with code 77 so CTest reports them as skipped rather than failed, and the USB example prints a warning and exits successfully in the same case.
-- **Logging**: not implemented. When it is, it must be optional, configurable, and must never log keys or payloads. ([issue #3](https://github.com/promethea156/adbcpp/issues/3))
+- **Logging**: implemented as `adbcpp/log.hpp`. It is opt-in and off until `set_logger` installs a sink, configurable per level, and never logs key material or a payload: a frame is logged with its command, arguments, and length only, and the service a stream is opened for is the only payload-derived detail, at `Trace`. `tests/log_test.cpp` covers the CNXN/AUTH flow and pins that none of the key material reaches the sink. ([issue #3](https://github.com/promethea156/adbcpp/issues/3))
 - **Thread safety**: `Transport`, `Connection`, `Stream`, and `Key` each state that they are not thread-safe, and that a caller must serialize concurrent use. Independent objects share no state, so the model for several devices is one thread per device (see [Working with Several Devices in Parallel](#working-with-several-devices-in-parallel)).
 - **Documentation**: Doxygen comments on every public declaration, and the reasoning behind each protocol decision written down in [`04-blockers.md`](04-blockers.md).
 - **Compatibility**: the minimum supported Android is **7.0 (API 24)** and the minimum ADB protocol version is `0x01000001`. The v2 `shell`, `LIST`, and `STAT` forms are used when the device advertises them, with their v1 forms as the fallback. ([issue #4](https://github.com/promethea156/adbcpp/issues/4))
