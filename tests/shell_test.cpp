@@ -109,7 +109,7 @@ TEST_CASE("run reassembles stdout and reads the exit code", "[shell]")
     REQUIRE(result.exit_code == 0);
 }
 
-TEST_CASE("run merges stderr into the output", "[shell]")
+TEST_CASE("run reports stdout and stderr separately as well as merged", "[shell]")
 {
     adbcpp::testing::MockTransport transport;
     feed_device(transport);
@@ -121,6 +121,10 @@ TEST_CASE("run merges stderr into the output", "[shell]")
     auto connection = unwrap(adbcpp::Connection::connect(transport));
     const auto result = unwrap(adbcpp::run(connection, "command"));
 
+    // Each stream is reported on its own, and the two are merged in the order
+    // the device produced them.
+    REQUIRE(result.standard_output == "out");
+    REQUIRE(result.error_output == "err");
     REQUIRE(result.output == "outerr");
 }
 
@@ -151,6 +155,10 @@ TEST_CASE("run falls back to the v1 shell when shell_v2 is absent", "[shell]")
     const auto result = unwrap(adbcpp::run(connection, "echo hello"));
 
     REQUIRE(result.output == "hello\n");
+    // The v1 shell does not separate the streams, so the separate fields are
+    // empty and only the combined output carries anything.
+    REQUIRE(result.standard_output.empty());
+    REQUIRE(result.error_output.empty());
     // The v1 shell has no exit packet, so the exit code is 0, as in adb.
     REQUIRE(result.exit_code == 0);
     REQUIRE(result.success);

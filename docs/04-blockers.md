@@ -113,7 +113,7 @@ Each entry has the same shape:
 - **Symptom**: Command output was empty or mangled.
 - **Cause**: The device advertises `shell_v2`, and adb opens commands as `shell,v2,raw:<command>`. The `shell:` service does not provide separate stdout/stderr or an exit code.
 - **Resolution**: Open `shell,v2,raw:<command>` and reassemble the shell_v2 packets: stdout (id 1), stderr (id 2), and exit (id 3). `CommandResult` carries the combined output and the exit code.
-- **Note**: stdout and stderr are currently merged. If they need to be separate, `CommandResult` can be extended.
+- **Note**: stdout and stderr were merged at first. `CommandResult` now carries them separately as `standard_output` and `error_output` as well as merged in `output`, and the v1 `shell` service leaves the two separate fields empty ([issue #22](https://github.com/promethea156/adbcpp/issues/22)).
 
 ### 19. The shell_v2 exit code is in the packet's data, not its length
 

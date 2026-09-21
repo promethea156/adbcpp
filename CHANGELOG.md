@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `CommandResult::standard_output` and `CommandResult::error_output`, which report
+  the `shell_v2` service's standard output and standard error separately, while
+  `CommandResult::output` still merges them in the order the device produced them.
+  The v1 `shell` service leaves the two separate fields empty.
 - `Session::send` checks that `header.data_length` equals `payload.size()` and
   reports a mismatch as an `InvalidArgument` before writing anything, so a header
   cannot leave the device waiting for bytes that never arrive (blocker 13).

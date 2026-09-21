@@ -113,7 +113,10 @@ differently:
 
 `PackageResult` is a `CommandResult` that adds `failure_reason()`, which extracts the reason from
 `Failure [REASON]`; the two commands report a rejection differently (blocker 25). `CommandResult`
-carries `output`, `exit_code`, and `success`, so the shape is defined once.
+carries `output`, `standard_output`, `error_output`, `exit_code`, and `success`, so the shape is defined
+once. The `shell_v2` service separates standard output from standard error, so `standard_output` and
+`error_output` report each on its own while `output` still merges them; the v1 `shell` service does not
+separate them, so the two separate fields are empty and `output` is its raw stream.
 
 `close` returns `Status` rather than a `CommandResult`: `am force-stop` cannot report a failure, so
 there is nothing for the caller to inspect. The device test still asserts that it succeeds.

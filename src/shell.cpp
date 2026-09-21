@@ -41,6 +41,8 @@ Result<CommandResult> run_v1(Connection &connection, std::string_view command)
     }
 
     CommandResult result;
+    // The v1 service does not separate the streams, so only the combined output
+    // is filled; `standard_output` and `error_output` stay empty.
     result.output.assign(reinterpret_cast<const char *>(raw->data()), raw->size());
     result.success = true;
     return result;
@@ -76,10 +78,18 @@ Result<CommandResult> run_v2(Connection &connection, std::string_view command)
         {
             break;
         }
-        if (id == kStdout || id == kStderr)
+        if (id == kStdout)
         {
-            // stdout and stderr are interleaved in the order the device produced
-            // them; they are concatenated here, which is what `adb shell` does too.
+            // Each stream is kept separately as well as appended to the combined
+            // output, so a caller can tell which stream a line came from.
+            result.standard_output.append(reinterpret_cast<const char *>(raw->data() + offset), length);
+            result.output.append(reinterpret_cast<const char *>(raw->data() + offset), length);
+        }
+        else if (id == kStderr)
+        {
+            result.error_output.append(reinterpret_cast<const char *>(raw->data() + offset), length);
+            // stdout and stderr are interleaved in the combined output in the
+            // order the device produced them, which is what `adb shell` does too.
             result.output.append(reinterpret_cast<const char *>(raw->data() + offset), length);
         }
         else if (id == kExit)
