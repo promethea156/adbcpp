@@ -318,6 +318,19 @@ int main()
         return 1;
     }
 
+    // The shell_v2 service separates the streams, so `echo hello`, which writes
+    // only to standard output, reports nothing on standard error.
+    if (result->standard_output != "hello\n")
+    {
+        std::cerr << "unexpected standard output: " << result->standard_output << '\n';
+        return 1;
+    }
+    if (!result->error_output.empty())
+    {
+        std::cerr << "unexpected standard error: " << result->error_output << '\n';
+        return 1;
+    }
+
     if (const int wait_result = check_wait_readable(*transport, *connection); wait_result != 0)
     {
         return wait_result;

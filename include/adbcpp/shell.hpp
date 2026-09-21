@@ -14,8 +14,16 @@ namespace adbcpp
 /// The result of running a shell command on the device.
 struct ADBCPP_API CommandResult
 {
-    /// Combined standard output and standard error.
+    /// The device's standard output and standard error combined, in the order it
+    /// produced them. Under the v1 `shell` service this is the raw output, which
+    /// the service does not separate, so the two fields below are empty.
     std::string output;
+    /// The device's standard output. Empty under the v1 `shell` service, which
+    /// does not separate the streams.
+    std::string standard_output;
+    /// The device's standard error. Empty under the v1 `shell` service, which
+    /// does not separate the streams.
+    std::string error_output;
     /// The command's exit code.
     std::uint8_t exit_code = 0;
     /// Whether the device reported the command worked. For a plain command this is
@@ -42,15 +50,20 @@ enum class ShellProtocol
  *
  * By default the command is sent over the `shell,v2,raw` service when the device
  * advertised `shell_v2`, so the device's output arrives as shell_v2 packets which are
- * reassembled here, and the exit code is read from the exit packet. The `shell_v2`
- * feature must have been negotiated in the CNXN banners for the device to offer it;
- * the service is documented in AOSP's `shell_protocol.h`:
+ * reassembled here, and the exit code is read from the exit packet. Standard output
+ * and standard error arrive as separate packets, so they are carried separately in
+ * `CommandResult::standard_output` and `CommandResult::error_output` as well as
+ * combined in `CommandResult::output`, in the order the device produced them. The
+ * `shell_v2` feature must have been negotiated in the CNXN banners for the device to
+ * offer it; the service is documented in AOSP's `shell_protocol.h`:
  *
  *   https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/shell_protocol.h
  *
  * A device that did not advertise `shell_v2` gets the plain `shell:<command>`
  * service instead, whose output is the raw stream and whose exit code is always 0
- * (blocker 31 in `04-blockers.md`). `protocol` forces one form or the other.
+ * (blocker 31 in `04-blockers.md`). That service does not separate standard output
+ * from standard error, so `output` is the raw stream and the two separate fields are
+ * empty. `protocol` forces one form or the other.
  *
  * The `raw` suffix asks the device to run the command directly instead of
  * through a login shell, and is the form adb itself uses for `adb shell`.

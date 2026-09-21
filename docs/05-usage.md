@@ -105,9 +105,11 @@ using Status = tl::expected<void, Error>;
 // include/adbcpp/shell.hpp
 struct CommandResult
 {
-    std::string output;         // stdout and stderr, combined
+    std::string output;          // stdout and stderr, combined in order
+    std::string standard_output;  // stdout alone; empty under v1
+    std::string error_output;    // stderr alone; empty under v1
     std::uint8_t exit_code = 0;
-    bool success = false;       // set per command; see below
+    bool success = false;        // set per command; see below
 };
 ```
 
@@ -259,7 +261,10 @@ int main()
 ```
 
 `CommandResult::output` is stdout and stderr combined, in the order the device
-produced them, and `exit_code` is the command's status.
+produced them, and `exit_code` is the command's status. `standard_output` and
+`error_output` report each stream on its own under the `shell_v2` service; under the
+v1 `shell` service, which does not separate them, the two are empty and `output` is
+its raw stream.
 
 `connection->close()` closes the borrowed transport and marks the connection dead. The
 connection does not own the transport, so the transport must outlive it, but a caller
@@ -1392,6 +1397,8 @@ int main()
 | Run a shell command                    | `adbcpp::run(connection, "echo hello")` → `Result<CommandResult>` |
 | Force the v1 shell                     | `adbcpp::run(connection, cmd, adbcpp::ShellProtocol::V1)` |
 | Read a command's output                 | `result->output`                                        |
+| Read a command's stdout                  | `result->standard_output`                                 |
+| Read a command's stderr                  | `result->error_output`                                    |
 | Read a command's exit code              | `result->exit_code`                                     |
 | Check whether a command worked           | `result->success`                                       |
 | List a directory                        | `adbcpp::list(connection, "/sdcard")` → `Result<std::vector<DirEntry>>` |
@@ -1452,8 +1459,10 @@ int main()
   payload separately, so a hand-built header whose `data_length` disagrees with the
   payload is an `InvalidArgument` and nothing is written, rather than a header that
   leaves the device waiting for bytes that never arrive (blocker 13).
-- **`run` merges stdout and stderr.** They arrive interleaved, so the order is not
-  guaranteed. `CommandResult` does not separate them.
+- **`run` merges stdout and stderr in `output`.** They arrive interleaved, so
+  `output`'s order is the device's, not stdout then stderr. `standard_output` and
+  `error_output` carry each stream on its own under the `shell_v2` service; under the
+  v1 `shell` service, which does not separate them, the two are empty.
 - **This is not a full `adb` replacement yet.** The shell service, `sync`-based
   directory listing, file transfer in both directions, install and uninstall, app
   launch, close, and running checks, the USB and TCP transports, and selection by

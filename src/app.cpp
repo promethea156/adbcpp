@@ -43,6 +43,8 @@ PackageResult package_result(const CommandResult &result)
 {
     PackageResult package;
     package.output = result.output;
+    package.standard_output = result.standard_output;
+    package.error_output = result.error_output;
     package.exit_code = result.exit_code;
     package.success = result.exit_code == 0 && result.output.find("Success") != std::string::npos;
     return package;
