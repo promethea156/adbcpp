@@ -11,11 +11,19 @@ target_link_libraries(adbcpp_tcp_example
   PRIVATE adbcpp::adbcpp adbcpp::crypto
 )
 
-# The sample and the sync example are device-free, so CTest runs them as part of
-# the normal test suite. The USB example needs a device and is not registered.
+# Drives two devices from one thread over loopback listeners that stand in for an
+# emulator's ADB listener, so it needs no device and is device-free like the sync
+# example. It has no USB dependency, so it links only the core.
+add_executable(adbcpp_poll_example poll/main.cpp)
+target_link_libraries(adbcpp_poll_example PRIVATE adbcpp::adbcpp)
+
+# The sample, the sync example, and the poll example are device-free, so CTest
+# runs them as part of the normal test suite. The USB example needs a device and is
+# not registered.
 if(ADBCPP_BUILD_TESTS)
   add_test(NAME example_sample COMMAND adbcpp_sample)
   add_test(NAME example_sync COMMAND adbcpp_sync_example)
+  add_test(NAME example_poll COMMAND adbcpp_poll_example)
 endif()
 
 if(ADBCPP_BUILD_USB)

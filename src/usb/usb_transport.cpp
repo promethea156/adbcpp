@@ -526,6 +526,40 @@ Status UsbTransport::write(std::span<const std::byte> data)
     return {};
 }
 
+Result<bool> UsbTransport::wait_readable(std::chrono::milliseconds timeout)
+{
+    // A previous read may have left bytes buffered, so the endpoint is already
+    // readable without another transfer.
+    if (impl_->incoming_offset < impl_->incoming.size())
+    {
+        return true;
+    }
+
+    // libusb exposes no pollable handle on Windows, and its poll-fd list is Linux
+    // and macOS only, so a bulk transfer bounded by `timeout` is the only portable
+    // way to ask the endpoint. It is not retried here: the wait is bounded by
+    // `timeout`, not by the transfer budget, and bytes that arrive are buffered
+    // for the next `read`, exactly as `read` does.
+    impl_->incoming.resize(kReadBufferSize);
+    int transferred = 0;
+    const int rc = libusb_bulk_transfer(
+        impl_->handle, impl_->endpoint_in, reinterpret_cast<unsigned char *>(impl_->incoming.data()),
+        static_cast<int>(impl_->incoming.size()), &transferred, static_cast<unsigned int>(timeout.count()));
+    // A timeout that still delivered bytes is readable, exactly as in `read`; one
+    // that delivered nothing is not.
+    if (rc != 0 && !(rc == LIBUSB_ERROR_TIMEOUT && transferred > 0))
+    {
+        impl_->incoming.clear();
+        impl_->incoming_offset = 0;
+        return tl::unexpected(fail("libusb_bulk_transfer (wait)", rc));
+    }
+    impl_->incoming.resize(static_cast<std::size_t>(transferred));
+    impl_->incoming_offset = 0;
+    // A successful transfer that moved no bytes is a zero-length packet, which
+    // `read` reports as the end of the stream, so it is readable too.
+    return rc == 0 || transferred > 0;
+}
+
 void UsbTransport::close()
 {
     if (impl_->handle != nullptr)

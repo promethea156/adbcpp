@@ -106,14 +106,14 @@ Each entry has the same shape:
 - **Symptom**: The device never answered `OPEN`, so `shell,v2,raw:<command>` never ran. The handshake and the `AUTH` exchange completed.
 - **Cause**: `Stream`'s constructor passed the service payload to `make_message` but **not** to `Connection::send`. The `OPEN` header therefore advertised `data_length=24`, but the 24 payload bytes were never written. The device waited for bytes that never arrived. Comparing against a real adb connection had pointed at the `OPEN` local id and send buffer, which were red herrings; instrumenting the session showed the header advertised a payload the transport never sent.
 - **Resolution**: Pass the payload to `Connection::send` as well (`src/stream.cpp`). This was the real blocker for Slice 1.
-- **Note**: This class of bug (a header that disagrees with what is actually written) is easy to introduce because `Message` and `Session::send` take the payload separately. A defensive check that `header.data_length` matches the payload span would catch it.
+- **Note**: This class of bug (a header that disagrees with what is actually written) is easy to introduce because `Message` and `Session::send` take the payload separately. The check the note called for is now in `Session::send`, which reports a mismatch as an `InvalidArgument` before it writes anything ([issue #23](https://github.com/promethea156/adbcpp/issues/23)).
 
 ### 14. Use the `shell_v2` service and parse its packets
 
 - **Symptom**: Command output was empty or mangled.
 - **Cause**: The device advertises `shell_v2`, and adb opens commands as `shell,v2,raw:<command>`. The `shell:` service does not provide separate stdout/stderr or an exit code.
 - **Resolution**: Open `shell,v2,raw:<command>` and reassemble the shell_v2 packets: stdout (id 1), stderr (id 2), and exit (id 3). `CommandResult` carries the combined output and the exit code.
-- **Note**: stdout and stderr are currently merged. If they need to be separate, `CommandResult` can be extended.
+- **Note**: stdout and stderr were merged at first. `CommandResult` now carries them separately as `standard_output` and `error_output` as well as merged in `output`, and the v1 `shell` service leaves the two separate fields empty ([issue #22](https://github.com/promethea156/adbcpp/issues/22)).
 
 ### 19. The shell_v2 exit code is in the packet's data, not its length
 
@@ -260,5 +260,5 @@ Each entry has the same shape:
 
 - **Symptom**: The host CNXN banner claimed `sendrecv_v2` and its compression variants, and services the library never opens (`abb`, `abb_exec`, `apex`, `remount_shell`, `track_app`, `devraw`, `app_info`, `server_status`, `track_mdns`, `devicetracker_proto_format`).
 - **Cause**: The list was copied from AOSP's `supported_features()` byte-for-byte, but adb uses the whole list while the library uses only `shell_v2`, `ls_v2`, and `stat_v2`. adbd **resets its own feature set from the host's list** (blocker 6), so an unused name is a promise the peer may act on; `pull`/`push` always send the v1 `RECV`/`SEND` forms, so `sendrecv_v2` was the clearest false claim.
-- **Resolution**: `kSystemIdentity` now names only `shell_v2,stat_v2,ls_v2`, and `delayed_ack` is still appended when it is enabled.
-- **Note**: The device test exercises `run`, `list`, `pull`, `push`, `install`, `uninstall`, `launch`, `is_running`, and `close` against the trimmed banner, so every feature the services rely on is kept. Implementing `sendrecv_v2` would be a future improvement, not a claim.
+- **Resolution**: `kSystemIdentity` now names only `shell_v2,stat_v2,ls_v2`, `delayed_ack` is still appended when it is enabled, and `sendrecv_v2` and each built codec (`sendrecv_v2_zstd`, `sendrecv_v2_lz4`, `sendrecv_v2_brotli`) are appended only when they are built in, so the banner never claims a service the build cannot honor (issues #1, #35, and #34).
+- **Note**: The device test exercises `run`, `list`, `pull`, `push`, `install`, `uninstall`, `launch`, `is_running`, and `close` against the banner, so every feature the services rely on is kept.

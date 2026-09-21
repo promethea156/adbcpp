@@ -33,10 +33,10 @@ namespace adbcpp
 /// device treat the host as supporting nothing (blocker 6 in `04-blockers.md`).
 ///
 /// The list names only the features the library acts on: `shell_v2` for `run`,
-/// and `ls_v2`/`stat_v2` for the v2 `LIST`/`STAT` forms. AOSP's
+/// `ls_v2`/`stat_v2` for the v2 `LIST`/`STAT` forms, and the v2 `RECV`/`SEND`
+/// forms when they are built in (see @ref kSendRecvV2Features). AOSP's
 /// `supported_features()` is longer, and the extra names claim services the library
-/// never opens (for example `sendrecv_v2`, when `pull`/`push` always send the v1
-/// forms), so a peer would rely on them in vain. See blocker 32 in
+/// never opens, so a peer would rely on them in vain. See blocker 32 in
 /// `04-blockers.md`.
 inline constexpr std::string_view kSystemIdentity = "host::features=shell_v2,stat_v2,ls_v2";
 
@@ -48,6 +48,26 @@ inline constexpr std::string_view kSystemIdentity = "host::features=shell_v2,sta
 /// by default: advertising it on a transport that does not really implement it made
 /// the device close the stream.
 inline constexpr std::string_view kDelayedAckFeature = "delayed_ack";
+
+/// Feature appended to @ref kSystemIdentity when the v2 `RECV`/`SEND` forms are
+/// built in.
+///
+/// `sendrecv_v2` selects the v2 forms, the same name adb looks for in the
+/// device's banner. It is appended only when a codec is built in, because the
+/// device resets its feature set from the host banner (blocker 6), so a name the
+/// host cannot honor is a promise the peer would rely on in vain (blocker 32). See
+/// `docs/09-sendrecv-v2.md`.
+inline constexpr std::string_view kSendRecvV2Feature = ",sendrecv_v2";
+
+/// Codec features appended to @ref kSendRecvV2Feature when each codec is built in.
+///
+/// `sendrecv_v2_zstd`, `sendrecv_v2_lz4`, and `sendrecv_v2_brotli` select the
+/// codecs, the same names adb looks for in the device's banner. Each is appended
+/// only when its codec is built, so the banner never names a codec the build does
+/// not have. See `docs/09-sendrecv-v2.md`.
+inline constexpr std::string_view kSendRecvV2ZstdFeature = ",sendrecv_v2_zstd";
+inline constexpr std::string_view kSendRecvV2Lz4Feature = ",sendrecv_v2_lz4";
+inline constexpr std::string_view kSendRecvV2BrotliFeature = ",sendrecv_v2_brotli";
 
 /**
  * @brief An authenticated ADB connection to a device.

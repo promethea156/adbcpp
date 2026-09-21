@@ -43,8 +43,7 @@ need little context; those labelled
 [`help wanted`](https://github.com/promethea156/adbcpp/labels/help%20wanted) are broader.
 Reasonable starting points today:
 
-- **Optional logging** ([#3](https://github.com/promethea156/adbcpp/issues/3)) — must never log keys or payloads.
-- **`sendrecv_v2` for `pull`/`push`** ([#1](https://github.com/promethea156/adbcpp/issues/1)) — would let a transfer be compressed.
+- **Verify the build on Linux or macOS** ([#26](https://github.com/promethea156/adbcpp/issues/26), [#25](https://github.com/promethea156/adbcpp/issues/25)) — needs a machine, since CI only compiles.
 
 If an issue looks stale or already done, say so in it rather than guessing.
 
@@ -63,7 +62,7 @@ Read [`docs/01-objective.md`](docs/01-objective.md) for the architecture and the
 
 - The library never throws. Every fallible operation returns a `Result<T>`.
 - Public declarations carry a Doxygen comment.
-- The core adds no third-party dependency beyond `tl::expected`; `crypto` and `usb` are optional backends.
+- The core adds no third-party dependency beyond `tl::expected` and, when compression is built, zstd, lz4, and brotli, all linked privately; `crypto` and `usb` are optional backends.
 - Comments explain *why*, matching the surrounding code.
 
 ## Set up

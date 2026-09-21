@@ -10,6 +10,7 @@ FetchContent_MakeAvailable(Catch2)
 add_executable(adbcpp_tests
   adb_key_test.cpp
   app_test.cpp
+  compression_test.cpp
   connection_test.cpp
   log_test.cpp
   protocol_message_test.cpp
@@ -18,11 +19,32 @@ add_executable(adbcpp_tests
   stream_test.cpp
   sync_test.cpp
   tcp_test.cpp
+  transport_test.cpp
 )
 target_link_libraries(adbcpp_tests
   PRIVATE adbcpp::adbcpp adbcpp::crypto MbedTLS::mbedcrypto
     Catch2::Catch2WithMain
 )
+
+# The v2 sync tests compress and decompress with zstd, and the codec test
+# includes the internal `src/compression.hpp`, so the library, its source
+# directory, and `ADBCPP_HAS_COMPRESSION` are added when it is built.
+if(ADBCPP_HAVE_COMPRESSION)
+  target_include_directories(adbcpp_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+  target_compile_definitions(adbcpp_tests PRIVATE ADBCPP_HAS_COMPRESSION)
+endif()
+if(ADBCPP_BUILD_COMPRESSION)
+  target_link_libraries(adbcpp_tests PRIVATE libzstd_static)
+  target_compile_definitions(adbcpp_tests PRIVATE ADBCPP_HAS_ZSTD)
+endif()
+if(ADBCPP_BUILD_LZ4)
+  target_link_libraries(adbcpp_tests PRIVATE lz4_static)
+  target_compile_definitions(adbcpp_tests PRIVATE ADBCPP_HAS_LZ4)
+endif()
+if(ADBCPP_BUILD_BROTLI)
+  target_link_libraries(adbcpp_tests PRIVATE brotlienc brotlidec)
+  target_compile_definitions(adbcpp_tests PRIVATE ADBCPP_HAS_BROTLI)
+endif()
 
 list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
 include(Catch)
@@ -33,6 +55,18 @@ if(ADBCPP_BUILD_USB)
   target_link_libraries(adbcpp_device_tests
     PRIVATE adbcpp::usb adbcpp::crypto
   )
+  if(ADBCPP_HAVE_COMPRESSION)
+    target_compile_definitions(adbcpp_device_tests PRIVATE ADBCPP_HAS_COMPRESSION)
+  endif()
+  if(ADBCPP_BUILD_COMPRESSION)
+    target_compile_definitions(adbcpp_device_tests PRIVATE ADBCPP_HAS_ZSTD)
+  endif()
+  if(ADBCPP_BUILD_LZ4)
+    target_compile_definitions(adbcpp_device_tests PRIVATE ADBCPP_HAS_LZ4)
+  endif()
+  if(ADBCPP_BUILD_BROTLI)
+    target_compile_definitions(adbcpp_device_tests PRIVATE ADBCPP_HAS_BROTLI)
+  endif()
 
   # See examples/CMakeLists.txt: the copy is Windows-only because
   # `$<TARGET_RUNTIME_DLLS:...>` is empty elsewhere (blocker 21).

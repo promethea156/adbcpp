@@ -57,6 +57,11 @@ public:
     /**
      * @brief Writes a header, then its payload as a separate transport write.
      *
+     * `header.data_length` must equal `payload.size()`, because the device
+     * trusts the header to know how many payload bytes follow. A mismatch is an
+     * `ErrorCode::InvalidArgument` and nothing is written, rather than a header
+     * that leaves the device waiting for bytes that never arrive (blocker 13).
+     *
      * Returns an `ErrorCode::Transport` error when @ref close has been called,
      * rather than writing to the closed transport.
      */

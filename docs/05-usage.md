@@ -30,7 +30,7 @@ There are three targets:
 
 | Target           | What it adds                                  | Extra dependency |
 | ---------------- | --------------------------------------------- | ---------------- |
-| `adbcpp::adbcpp` | Protocol, session, streams, shell, mock transport | `tl::expected`   |
+| `adbcpp::adbcpp` | Protocol, session, streams, shell, sync, mock transport | `tl::expected`, zstd, lz4, brotli |
 | `adbcpp::crypto` | `adbcpp::crypto::Key` (ADB key pair)           | mbedTLS          |
 | `adbcpp::usb`    | `adbcpp::usb::UsbTransport` (USB transport)    | libusb           |
 
@@ -38,7 +38,10 @@ There are three targets:
 linking the USB backend pulls in the rest. `adbcpp::usb` is only defined when the
 project is built with `ADBCPP_BUILD_USB=ON` (the default at the top level). The TCP
 transport has no third-party dependency, so it lives in `adbcpp::adbcpp` and is always
-available.
+available. `adbcpp::adbcpp` links zstd (`ADBCPP_BUILD_COMPRESSION`), lz4
+(`ADBCPP_BUILD_LZ4`), and brotli (`ADBCPP_BUILD_BROTLI`) privately, so the codec
+headers stay out of the public headers; any of them is off for a build that does not
+want that codec.
 
 Alternatively, install `adbcpp` and use `find_package`:
 
@@ -105,9 +108,11 @@ using Status = tl::expected<void, Error>;
 // include/adbcpp/shell.hpp
 struct CommandResult
 {
-    std::string output;         // stdout and stderr, combined
+    std::string output;          // stdout and stderr, combined in order
+    std::string standard_output;  // stdout alone; empty under v1
+    std::string error_output;    // stderr alone; empty under v1
     std::uint8_t exit_code = 0;
-    bool success = false;       // set per command; see below
+    bool success = false;        // set per command; see below
 };
 ```
 
@@ -259,7 +264,10 @@ int main()
 ```
 
 `CommandResult::output` is stdout and stderr combined, in the order the device
-produced them, and `exit_code` is the command's status.
+produced them, and `exit_code` is the command's status. `standard_output` and
+`error_output` report each stream on its own under the `shell_v2` service; under the
+v1 `shell` service, which does not separate them, the two are empty and `output` is
+its raw stream.
 
 `connection->close()` closes the borrowed transport and marks the connection dead. The
 connection does not own the transport, so the transport must outlive it, but a caller
@@ -451,6 +459,113 @@ five attempts span about four seconds and stay finite. `transport` is where the
 opened transport lives and must outlive the connection, so it is the caller's, not
 the helper's.
 
+## Drive Several Devices from One Thread
+
+The default model for several devices is one thread per device, which needs no
+coordination. When one thread must drive several, `adbcpp::wait_readable` waits on
+several transports at once and returns the index of one that is readable; that
+transport's next `read` does not block.
+
+```cpp
+#include <chrono>
+#include <cstddef>
+#include <iostream>
+#include <optional>
+#include <string>
+#include <vector>
+
+#include "adbcpp/adbcpp.hpp"
+#include "adbcpp/tcp/tcp_transport.hpp"
+
+int main()
+{
+    // Two transports to two devices, or to two loopback listeners as here.
+    std::vector<std::optional<adbcpp::tcp::TcpTransport>> transports(2);
+    std::vector<std::optional<adbcpp::Connection>> connections(2);
+    std::vector<std::optional<adbcpp::Stream>> streams(2);
+    std::vector<adbcpp::Transport *> borrowed;
+
+    for (std::size_t i = 0; i < 2; ++i)
+    {
+        const std::string endpoint = ...;
+        auto transport = adbcpp::tcp::TcpTransport::open(endpoint);
+        if (!transport)
+        {
+            std::cerr << "error: " << transport.error().message << '\n';
+            return 1;
+        }
+        transports[i].emplace(std::move(*transport));
+
+        auto connection = adbcpp::Connection::connect(*transports[i]);
+        if (!connection)
+        {
+            std::cerr << "error: " << connection.error().message << '\n';
+            return 1;
+        }
+        connections[i].emplace(std::move(*connection));
+
+        // The command is the service string, so nothing is written.
+        auto stream = adbcpp::Stream::open(*connections[i], "shell:echo hello");
+        if (!stream)
+        {
+            std::cerr << "error: " << stream.error().message << '\n';
+            return 1;
+        }
+        streams[i].emplace(std::move(*stream));
+
+        borrowed.push_back(&*transports[i]);
+    }
+
+    std::vector<bool> done(2, false);
+    while (!done[0] || !done[1])
+    {
+        const auto readable = adbcpp::wait_readable(borrowed, std::chrono::milliseconds(5000));
+        if (!readable)
+        {
+            std::cerr << "error: " << readable.error().message << '\n';
+            return 1;
+        }
+        if (!*readable)
+        {
+            std::cerr << "timed out waiting for a device\n";
+            return 1;
+        }
+
+        // The readable transport has bytes, so this read does not wait on the
+        // other device.
+        const std::size_t index = **readable;
+        const auto output = streams[index]->read_all();
+        if (!output)
+        {
+            std::cerr << "error: " << output.error().message << '\n';
+            return 1;
+        }
+        std::cout << "device " << index << " says: "
+                  << std::string(reinterpret_cast<const char *>(output->data()), output->size());
+        done[index] = true;
+    }
+
+    for (auto &connection : connections)
+    {
+        connection->close();
+    }
+    return 0;
+}
+```
+
+`wait_readable` returns the index of a readable transport, or nothing when the
+timeout passes with none readable. `TcpTransport` waits with `select`, `UsbTransport`
+with one bulk transfer bounded by the timeout, and the mock reports whether bytes are
+queued. A transport that cannot wait, such as a caller's own, is never returned.
+
+`examples/poll` runs this shape over two loopback listeners and is registered in CI,
+so the feature is exercised with no device attached. The transports must outlive the
+connections and the connections the streams, so they are declared first.
+
+`read_all` reads one device to its `CLOSE`, so a device that produces output slowly
+is not interleaved mid-command. A caller that needs that reads frame by frame
+instead.
+
 ## List a Directory
 
 `list` opens the `sync:` service and returns a directory's entries as structured
@@ -533,6 +648,11 @@ itself is explained in [`06-sync-protocol.md`](06-sync-protocol.md).
 `pull` copies a file from the device to a local path. It writes each `DATA` chunk as
 it arrives, so the file is never held in memory whole and a large file costs no more
 memory than a small one.
+
+`pull` and `push` take a `SyncCompression`, and the default `Auto` uses the v2
+`RECV`/`SEND` forms with the best codec both sides have, in adb's order (zstd, then
+lz4, then brotli), and the v1 forms otherwise. `None` always uses the v1 forms, and
+`Zstd`, `Lz4`, or `Brotli` requires the device to have advertised that codec.
 
 ```cpp
 #include <filesystem>
@@ -1285,6 +1405,8 @@ int main()
 | Run a shell command                    | `adbcpp::run(connection, "echo hello")` → `Result<CommandResult>` |
 | Force the v1 shell                     | `adbcpp::run(connection, cmd, adbcpp::ShellProtocol::V1)` |
 | Read a command's output                 | `result->output`                                        |
+| Read a command's stdout                  | `result->standard_output`                                 |
+| Read a command's stderr                  | `result->error_output`                                    |
 | Read a command's exit code              | `result->exit_code`                                     |
 | Check whether a command worked           | `result->success`                                       |
 | List a directory                        | `adbcpp::list(connection, "/sdcard")` → `Result<std::vector<DirEntry>>` |
@@ -1303,6 +1425,8 @@ int main()
 | Read a stream until the device closes    | `stream->read_all()` → `Result<std::vector<std::byte>>`    |
 | Read an exact number of bytes            | `stream->read(buffer)` → `Status`                        |
 | Write to a stream                      | `stream->write(bytes)` → `Status`                        |
+| Wait for one transport to be readable     | `transport.wait_readable(timeout)` → `Result<bool>`         |
+| Drive several devices from one thread      | `adbcpp::wait_readable(transports, timeout)` → `Result<std::optional<std::size_t>>` |
 | Test without a device                  | `adbcpp::testing::MockTransport` + `feed()`              |
 | Send/receive raw messages              | `adbcpp::Session`                                        |
 | Inspect the negotiated features         | `connection->device_version()`, `connection->max_data()`     |
@@ -1325,6 +1449,12 @@ int main()
   because the objects that log do not take one of their own. Install it before the
   connections are opened, and make the sink thread-safe if it shares state, because
   it may be called from several threads at once. `clear_logger()` turns logging off.
+- **A USB wait costs a bulk transfer.** `UsbTransport::wait_readable` asks the endpoint
+  with a bulk transfer bounded by the timeout, because libusb exposes no pollable handle
+  on Windows and its poll-fd list is Linux and macOS only. Bytes that arrive are
+  buffered for the next read, so nothing is lost. A transport that does not override
+  `wait_readable` (a caller's own) reports not readable and is never returned by the
+  helper.
 - **Stop the `adb` server first.** `adb` claims the USB interface while it runs, so
   opening the same device fails with an access error. Stop the server before using
   `adbcpp`, and vice versa.
@@ -1333,8 +1463,14 @@ int main()
   physical replug.
 - **A transport read may be partial.** `Transport::read` may return fewer bytes than
   requested, and `Session` handles that; do not assume one read is one message.
-- **`run` merges stdout and stderr.** They arrive interleaved, so the order is not
-  guaranteed. `CommandResult` does not separate them.
+- **`data_length` must match the payload.** `Session::send` takes the header and the
+  payload separately, so a hand-built header whose `data_length` disagrees with the
+  payload is an `InvalidArgument` and nothing is written, rather than a header that
+  leaves the device waiting for bytes that never arrive (blocker 13).
+- **`run` merges stdout and stderr in `output`.** They arrive interleaved, so
+  `output`'s order is the device's, not stdout then stderr. `standard_output` and
+  `error_output` carry each stream on its own under the `shell_v2` service; under the
+  v1 `shell` service, which does not separate them, the two are empty.
 - **This is not a full `adb` replacement yet.** The shell service, `sync`-based
   directory listing, file transfer in both directions, install and uninstall, app
   launch, close, and running checks, the USB and TCP transports, and selection by

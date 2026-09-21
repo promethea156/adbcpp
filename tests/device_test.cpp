@@ -1,3 +1,4 @@
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -13,6 +14,7 @@
 #include "adbcpp/connection.hpp"
 #include "adbcpp/crypto/adb_key.hpp"
 #include "adbcpp/shell.hpp"
+#include "adbcpp/stream.hpp"
 #include "adbcpp/sync.hpp"
 #include "adbcpp/usb/usb_transport.hpp"
 
@@ -169,6 +171,45 @@ int check_install(adbcpp::Connection &connection)
     return 0;
 }
 
+// The non-blocking wait: a stream's output arrives after it is opened, so the
+// transport becomes readable without a read having been issued, which is what lets
+// one thread drive several devices. The wait is bounded, so a device that never
+// answers is noticed rather than blocking the test.
+int check_wait_readable(adbcpp::usb::UsbTransport &transport, adbcpp::Connection &connection)
+{
+    auto stream = adbcpp::Stream::open(connection, "shell:echo hello");
+    if (!stream)
+    {
+        report(stream.error());
+        return 1;
+    }
+
+    const auto readable = transport.wait_readable(std::chrono::milliseconds(5000));
+    if (!readable)
+    {
+        report(readable.error());
+        return 1;
+    }
+    if (!*readable)
+    {
+        std::cerr << "the transport was not readable while the stream had output\n";
+        return 1;
+    }
+
+    const auto output = stream->read_all();
+    if (!output)
+    {
+        report(output.error());
+        return 1;
+    }
+    if (std::string(reinterpret_cast<const char *>(output->data()), output->size()) != "hello\n")
+    {
+        std::cerr << "unexpected output after a readable wait\n";
+        return 1;
+    }
+    return 0;
+}
+
 // Slice 6: app control. Launch the device's settings app, prove it is
 // running, and force-stop it. Settings is present on every device and is safe
 // to stop, because the system starts it again on demand.
@@ -277,6 +318,24 @@ int main()
         return 1;
     }
 
+    // The shell_v2 service separates the streams, so `echo hello`, which writes
+    // only to standard output, reports nothing on standard error.
+    if (result->standard_output != "hello\n")
+    {
+        std::cerr << "unexpected standard output: " << result->standard_output << '\n';
+        return 1;
+    }
+    if (!result->error_output.empty())
+    {
+        std::cerr << "unexpected standard error: " << result->error_output << '\n';
+        return 1;
+    }
+
+    if (const int wait_result = check_wait_readable(*transport, *connection); wait_result != 0)
+    {
+        return wait_result;
+    }
+
     // Both test devices advertise shell_v2, so the v1 fallback is forced here to
     // exercise it against a real device. The v1 shell has no exit packet, so the
     // exit code is 0, as in adb.
@@ -375,6 +434,121 @@ int main()
     }
     std::filesystem::remove(pushed_local);
     std::filesystem::remove(pushed_back);
+
+#if defined(ADBCPP_HAS_COMPRESSION)
+    // The same round trip through the v2 forms with zstd, which the device has to
+    // advertise. A device that does not is left to the v1 round trip above.
+    if (connection->supports_feature("sendrecv_v2_zstd"))
+    {
+        const std::string v2_remote = "/data/local/tmp/adbcpp_device_v2_test.txt";
+        if (const auto status = adbcpp::run(*connection, "echo adbcpp-v2-test > " + v2_remote); !status)
+        {
+            report(status.error());
+            return 1;
+        }
+
+        const auto v2_local = std::filesystem::temp_directory_path() / "adbcpp_device_v2_test.txt";
+        if (const auto status = adbcpp::pull(*connection, v2_remote, v2_local, adbcpp::SyncCompression::Zstd); !status)
+        {
+            report(status.error());
+            return 1;
+        }
+
+        std::string v2_contents;
+        {
+            std::ifstream pulled(v2_local, std::ios::binary);
+            v2_contents.assign(std::istreambuf_iterator<char>(pulled), std::istreambuf_iterator<char>());
+        }
+        if (const auto status = adbcpp::run(*connection, "rm -f " + v2_remote); !status)
+        {
+            report(status.error());
+            return 1;
+        }
+        std::filesystem::remove(v2_local);
+        if (v2_contents != "adbcpp-v2-test\n")
+        {
+            std::cerr << "unexpected v2 pulled contents: " << v2_contents << '\n';
+            return 1;
+        }
+    }
+#endif
+
+#if defined(ADBCPP_HAS_LZ4)
+    // The same round trip with lz4, forced so it is exercised even when the
+    // device also advertises zstd, which `Auto` would prefer.
+    if (connection->supports_feature("sendrecv_v2_lz4"))
+    {
+        const std::string lz4_remote = "/data/local/tmp/adbcpp_device_lz4_test.txt";
+        if (const auto status = adbcpp::run(*connection, "echo adbcpp-lz4-test > " + lz4_remote); !status)
+        {
+            report(status.error());
+            return 1;
+        }
+
+        const auto lz4_local = std::filesystem::temp_directory_path() / "adbcpp_device_lz4_test.txt";
+        if (const auto status = adbcpp::pull(*connection, lz4_remote, lz4_local, adbcpp::SyncCompression::Lz4); !status)
+        {
+            report(status.error());
+            return 1;
+        }
+
+        std::string lz4_contents;
+        {
+            std::ifstream pulled(lz4_local, std::ios::binary);
+            lz4_contents.assign(std::istreambuf_iterator<char>(pulled), std::istreambuf_iterator<char>());
+        }
+        if (const auto status = adbcpp::run(*connection, "rm -f " + lz4_remote); !status)
+        {
+            report(status.error());
+            return 1;
+        }
+        std::filesystem::remove(lz4_local);
+        if (lz4_contents != "adbcpp-lz4-test\n")
+        {
+            std::cerr << "unexpected lz4 pulled contents: " << lz4_contents << '\n';
+            return 1;
+        }
+    }
+#endif
+
+#if defined(ADBCPP_HAS_BROTLI)
+    // The same round trip with brotli, forced so it is exercised even when the
+    // device also advertises zstd or lz4, which `Auto` would prefer.
+    if (connection->supports_feature("sendrecv_v2_brotli"))
+    {
+        const std::string brotli_remote = "/data/local/tmp/adbcpp_device_brotli_test.txt";
+        if (const auto status = adbcpp::run(*connection, "echo adbcpp-brotli-test > " + brotli_remote); !status)
+        {
+            report(status.error());
+            return 1;
+        }
+
+        const auto brotli_local = std::filesystem::temp_directory_path() / "adbcpp_device_brotli_test.txt";
+        if (const auto status = adbcpp::pull(*connection, brotli_remote, brotli_local, adbcpp::SyncCompression::Brotli);
+            !status)
+        {
+            report(status.error());
+            return 1;
+        }
+
+        std::string brotli_contents;
+        {
+            std::ifstream pulled(brotli_local, std::ios::binary);
+            brotli_contents.assign(std::istreambuf_iterator<char>(pulled), std::istreambuf_iterator<char>());
+        }
+        if (const auto status = adbcpp::run(*connection, "rm -f " + brotli_remote); !status)
+        {
+            report(status.error());
+            return 1;
+        }
+        std::filesystem::remove(brotli_local);
+        if (brotli_contents != "adbcpp-brotli-test\n")
+        {
+            std::cerr << "unexpected brotli pulled contents: " << brotli_contents << '\n';
+            return 1;
+        }
+    }
+#endif
 
     const int install_result = check_install(*connection);
     const int app_result = check_app(*connection);
