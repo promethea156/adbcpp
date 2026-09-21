@@ -51,6 +51,7 @@ FetchContent_MakeAvailable(tl_expected)
 add_library(adbcpp
   src/app.cpp
   src/connection.cpp
+  src/log.cpp
   src/protocol/message.cpp
   src/session.cpp
   src/shell.cpp

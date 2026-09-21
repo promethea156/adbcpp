@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Optional, level-configurable logging in [`include/adbcpp/log.hpp`](include/adbcpp/log.hpp)
+  (`set_logger`, `clear_logger`, `is_logging`, `log`), wired into `Session`,
+  `Connection`, `Stream`, and the USB and TCP transports. It reports frames, retries,
+  and state changes, and never logs key material or a payload.
+
 ## [2.0.1] - 2026-09-21
 
 ### Added

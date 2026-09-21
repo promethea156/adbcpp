@@ -16,6 +16,8 @@
 #include <utility>
 #include <vector>
 
+#include "adbcpp/log.hpp"
+
 namespace adbcpp::usb
 {
 namespace
@@ -348,14 +350,18 @@ Result<UsbTransport> UsbTransport::open(DeviceId id, unsigned int transfer_timeo
     int rc = libusb_init(&transport.impl_->context);
     if (rc != 0)
     {
-        return tl::unexpected(fail("libusb_init", rc));
+        const auto error = fail("libusb_init", rc);
+        log(LogLevel::Error, "could not open the USB device: " + error.message);
+        return tl::unexpected(error);
     }
 
     libusb_device **devices = nullptr;
     const ssize_t count = libusb_get_device_list(transport.impl_->context, &devices);
     if (count < 0)
     {
-        return tl::unexpected(fail("libusb_get_device_list", static_cast<int>(count)));
+        const auto error = fail("libusb_get_device_list", static_cast<int>(count));
+        log(LogLevel::Error, "could not open the USB device: " + error.message);
+        return tl::unexpected(error);
     }
 
     libusb_device *match = find_device(devices, count, id);
@@ -363,19 +369,24 @@ Result<UsbTransport> UsbTransport::open(DeviceId id, unsigned int transfer_timeo
     if (match == nullptr)
     {
         libusb_free_device_list(devices, 1);
-        return tl::unexpected(Error{ErrorCode::Transport, "no USB device matching the given id"});
+        const Error error{ErrorCode::Transport, "no USB device matching the given id"};
+        log(LogLevel::Error, "could not open the USB device: " + error.message);
+        return tl::unexpected(error);
     }
 
     const auto adb = find_adb_interface(match);
     if (!adb)
     {
         libusb_free_device_list(devices, 1);
+        log(LogLevel::Error, "could not open the USB device: " + adb.error().message);
         return tl::unexpected(adb.error());
     }
     if (!*adb)
     {
         libusb_free_device_list(devices, 1);
-        return tl::unexpected(Error{ErrorCode::Transport, "ADB USB interface not found"});
+        const Error error{ErrorCode::Transport, "ADB USB interface not found"};
+        log(LogLevel::Error, "could not open the USB device: " + error.message);
+        return tl::unexpected(error);
     }
     transport.impl_->interface_number = (*adb)->number;
     transport.impl_->endpoint_in = (*adb)->endpoint_in;
@@ -394,7 +405,9 @@ Result<UsbTransport> UsbTransport::open(DeviceId id, unsigned int transfer_timeo
     libusb_free_device_list(devices, 1);
     if (rc != 0)
     {
-        return tl::unexpected(fail("libusb_open", rc));
+        const auto error = fail("libusb_open", rc);
+        log(LogLevel::Error, "could not open the USB device: " + error.message);
+        return tl::unexpected(error);
     }
 
 #if defined(__linux__)
@@ -406,7 +419,9 @@ Result<UsbTransport> UsbTransport::open(DeviceId id, unsigned int transfer_timeo
     rc = libusb_claim_interface(transport.impl_->handle, transport.impl_->interface_number);
     if (rc != 0)
     {
-        return tl::unexpected(fail("libusb_claim_interface", rc));
+        const auto error = fail("libusb_claim_interface", rc);
+        log(LogLevel::Error, "could not open the USB device: " + error.message);
+        return tl::unexpected(error);
     }
     transport.impl_->claimed = true;
 
@@ -416,6 +431,9 @@ Result<UsbTransport> UsbTransport::open(DeviceId id, unsigned int transfer_timeo
     // halted until the device is replugged, which the host cannot fix.
     libusb_clear_halt(transport.impl_->handle, transport.impl_->endpoint_in);
     libusb_clear_halt(transport.impl_->handle, transport.impl_->endpoint_out);
+
+    log(LogLevel::Info,
+        transport.impl_->serial.empty() ? "opened the USB device" : "opened the USB device " + transport.impl_->serial);
 
     return transport;
 }

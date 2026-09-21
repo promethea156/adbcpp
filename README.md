@@ -55,6 +55,7 @@ a green run is just as useful as a red one, and see [Contributing](#contributing
 - **Apps**: install and uninstall a package, launch it, check whether it is running, and close it.
 - **Connect**: reach a device over USB, or over TCP to a `tcpip` device or an emulator, and pick one by its USB serial. The TCP path is verified against a `tcpip` device; an emulator's listener speaks the same plaintext protocol and is expected to work.
 - **Several devices**: drive every attached device at once, one thread per device, because the objects share no state.
+- **Log**: opt in to a process-wide logger, configurable per level, that reports frames, retries, and state changes and never logs keys or payloads.
 
 ## Build it
 
@@ -170,7 +171,7 @@ channels to a full shell session. The tour is its hands-on counterpart.
 
 ```
 include/adbcpp/         Public headers (connection, transport, protocol,
-                        session, stream, shell, sync, app)
+                        session, stream, shell, sync, app, log)
 include/adbcpp/crypto/  The ADB key pair, backed by mbedTLS
 include/adbcpp/tcp/      The TCP transport, over the platform's sockets
 include/adbcpp/usb/      The USB transport, backed by libusb
