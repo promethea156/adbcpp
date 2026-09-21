@@ -53,7 +53,7 @@ The library can already do all of the everyday work:
 - drive every attached phone at once, one thread per phone.
 
 The whole [initial scope](01-objective.md#initial-scope) is done, and the library
-is at **2.1.0**.
+is at **2.2.0**.
 
 ## The wall we hit
 
