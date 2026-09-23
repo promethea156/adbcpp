@@ -202,6 +202,13 @@ Each entry has the same shape:
 - **Resolution**: `PackageResult::failure_reason()` returns the text inside `Failure [...]` and an empty string otherwise, while `output` always holds the device's answer verbatim. The device integration test therefore checks a non-empty output rather than a non-empty reason for this case.
 - **Note**: The exit code is the authority on whether the command worked and the output is the explanation, because the two commands do not agree on the form of the explanation. The APK is pushed into `/data/local/tmp` first, where the daemon widens `0644` to `0666`, and `pm install` accepts it from there; installing from the file is what `adb install` does too.
 
+### 33. `am start <package>` does not resolve a hidden launcher
+
+- **Symptom**: `launch` of an installed app failed with `Error: Activity not started, unable to resolve Intent { act=android.intent.action.MAIN cat=[android.intent.category.LAUNCHER] pkg=<package> }`, while `adb shell monkey -p <package> -c android.intent.category.LAUNCHER 1` started the same app.
+- **Cause**: `am start <package>` builds an **implicit** `ACTION_MAIN`/`CATEGORY_LAUNCHER` intent with the package set, and the package manager resolves an implicit intent under `MATCH_DEFAULT_ONLY`, so a launcher that does not declare `CATEGORY_DEFAULT` is not resolved. `monkey` selects the package's `MAIN`/`LAUNCHER` activities itself and starts the chosen one as an **explicit component** (`Intent.setComponent`), which does not go through that resolution.
+- **Resolution**: `launch` runs `monkey -p <package> -c android.intent.category.LAUNCHER 1`, whose single event starts the launcher activity. A package with no launcher activity is a normal `success == false` with `monkey`'s `No activities found to run` answer.
+- **Note**: `monkey` starts the activity that `am start <package>` cannot, and it reports a package with no launcher through its exit code. The launcher is still only as good as the device's own package manager, so an app with no `CATEGORY_LAUNCHER` activity cannot be launched this way.
+
 ## Crypto
 
 ### 26. `mbedtls_pk_write_key_pem` returns zero on success
