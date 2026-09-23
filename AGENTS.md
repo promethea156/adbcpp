@@ -81,7 +81,7 @@ adb usb
 build\examples\Release\adbcpp_demo_example.exe <package> <apk> [<split-apk>...]
 ```
 
-`am start <package>` only resolves for an app with a `MAIN`/`LAUNCHER` activity, which not every app has; the demo retries the launch for a few seconds because the package manager can still be indexing a fresh install.
+`monkey` starts an app whose launcher a bare `am start <package>` cannot resolve (blocker 33); the demo retries the launch for a few seconds because the package manager can still be indexing a fresh install.
 
 ### The demo_multi example runs the tour on every device at once
 

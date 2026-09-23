@@ -70,6 +70,11 @@ Result<PackageResult> ADBCPP_API uninstall(Connection &connection, std::string_v
  * directly, where a bare `am start <package>` relies on the device's resolver
  * answering the package as a launcher, which some launchers do not.
  *
+ * `monkey` injects the launch event and returns; unlike `am start -W` it does not
+ * wait for the activity to be resumed, so `success` means the launch was injected,
+ * not that the process is already running. A caller that needs the process up should
+ * poll `is_running` rather than check it once.
+ *
  * A package that cannot be started is a normal outcome rather than an error:
  * `monkey` exits nonzero and prints `No activities found to run` to its output,
  * so it is returned as `success == false` with the output. An `Error` means the

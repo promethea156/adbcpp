@@ -9,6 +9,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 
 #include "adbcpp/app.hpp"
 #include "adbcpp/connection.hpp"
@@ -229,13 +230,21 @@ int check_app(adbcpp::Connection &connection)
         return 1;
     }
 
-    const auto running = adbcpp::is_running(connection, package);
-    if (!running)
+    // `launch` runs `monkey`, which injects the launch event and returns before
+    // the activity is up, so poll `is_running` until the process appears.
+    bool running = false;
+    for (int attempt = 0; attempt < 10 && !running; ++attempt)
     {
-        report(running.error());
-        return 1;
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        const auto check = adbcpp::is_running(connection, package);
+        if (!check)
+        {
+            report(check.error());
+            return 1;
+        }
+        running = *check;
     }
-    if (!*running)
+    if (!running)
     {
         std::cerr << package << " is not running after launch\n";
         return 1;
