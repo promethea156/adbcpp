@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <iostream>
 #include <optional>
 #include <span>
@@ -30,7 +31,7 @@
 //   4. push, stat, and pull a file    push, stat, pull
 //   5. sleep the device              run("input keyevent 223")
 //   6. install the app               uninstall if present, then install
-//   7. wake the device               run("input keyevent 224")
+//   7. wake the device               run("input keyevent 224"), run("input keyevent 82")
 //   8. launch the app                launch
 //   9. check it runs for ten seconds  is_running
 //  10. close the app                 close
@@ -55,16 +56,21 @@ void step(std::string_view what)
     std::cout << "\n== " << what << " ==" << std::endl;
 }
 
-// Sends a power key (223 sleeps, 224 wakes) and prints the resulting wakefulness, so
-// the tour shows the device really slept and woke again.
-void set_power(adbcpp::Connection &connection, std::string_view action, std::string_view key)
+// Sends power keys in order with a delay between them and prints the resulting
+// wakefulness, so the tour shows the device really slept and woke again. `223` is
+// `KEYCODE_SLEEP`; waking is `224` (`KEYCODE_WAKEUP`) and then `82`
+// (`KEYCODE_MENU`), which dismisses the keyguard the wake leaves.
+void set_power(adbcpp::Connection &connection, std::string_view action, std::initializer_list<std::string_view> keys)
 {
     step(action);
-    if (const auto sent = adbcpp::run(connection, "input keyevent " + std::string(key)); !sent)
+    for (const auto key : keys)
     {
-        fail(sent.error());
+        if (const auto sent = adbcpp::run(connection, "input keyevent " + std::string(key)); !sent)
+        {
+            fail(sent.error());
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     const auto state = adbcpp::run(connection, "dumpsys power | grep mWakefulness");
     if (state && !state->output.empty())
     {
@@ -330,7 +336,7 @@ int main(int argc, char **argv)
         // `input keyevent 223` is `KEYCODE_SLEEP`; the following `dumpsys power`
         // shows the device really went to sleep. Installing with the screen off is the
         // realistic case, and it shows the transfer does not need an awake device.
-        set_power(connection, "sleep the device", "223");
+        set_power(connection, "sleep the device", {"223"});
 
         // Step 6: install the app, uninstalling an existing copy first.
         //
@@ -375,9 +381,11 @@ int main(int argc, char **argv)
 
         // Step 7: wake the device.
         //
-        // `input keyevent 224` is `KEYCODE_WAKEUP`, and the `dumpsys power` check
-        // shows the device is awake again before the app is started.
-        set_power(connection, "wake the device", "224");
+        // `input keyevent 224` is `KEYCODE_WAKEUP`, and `input keyevent 82` is
+        // `KEYCODE_MENU`, which dismisses the keyguard the wake leaves. The
+        // `dumpsys power` check shows the device is awake again before the app
+        // is started.
+        set_power(connection, "wake the device", {"224", "82"});
 
         // Step 8: launch the app.
         //
