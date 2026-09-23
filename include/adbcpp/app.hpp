@@ -65,15 +65,15 @@ Result<PackageResult> ADBCPP_API uninstall(Connection &connection, std::string_v
 /**
  * @brief Launches an application's main activity.
  *
- * Runs `am start -W` over the shell service. A bare package name is the one
- * positional argument `am start` resolves as a launcher: `Intent.parseCommandArgs`
- * turns it into `ACTION_MAIN` with `CATEGORY_LAUNCHER` and the package, so the
- * device starts the package's launcher activity. `-W` waits for the launch to
- * finish, which is what makes a following `is_running` meaningful.
+ * Runs `monkey -p <package> -c android.intent.category.LAUNCHER 1` over the
+ * shell service. `monkey` starts the package's `CATEGORY_LAUNCHER` activity
+ * directly, where a bare `am start <package>` relies on the device's resolver
+ * answering the package as a launcher, which some launchers do not.
  *
- * A package that cannot be started is a normal outcome rather than an error: `am`
- * exits nonzero and prints `Error:` to its output, so it is returned as
- * `success == false` with the output. An `Error` means the stream itself failed.
+ * A package that cannot be started is a normal outcome rather than an error:
+ * `monkey` exits nonzero and prints `No activities found to run` to its output,
+ * so it is returned as `success == false` with the output. An `Error` means the
+ * stream itself failed.
  */
 Result<CommandResult> ADBCPP_API launch(Connection &connection, std::string_view package);
 

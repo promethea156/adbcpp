@@ -339,11 +339,11 @@ void run_tour(std::ostream &out, adbcpp::usb::DeviceId id, std::size_t index, co
 
     // Step 8: launch the app.
     //
-    // `launch` runs `am start -W <package>`, which starts the package's
-    // launcher activity and waits for the launch to finish. It is retried because
-    // the package manager can still be indexing the fresh install and `am start`
-    // does not resolve the launcher until it has. `am start` only resolves for an
-    // app with a `MAIN`/`LAUNCHER` activity, which not every app has.
+    // `launch` runs `monkey -p <package> -c android.intent.category.LAUNCHER
+    // 1`, which starts the package's launcher activity. It is retried because
+    // the package manager can still be indexing the fresh install and `monkey`
+    // does not start the launcher until it has. An app with no launcher
+    // activity cannot be launched this way.
     step(out, "launch " + package);
     adbcpp::Result<adbcpp::CommandResult> launched =
         tl::unexpected(adbcpp::Error{adbcpp::ErrorCode::Device, "the app was not launched"});

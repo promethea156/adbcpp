@@ -926,10 +926,9 @@ verbatim (blocker 25).
 
 ## Launch, Close, and Check an App
 
-`launch` runs `am start -W <package>`, which resolves the package's launcher
-activity; `close` runs `am force-stop <package>`; and `is_running` runs
-`pidof <package>`. All three are shell commands, so they are composition rather
-than a new protocol.
+`launch` runs `monkey -p <package> -c android.intent.category.LAUNCHER 1`;
+`close` runs `am force-stop <package>`; and `is_running` runs `pidof <package>`.
+All are shell commands, so they are composition rather than a new protocol.
 
 ```cpp
 #include <iostream>
@@ -1000,8 +999,9 @@ int main()
 }
 ```
 
-`launch` sets `success` from the `am start` exit code, so a package whose
-launcher cannot be started is a normal `success == false` with the device's output.
+`launch` sets `success` from the `monkey` exit code, so a package whose launcher
+cannot be started is a normal `success == false` with `monkey`'s answer as the
+output.
 `close` returns a `Status` because `am force-stop` exits zero even for a package
 that is not installed and prints nothing, so there is no per-command answer to
 inspect. `is_running` returns a `Result<bool>`: `pidof` exits zero with the pids

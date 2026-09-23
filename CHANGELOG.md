@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `launch` runs `monkey -p <package> -c android.intent.category.LAUNCHER 1`
+  instead of `am start -W <package>`, so an app whose launcher a bare
+  `am start <package>` cannot resolve is started (blocker 33).
+
 ### Added
 
 - `CommandResult::standard_output` and `CommandResult::error_output`, which report

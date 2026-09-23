@@ -108,7 +108,7 @@ differently:
 | Function | `success` is | Why |
 | --- | --- | --- |
 | `run` | `exit_code == 0` | The exit code is the whole answer. |
-| `launch` | `exit_code == 0` | `am start` exits nonzero and prints `Error:` when the activity cannot be started. |
+| `launch` | `exit_code == 0` | `monkey` exits nonzero and prints `No activities found to run` when the package has no launcher. |
 | `install`, `uninstall` | `exit_code == 0` **and** the output says `Success` | `pm` reports a rejection in its output, so the exit code alone is not enough. |
 
 `PackageResult` is a `CommandResult` that adds `failure_reason()`, which extracts the reason from
