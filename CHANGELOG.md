@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of `am start -W <package>`, so an app whose launcher a bare
   `am start <package>` cannot resolve is started (blocker 33).
 
+## [2.2.0] - 2026-09-21
+
 ### Added
 
 - `CommandResult::standard_output` and `CommandResult::error_output`, which report
@@ -153,7 +155,8 @@ over USB and TCP, with no dependency on the ADB server or the `adb` binary.
 
 - A `push` chunk is written as one message.
 
-[Unreleased]: https://github.com/promethea156/adbcpp/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/promethea156/adbcpp/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/promethea156/adbcpp/releases/tag/v2.2.0
 [2.1.0]: https://github.com/promethea156/adbcpp/releases/tag/v2.1.0
 [2.0.1]: https://github.com/promethea156/adbcpp/releases/tag/v2.0.1
 [2.0.0]: https://github.com/promethea156/adbcpp/releases/tag/v2.0.0
