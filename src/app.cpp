@@ -141,11 +141,13 @@ Result<PackageResult> uninstall(Connection &connection, std::string_view package
 
 Result<CommandResult> launch(Connection &connection, std::string_view package)
 {
-    // `am start` treats a bare positional argument as a package name and turns it
-    // into `ACTION_MAIN`/`CATEGORY_LAUNCHER` with that package, so the device
-    // resolves the package's launcher activity. `-W` waits for the launch, so the
-    // activity is up by the time a caller checks `is_running`.
-    return run(connection, "am start -W " + shell_quote(package));
+    // `am start` with a bare package name relies on the device resolving the
+    // package's `MAIN`/`LAUNCHER` activity, which some launchers do not answer:
+    // an activity the resolver hides (for example a non-exported one) is not found,
+    // so the app cannot be started that way. `monkey` starts the package's
+    // `CATEGORY_LAUNCHER` activity directly, and the single event makes it start
+    // rather than wander.
+    return run(connection, "monkey -p " + shell_quote(package) + " -c android.intent.category.LAUNCHER 1");
 }
 
 Status close(Connection &connection, std::string_view package)

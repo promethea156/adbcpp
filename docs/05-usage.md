@@ -926,15 +926,16 @@ verbatim (blocker 25).
 
 ## Launch, Close, and Check an App
 
-`launch` runs `am start -W <package>`, which resolves the package's launcher
-activity; `close` runs `am force-stop <package>`; and `is_running` runs
-`pidof <package>`. All three are shell commands, so they are composition rather
-than a new protocol.
+`launch` runs `monkey -p <package> -c android.intent.category.LAUNCHER 1`;
+`close` runs `am force-stop <package>`; and `is_running` runs `pidof <package>`.
+All are shell commands, so they are composition rather than a new protocol.
 
 ```cpp
+#include <chrono>
 #include <iostream>
 #include <span>
 #include <string>
+#include <thread>
 
 #include "adbcpp/adbcpp.hpp"
 #include "adbcpp/crypto/adb_key.hpp"
@@ -981,13 +982,20 @@ int main()
         std::cerr << "launch failed: " << launched->output << '\n';
     }
 
-    const auto running = adbcpp::is_running(*connection, "com.example.app");
-    if (!running)
+    // `monkey` returns before the activity is up, so poll until the process runs.
+    bool running = false;
+    for (int attempt = 0; attempt < 10 && !running; ++attempt)
     {
-        std::cerr << "error: " << running.error().message << '\n';
-        return 1;
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        const auto check = adbcpp::is_running(*connection, "com.example.app");
+        if (!check)
+        {
+            std::cerr << "error: " << check.error().message << '\n';
+            return 1;
+        }
+        running = *check;
     }
-    std::cout << (*running ? "running\n" : "not running\n");
+    std::cout << (running ? "running\n" : "not running\n");
 
     if (const auto status = adbcpp::close(*connection, "com.example.app"); !status)
     {
@@ -1000,8 +1008,11 @@ int main()
 }
 ```
 
-`launch` sets `success` from the `am start` exit code, so a package whose
-launcher cannot be started is a normal `success == false` with the device's output.
+`launch` sets `success` from the `monkey` exit code, so a package whose launcher
+cannot be started is a normal `success == false` with `monkey`'s answer as the
+output. `monkey` returns once it has injected the launch event, not once the
+activity is up, so a caller that needs the process running should poll `is_running`
+rather than check it once (the demo does).
 `close` returns a `Status` because `am force-stop` exits zero even for a package
 that is not installed and prints nothing, so there is no per-command answer to
 inspect. `is_running` returns a `Result<bool>`: `pidof` exits zero with the pids

@@ -416,7 +416,7 @@ TEST_CASE("launch reports the started activity", "[app]")
 {
     adbcpp::testing::MockTransport transport;
     feed_device(transport, "shell_v2,stat_v2");
-    feed_run_on(transport, kDeviceId, kLocalId, "Starting: Intent { act=android.intent.action.MAIN }\n", 0);
+    feed_run_on(transport, kDeviceId, kLocalId, "Events injected: 1\n", 0);
 
     auto connection = unwrap(adbcpp::Connection::connect(transport));
     const auto result = unwrap(adbcpp::launch(connection, "com.example.app"));
@@ -426,32 +426,35 @@ TEST_CASE("launch reports the started activity", "[app]")
     REQUIRE_FALSE(result.output.empty());
 }
 
-TEST_CASE("launch resolves the package as a launcher", "[app]")
+TEST_CASE("launch starts the package as a launcher", "[app]")
 {
     adbcpp::testing::MockTransport transport;
     feed_device(transport, "shell_v2,stat_v2");
-    feed_run_on(transport, kDeviceId, kLocalId, "Starting: Intent { ... }\n", 0);
+    feed_run_on(transport, kDeviceId, kLocalId, "Events injected: 1\n", 0);
 
     auto connection = unwrap(adbcpp::Connection::connect(transport));
     unwrap(adbcpp::launch(connection, "com.example.app"));
 
-    // A bare positional argument is what makes `am start` set ACTION_MAIN with
-    // CATEGORY_LAUNCHER, so `-W` waits and the package is single-quoted.
-    REQUIRE(contains(transport.written(), "am start -W 'com.example.app'"));
+    // `monkey` starts the package's `CATEGORY_LAUNCHER` activity directly, so an
+    // activity the resolver does not answer as a bare package still starts. The
+    // single event makes `monkey` start it rather than wander.
+    REQUIRE(contains(transport.written(), "monkey -p 'com.example.app' -c android.intent.category.LAUNCHER 1"));
 }
 
-TEST_CASE("launch reports a package that cannot be started", "[app]")
+TEST_CASE("launch reports a package with no launcher activity", "[app]")
 {
     adbcpp::testing::MockTransport transport;
     feed_device(transport, "shell_v2,stat_v2");
-    feed_run_on(transport, kDeviceId, kLocalId, "Error: Activity not started, unable to resolve Intent { ... }\n", 1);
+    feed_run_on(transport, kDeviceId, kLocalId, "** No activities found to run, monkey aborted.\n", 252);
 
     auto connection = unwrap(adbcpp::Connection::connect(transport));
     const auto result = unwrap(adbcpp::launch(connection, "com.example.missing"));
 
+    // A package with no launcher activity is a normal failed launch with
+    // `monkey`'s answer, not an error.
     REQUIRE_FALSE(result.success);
-    REQUIRE(result.exit_code == 1);
-    REQUIRE(result.output.find("Error:") != std::string::npos);
+    REQUIRE(result.exit_code == 252);
+    REQUIRE(result.output.find("No activities found") != std::string::npos);
 }
 
 TEST_CASE("close force-stops the package", "[app]")

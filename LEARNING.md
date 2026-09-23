@@ -512,11 +512,12 @@ executable: it detects a device, connects, and walks every feature once, ending 
 a ten-second `is_running` check before it closes the app.
 
 **Exercise.** Slices 6 and 7 were exactly this. Launching and stopping an app are
-shell commands (`am start` and `am force-stop`), so Slice 6 was composition again,
-and its work was in deciding what the device's output means: `am start` exits nonzero
-and prints `Error:` when the launcher cannot start, while `pidof` prints nothing and
-exits nonzero when the app is not running, so `is_running` reads the exit code as a
-definite answer. Slice 7 added a second `Transport`, over a socket, and every
+shell commands (`monkey` and `am force-stop`), so Slice 6 was composition again,
+and its work was in deciding what the device's output means: `monkey` exits nonzero
+and prints `No activities found to run` when the package has no launcher, while
+`pidof` prints nothing and exits nonzero when the app is not running, so
+`is_running` reads the exit code as a definite answer. Slice 7 added a second
+`Transport`, over a socket, and every
 service worked over it unchanged, because `Session` owns the framing. Slice 8 gave
 the second device an identity: `DeviceId::serial` matches the USB `iSerial` descriptor
 that `adb devices` prints, and `UsbTransport::list` enumerates the serials, so two
