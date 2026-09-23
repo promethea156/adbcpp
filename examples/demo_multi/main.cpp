@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <iostream>
 #include <optional>
 #include <span>
@@ -52,16 +53,22 @@ void step(std::ostream &out, std::string_view what)
     out << "\n== " << what << " ==" << std::endl;
 }
 
-// Sends a power key (223 sleeps, 224 wakes) and prints the resulting
-// wakefulness, so the tour shows the device really slept and woke again.
-void set_power(std::ostream &out, adbcpp::Connection &connection, std::string_view action, std::string_view key)
+// Sends power keys in order with a delay between them and prints the resulting
+// wakefulness, so the tour shows the device really slept and woke again. `223` is
+// `KEYCODE_SLEEP`; waking is `224` (`KEYCODE_WAKEUP`) and then `82`
+// (`KEYCODE_MENU`), which dismisses the keyguard the wake leaves.
+void set_power(std::ostream &out, adbcpp::Connection &connection, std::string_view action,
+               std::initializer_list<std::string_view> keys)
 {
     step(out, action);
-    if (const auto sent = adbcpp::run(connection, "input keyevent " + std::string(key)); !sent)
+    for (const auto key : keys)
     {
-        fail(sent.error());
+        if (const auto sent = adbcpp::run(connection, "input keyevent " + std::string(key)); !sent)
+        {
+            fail(sent.error());
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     const auto state = adbcpp::run(connection, "dumpsys power | grep mWakefulness");
     if (state && !state->output.empty())
     {
@@ -288,7 +295,7 @@ void run_tour(std::ostream &out, adbcpp::usb::DeviceId id, std::size_t index, co
     // `input keyevent 223` is `KEYCODE_SLEEP`; the following `dumpsys power`
     // shows the device really went to sleep. Installing with the screen off is the
     // realistic case, and it shows the transfer does not need an awake device.
-    set_power(out, connection, "sleep the device", "223");
+    set_power(out, connection, "sleep the device", {"223"});
 
     // Step 6: install the app, uninstalling an existing copy first.
     //
@@ -333,17 +340,19 @@ void run_tour(std::ostream &out, adbcpp::usb::DeviceId id, std::size_t index, co
 
     // Step 7: wake the device.
     //
-    // `input keyevent 224` is `KEYCODE_WAKEUP`, and the `dumpsys power` check
-    // shows the device is awake again before the app is started.
-    set_power(out, connection, "wake the device", "224");
+    // `input keyevent 224` is `KEYCODE_WAKEUP`, and `input keyevent 82` is
+    // `KEYCODE_MENU`, which dismisses the keyguard the wake leaves. The
+    // `dumpsys power` check shows the device is awake again before the app is
+    // started.
+    set_power(out, connection, "wake the device", {"224", "82"});
 
     // Step 8: launch the app.
     //
-    // `launch` runs `am start -W <package>`, which starts the package's
-    // launcher activity and waits for the launch to finish. It is retried because
-    // the package manager can still be indexing the fresh install and `am start`
-    // does not resolve the launcher until it has. `am start` only resolves for an
-    // app with a `MAIN`/`LAUNCHER` activity, which not every app has.
+    // `launch` runs `monkey -p <package> -c android.intent.category.LAUNCHER
+    // 1`, which starts the package's launcher activity. It is retried because
+    // the package manager can still be indexing the fresh install and `monkey`
+    // does not start the launcher until it has. An app with no launcher
+    // activity cannot be launched this way.
     step(out, "launch " + package);
     adbcpp::Result<adbcpp::CommandResult> launched =
         tl::unexpected(adbcpp::Error{adbcpp::ErrorCode::Device, "the app was not launched"});

@@ -44,11 +44,11 @@ Every slice so far hid at least one non-obvious problem. The record of each — 
 
 **Slice 6 — complete.** An app is launched, detected, and closed:
 
-- `launch` runs `am start -W <package>`. A bare positional argument is the form `am start` resolves as `ACTION_MAIN` with `CATEGORY_LAUNCHER` and the package, so the device starts the package's launcher activity; `-W` waits for the launch, so a following `is_running` is meaningful.
+- `launch` runs `monkey -p <package> -c android.intent.category.LAUNCHER 1`. `monkey` starts the package's `CATEGORY_LAUNCHER` activity directly, so an activity a bare `am start <package>` cannot resolve still starts (blocker 33); the single event makes it start rather than wander.
 - `close` runs `am force-stop <package>`, and `is_running` runs `pidof <package>`, whose exit code answers both cases: zero with the pids when the process runs, nonzero with no output when it does not.
 - Public API: `launch(connection, package)` returning a `Result<CommandResult>`, `close(connection, package)` returning a `Status`, and `is_running(connection, package)` returning a `Result<bool>`.
 
-Nothing was needed at the protocol layer: the slice is composition again, as the roadmap predicted. `am start`, `am force-stop`, and `pidof` are shell commands, so all three already existed.
+Nothing was needed at the protocol layer: the slice is composition again, as the roadmap predicted. `monkey`, `am force-stop`, and `pidof` are shell commands, so all three already existed.
 
 **Slice 7 — complete.** A device is reached over TCP, so an emulator's ADB listener is expected to work:
 
@@ -159,7 +159,7 @@ package.
 
 ## Slice 6 — App Control
 
-- Launch via `am start`, close via `am force-stop`.
+- Launch via `monkey`, close via `am force-stop`.
 - Running check via `pidof`, which answers both cases directly: exit code 0 with the pid when the process runs, exit code 1 with no output when it does not. It matches a process name rather than a package name, so the answer is an approximation.
 - Public API: `launch(package)`, `close(package)`, `is_running(package)`.
 

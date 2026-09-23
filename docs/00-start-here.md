@@ -53,7 +53,7 @@ The library can already do all of the everyday work:
 - drive every attached phone at once, one thread per phone.
 
 The whole [initial scope](01-objective.md#initial-scope) is done, and the library
-is at **2.2.0**.
+is at **2.2.1**.
 
 ## The wall we hit
 
@@ -84,7 +84,7 @@ is not enough.
 With the wall down, the rest of the initial scope turned out to be **composition**,
 not new protocol work. A file transfer is the `sync` room, an app install is a file
 push followed by a shell command, and app control is three more shell commands
-(`am start`, `am force-stop`, and `pidof`). Nothing at the protocol layer had to
+(`monkey`, `am force-stop`, and `pidof`). Nothing at the protocol layer had to
 change.
 
 The last pieces were reach and identity:
